@@ -27,31 +27,27 @@ const isRow = container => {
 const siblingsOf = el =>
   Array.from(el.parentElement?.children || []).filter(node => !isOffBounds(node))
 
-// 按拖拽指针位置算出应插入到第几个位置
-const dropIndexAt = (siblings, dragged, x, y, row) => {
-  let index = siblings.length
-
-  for (let i = 0; i < siblings.length; i++) {
-    const node = siblings[i]
-    if (node === dragged) continue
-
-    const r = node.getBoundingClientRect()
+// 索引一律相对「移除被拖元素后的序列」计算。
+// 若在含被拖元素的数组上取索引、却 splice 到移除后的数组，
+// 向后拖会整体偏移一位，落点也对不上用户看到的指示线。
+const dropIndexAt = (others, x, y, row) => {
+  for (let i = 0; i < others.length; i++) {
+    const r = others[i].getBoundingClientRect()
     const mid = row ? r.left + r.width / 2 : r.top + r.height / 2
-    const pos = row ? x : y
 
-    if (pos < mid) { index = i; break }
+    if ((row ? x : y) < mid) return i
   }
 
-  return index
+  return others.length
 }
 
-const showIndicator = (siblings, index, row) => {
+const showIndicator = (others, index, row) => {
   const bar = indicator()
-  const ref = siblings[index] || siblings[siblings.length - 1]
-  if (!ref) return
+  if (!others.length) return
 
+  const after = index >= others.length
+  const ref = after ? others[others.length - 1] : others[index]
   const r = ref.getBoundingClientRect()
-  const after = !siblings[index]
 
   Object.assign(bar.style, row ? {
     display: 'block',
@@ -74,9 +70,8 @@ const hideIndicator = () => {
 }
 
 // 重排落到 order 上：纯 CSS、可被快照 diff 捕获、不改动 DOM 结构
-const applyOrder = (siblings, dragged, targetIndex) => {
-  const rest = siblings.filter(node => node !== dragged)
-  const ordered = [...rest.slice(0, targetIndex), dragged, ...rest.slice(targetIndex)]
+const applyOrder = (others, dragged, targetIndex) => {
+  const ordered = [...others.slice(0, targetIndex), dragged, ...others.slice(targetIndex)]
 
   ordered.forEach((node, i) => {
     ChangeStore.track(node)
@@ -109,7 +104,8 @@ export const createLayoutDrag = ({ onDone } = {}) => {
     e.preventDefault()
     e.stopPropagation()
 
-    drag = { el, parent, siblings, row: isRow(parent), index: siblings.indexOf(el) }
+    const others = siblings.filter(node => node !== el)
+    drag = { el, parent, others, row: isRow(parent), index: others.indexOf(el) }
     el.style.opacity = '0.4'
     document.addEventListener('pointermove', onPointerMove, true)
     document.addEventListener('pointerup', onPointerUp, true)
@@ -117,8 +113,8 @@ export const createLayoutDrag = ({ onDone } = {}) => {
 
   const onPointerMove = e => {
     if (!drag) return
-    drag.index = dropIndexAt(drag.siblings, drag.el, e.clientX, e.clientY, drag.row)
-    showIndicator(drag.siblings, drag.index, drag.row)
+    drag.index = dropIndexAt(drag.others, e.clientX, e.clientY, drag.row)
+    showIndicator(drag.others, drag.index, drag.row)
   }
 
   const onPointerUp = () => {
@@ -129,7 +125,7 @@ export const createLayoutDrag = ({ onDone } = {}) => {
     document.removeEventListener('pointermove', onPointerMove, true)
     document.removeEventListener('pointerup', onPointerUp, true)
 
-    const ordered = applyOrder(drag.siblings, drag.el, drag.index)
+    const ordered = applyOrder(drag.others, drag.el, drag.index)
     onDone?.({ container: drag.parent, ordered })
     drag = null
   }

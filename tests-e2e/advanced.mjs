@@ -79,6 +79,27 @@ const orderRecorded = await page.evaluate(() =>
   window.__visualRevise.store.read().edits.some(e => e.changes.some(c => c.prop === 'order')))
 ok(orderRecorded, 'order 改动被记入改动列表（可导出给 AI）')
 
+// 回归：向后拖。索引若算在含被拖元素的序列上会整体偏一位。
+await page.evaluate(() => window.__visualRevise.store.undoEverything())
+await page.waitForTimeout(200)
+const boxes = []
+for (let i = 0; i < 3; i++) boxes.push(await page.locator('.curve-card').nth(i).boundingBox())
+
+// 把第 1 张拖到第 2 张与第 3 张之间：落点在两者中点之间
+const between = (boxes[1].x + boxes[1].width / 2 + boxes[2].x + boxes[2].width / 2) / 2
+await page.mouse.move(boxes[0].x + boxes[0].width / 2, boxes[0].y + 8)
+await page.mouse.down()
+await page.mouse.move(between, boxes[0].y + 8, { steps: 12 })
+await page.waitForTimeout(200)
+await page.mouse.up()
+await page.waitForTimeout(300)
+
+const backward = await page.evaluate(() =>
+  Array.from(document.querySelectorAll('.curve-card')).map(c => c.style.order))
+ok(backward.join(',') === '1,0,2',
+   `向后拖落在期望位置：order = [${backward.join(', ')}]（期望 1,0,2）`)
+
+await page.evaluate(() => window.__visualRevise.store.undoEverything())
 await page.evaluate(() => window.__visualRevise.setReorderMode(false))
 
 // ── JSON 导出 / 导入 ──
