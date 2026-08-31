@@ -2,15 +2,26 @@ var platform = typeof browser === 'undefined'
   ? chrome
   : browser
 
-// 幂等保护以页面里是否已有 <vis-bug> 为准——DOM 是隔离世界与主世界共享的，
-// 而 customElements 各世界一套 registry，在这里查主世界的注册情况既查不到，
-// 某些上下文下 customElements 还可能为 null。
-// 重复插入同 URL 的 module script 也不会重复执行（module map 保证）。
+// 幂等判据不能只看 <vis-bug> 是否存在：注入若在中途失败（bundle 没加载成功、
+// 上一个版本抛错等），页面上会留下一个从未升级的死元素。只看它存在就跳过，
+// 用户此后无论点多少次都不会有反应，且刷新前无法自愈。
+//
+// 真正「活着」的证据是编辑器 UI 已经挂到 body 上——那是自定义元素升级后
+// 才会发生的事，且在隔离世界同样可见（DOM 是两个世界共享的）。
 try {
+  const existing = document.querySelector('vis-bug')
+  const mounted  = document.querySelector('visual-revise-toolbar')
+
+  // 死元素：清掉重来，而不是被它挡住
+  if (existing && !mounted) existing.remove()
+
   if (!document.querySelector('vis-bug')) {
     const script = document.createElement('script')
     script.type = 'module'
     script.src = platform.runtime.getURL('toolbar/bundle.min.js')
+    script.setAttribute('data-visual-revise-bundle', '')
+    script.onerror = () =>
+      console.error('[Visual Revise] bundle 加载失败，请重新加载扩展')
     document.body.appendChild(script)
 
     const visbug = document.createElement('vis-bug')

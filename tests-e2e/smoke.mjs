@@ -121,5 +121,46 @@ ok(injectResult.afterFirst === 1, `首次注入创建一个 vis-bug（${injectRe
 ok(injectResult.afterSecond === 1,
    `重复注入保持幂等，不叠出第二个（${injectResult.afterSecond} 个）`)
 
+// ── 回归：上次注入失败留下的死元素必须能自愈 ──
+// 这正是「点了没反应、刷新前一直卡住」的成因：页面上残留一个从未升级的
+// <vis-bug>，而幂等检查只看它存在就跳过注入。
+const healed = await page.evaluate(async ([src, base]) => {
+  // 造出「有 vis-bug 元素、但编辑器 UI 没起来」的坏状态
+  document.querySelectorAll('visual-revise-toolbar, visual-revise-panel, visual-revise-list, visual-revise-comment-layer')
+    .forEach(el => el.remove())
+
+  const before = {
+    visbug:  document.querySelectorAll('vis-bug').length,
+    toolbar: document.querySelectorAll('visual-revise-toolbar').length,
+  }
+
+  window.chrome = {
+    runtime: {
+      getURL: path => `${base}/__ext/${path}`,
+      onMessage: { addListener: () => {} },
+    },
+  }
+
+  const errors = []
+  try { new Function(src)() } catch (e) { errors.push(e.message) }
+  await new Promise(r => setTimeout(r, 800))
+
+  return {
+    before,
+    after: {
+      visbug:  document.querySelectorAll('vis-bug').length,
+      toolbar: document.querySelectorAll('visual-revise-toolbar').length,
+    },
+    errors,
+  }
+}, [injectSrc, origin])
+
+ok(healed.before.visbug >= 1 && healed.before.toolbar === 0,
+   `坏状态已构造：有 ${healed.before.visbug} 个 vis-bug 但无编辑器 UI`)
+ok(healed.errors.length === 0,
+   `自愈过程无异常${healed.errors.length ? '：' + healed.errors.join('; ') : ''}`)
+ok(healed.after.visbug === 1 && healed.after.toolbar === 1,
+   `死元素被清掉并重新注入成功（vis-bug ${healed.after.visbug}，工具条 ${healed.after.toolbar}）`)
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')
