@@ -1,5 +1,5 @@
 import { GROUPS } from '../../core/tracked-props.js'
-import { CONTROLS, SIDE_GROUPS, SIDE_PROPS, isRelevant, coerceLength } from '../../core/controls.js'
+import { CONTROLS, SIDE_GROUPS, SIDE_PROPS, isRelevant, coerceLength, stepValue, stepSize } from '../../core/controls.js'
 import { ChangeStore } from '../../core/change-store.js'
 import { readComputed } from '../../core/snapshot.js'
 import { stableClasses } from '../../core/anchors.js'
@@ -377,14 +377,15 @@ export class PropsPanel extends HTMLElement {
       e.preventDefault()
       label.setPointerCapture(e.pointerId)
       const startX = e.clientX
-      const startVal = parseFloat(input.value) || 0
-      const unit = String(input.value).replace(/^-?[\d.]*/, '') || 'px'
+      const origin = input.value
+      const unitStep = stepSize(prop, false)
 
       const move = ev => {
-        const delta = Math.round((ev.clientX - startX) / 2)
-        const next = startVal + delta
-        input.value = `${next}${unit}`
-        this.#commit(prop, input.value)
+        const steps = Math.round((ev.clientX - startX) / 2)
+        const next = stepValue(prop, origin, steps * unitStep, this.#computed[prop])
+        if (next === null) return
+        input.value = next
+        this.#commit(prop, next, { coerce: false })
       }
       const up = ev => {
         label.releasePointerCapture(ev.pointerId)
@@ -399,12 +400,15 @@ export class PropsPanel extends HTMLElement {
     on('input[data-num], input[data-side]', 'keydown', e => {
       if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
       e.preventDefault()
+
       const input = e.currentTarget
-      const step = e.shiftKey ? 10 : 1
-      const cur = parseFloat(input.value) || 0
-      const unit = String(input.value).replace(/^-?[\d.]*/, '') || 'px'
-      input.value = `${cur + (e.key === 'ArrowUp' ? step : -step)}${unit}`
-      this.#commit(input.dataset.prop, input.value)
+      const prop = input.dataset.prop
+      const delta = stepSize(prop, e.shiftKey) * (e.key === 'ArrowUp' ? 1 : -1)
+      const next = stepValue(prop, input.value, delta, this.#computed[prop])
+
+      if (next === null) return   // normal / auto 等无法步进的值
+      input.value = next
+      this.#commit(prop, next, { coerce: false })
     })
 
     this.#makeDraggable(shadow.querySelector('header'))

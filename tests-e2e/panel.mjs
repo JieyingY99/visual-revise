@@ -103,5 +103,40 @@ ok(clip.includes('# 页面视觉修改需求'), '复制提示词到剪贴板')
 ok(clip.includes('border-radius'), '提示词含改动属性')
 ok(clip.includes('Thinking Five'), '提示词含文本锚点')
 
+// ── 回归：无单位属性不得被补上 px ──
+const nudge = async (prop, key = 'ArrowDown') => {
+  const input = page.locator(`visual-revise-panel input[data-prop="${prop}"]`)
+  if (!(await input.count())) return { skipped: true }
+  await input.focus()
+  await input.press(key)
+  await page.waitForTimeout(200)
+  return {
+    field: await input.inputValue(),
+    applied: await page.evaluate(p => {
+      const el = window.__visualRevise.panel.target
+      return el.style.getPropertyValue(p)
+    }, prop),
+  }
+}
+
+const opacity = await nudge('opacity')
+ok(opacity.applied === '0.95' && !opacity.field.includes('px'),
+   `opacity 按 ↓ 得到合法值：字段=${opacity.field} 生效=${opacity.applied}`)
+
+const zIndex = await nudge('z-index', 'ArrowUp')
+ok(!zIndex.skipped ? !String(zIndex.field).includes('px') : true,
+   `z-index 不补单位：${zIndex.skipped ? '（当前元素不适用，已跳过）' : zIndex.field}`)
+
+const lineHeight = await nudge('line-height', 'ArrowUp')
+ok(lineHeight.applied !== '' && !/NaN|normal\d/.test(String(lineHeight.field)),
+   `line-height 从 normal 回落到计算值再步进：字段=${lineHeight.field} 生效=${lineHeight.applied}`)
+
+const padding = await nudge('padding-top', 'ArrowUp')
+ok(padding.applied.endsWith('px'),
+   `长度类属性仍正常补 px：${padding.applied}`)
+
+await page.evaluate(() => window.__visualRevise.store.undoEverything())
+await page.waitForTimeout(200)
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

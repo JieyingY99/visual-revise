@@ -113,6 +113,47 @@ export const FLEX_ONLY = new Set([
 // order 作用在 flex/grid 子项上，取决于父容器而非自身
 export const FLEX_CHILD_ONLY = new Set(['order'])
 
+// 这些属性接受纯数字，补上单位会让声明非法而被 CSSOM 静默丢弃
+export const UNITLESS = new Set([
+  'opacity', 'z-index', 'order', 'font-weight', 'flex-grow', 'flex-shrink',
+])
+
+// line-height 既可以是纯数字，也可以是长度或 normal
+const UNITLESS_OR_LENGTH = new Set(['line-height'])
+
+// 关键字值没有确定数值，但用户按方向键时期待「能开始调」。
+// 给这类属性一个明确的首次落点，之后按常规步进。
+const KEYWORD_START = {
+  'line-height': '1.5',
+}
+
+// 步进一个数值：无法数值化的值（normal / auto / inherit）回落到计算值；
+// 仍无法数值化时，要么落到 KEYWORD_START，要么返回 null
+// 表示这次按键应当忽略，而不是写入一个会被 CSSOM 丢弃的垃圾值。
+export const stepValue = (prop, raw, delta, fallback = '') => {
+  const usable = v => /^-?[\d.]/.test(String(v ?? '').trim())
+  const source = usable(raw) ? String(raw).trim() : String(fallback ?? '').trim()
+
+  if (!usable(source)) return KEYWORD_START[prop] ?? null
+
+  const num = parseFloat(source)
+  if (!Number.isFinite(num)) return KEYWORD_START[prop] ?? null
+
+  const next = Math.round((num + delta) * 1000) / 1000
+
+  if (UNITLESS.has(prop)) return String(next)
+
+  const unit = source.match(/[a-z%]+$/i)?.[0]
+  if (!unit) return UNITLESS_OR_LENGTH.has(prop) ? String(next) : `${next}px`
+
+  return `${next}${unit}`
+}
+
+export const stepSize = (prop, shift) => {
+  const base = CONTROLS[prop]?.step ?? 1
+  return shift ? base * 10 : base
+}
+
 export const isRelevant = (prop, computed, el) => {
   if (FLEX_CHILD_ONLY.has(prop)) {
     const parentDisplay = el?.parentElement && getComputedStyle(el.parentElement).display
