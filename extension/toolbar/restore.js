@@ -3,6 +3,8 @@ var platform = typeof browser === 'undefined'
   : browser
 
 var restore = () => {
+  if (document.querySelector('vis-bug')) return
+
   const visbug = document.createElement('vis-bug')
   const src_path = platform.runtime.getURL(`tuts/guides.gif`)
 

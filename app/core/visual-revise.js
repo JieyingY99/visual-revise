@@ -17,6 +17,11 @@ export const mountVisualRevise = visbug => {
   const engine = visbug.selectorEngine
   if (!engine) return null
 
+  // 最后一道幂等防线：注入层已做保护，但若真出现第二个 <vis-bug>
+  // （例如页面脚本自行创建），也不该叠出第二套面板、列表和评论层。
+  if (document.querySelector('visual-revise-panel'))
+    return window.__visualRevise ?? null
+
   // VisBug 工具栏纵向很高，贴在任何一侧都会盖住页面内容。
   // 属性面板已是主界面，工具栏默认收起，需要时用 ⌘/Ctrl + / 唤出。
   visbug.style.display = 'none'

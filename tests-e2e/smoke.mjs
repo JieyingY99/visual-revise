@@ -54,5 +54,29 @@ const toolOk = await page.evaluate(() => {
 ok(toolOk.switched === 'inspector' && toolOk.restored === 'guides',
    `VisBug 工具切换仍正常（${toolOk.switched} → ${toolOk.restored}）`)
 
+// ── 回归：重复注入不得叠出第二套编辑器 ──
+const idempotent = await page.evaluate(() => {
+  const before = {
+    visbug: document.querySelectorAll('vis-bug').length,
+    panel:  document.querySelectorAll('visual-revise-panel').length,
+    list:   document.querySelectorAll('visual-revise-list').length,
+  }
+
+  // 模拟状态机脱节导致的二次注入
+  document.body.prepend(document.createElement('vis-bug'))
+
+  return {
+    before,
+    after: {
+      visbug: document.querySelectorAll('vis-bug').length,
+      panel:  document.querySelectorAll('visual-revise-panel').length,
+      list:   document.querySelectorAll('visual-revise-list').length,
+    },
+  }
+})
+ok(idempotent.after.panel === 1 && idempotent.after.list === 1,
+   `二次注入不叠加面板与列表（面板 ${idempotent.before.panel}→${idempotent.after.panel}，` +
+   `列表 ${idempotent.before.list}→${idempotent.after.list}）`)
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')
