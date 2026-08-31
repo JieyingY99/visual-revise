@@ -1,6 +1,6 @@
-import {gimmeToggle} from "./contextmenu/launcher.js"
-import {getColorMode} from "./contextmenu/colormode.js"
-import {getColorScheme} from "./contextmenu/colorscheme.js"
+import {gimmeToggle, createLauncherMenu} from "./contextmenu/launcher.js"
+import {getColorMode, createColorModeMenus} from "./contextmenu/colormode.js"
+import {getColorScheme, createColorSchemeMenus} from "./contextmenu/colorscheme.js"
 
 const state = {
   loaded:   {},
@@ -109,5 +109,16 @@ const toggleIn = async tab => {
     console.warn('[Visual Revise] 注入失败：', err?.message || err)
   }
 }
+
+// 右键菜单只在安装/更新时建立一次。先 removeAll 清空，避免更新后
+// 残留的旧菜单与新建的撞 id；两处调用都吞掉预期内的 lastError。
+platform.runtime.onInstalled.addListener(() => {
+  platform.contextMenus.removeAll(() => {
+    void platform.runtime.lastError
+    createLauncherMenu()
+    createColorModeMenus()
+    createColorSchemeMenus()
+  })
+})
 
 gimmeToggle(toggleIn)

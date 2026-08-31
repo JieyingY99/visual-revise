@@ -66,9 +66,9 @@ export const getColorMode = () => {
 
     // update checked state of color contextmenu radio list
     color_options.forEach(option => {
-      platform.contextMenus.update(option, {
-        checked: option === found_value
-      })
+      // 首次安装、菜单尚未建立时 update 会失败，属预期情况
+      platform.contextMenus.update(option, { checked: option === found_value },
+        () => void platform.runtime.lastError)
     })
 
     // send visbug user preference
@@ -82,22 +82,24 @@ export const getColorMode = () => {
 // load synced color choice on load
 getColorMode()
 
-platform.contextMenus.create({
-  id:     'color-mode',
-  title:  'Colors',
-  contexts: ['all'],
-})
-
-color_options.forEach(option => {
+export const createColorModeMenus = () => {
   platform.contextMenus.create({
-    id:       option,
-    parentId: 'color-mode',
-    title:    ' '+option,
-    checked:  false,
-    type:     'radio',
+    id:     'color-mode',
+    title:  'Colors',
     contexts: ['all'],
   })
-})
+
+  color_options.forEach(option => {
+    platform.contextMenus.create({
+      id:       option,
+      parentId: 'color-mode',
+      title:    ' '+option,
+      checked:  false,
+      type:     'radio',
+      contexts: ['all'],
+    })
+  })
+}
 
 platform.contextMenus.onClicked.addListener(({parentMenuItemId, menuItemId}, tab) => {
   if (parentMenuItemId !== 'color-mode') return

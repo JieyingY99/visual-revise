@@ -9,11 +9,16 @@ export const gimmeToggle = toggleIn => {
   platform.action.onClicked.addListener(toggleIt)
 }
 
-platform.contextMenus.create({
-  id:     'launcher',
-  title:  'Show/Hide',
-  contexts: ['all'],
-})
+// 菜单在 MV3 中是持久化的，只需在安装/更新时建一次。
+// 放模块顶层会随 service worker 的每次休眠—重启反复执行，
+// 每次都抛 "Cannot create item with duplicate id"。
+export const createLauncherMenu = () => {
+  platform.contextMenus.create({
+    id:     'launcher',
+    title:  'Show/Hide',
+    contexts: ['all'],
+  })
+}
 
 platform.contextMenus.onClicked.addListener(({menuItemId}, tab) => {
   if (menuItemId === 'launcher')

@@ -45,9 +45,9 @@ export const getColorScheme = () => {
 
     // update checked state of scheme contextmenu radio list
     scheme_option.forEach(option => {
-      platform.contextMenus.update(option, {
-        checked: option === found_value
-      })
+      // 首次安装、菜单尚未建立时 update 会失败，属预期情况
+      platform.contextMenus.update(option, { checked: option === found_value },
+        () => void platform.runtime.lastError)
     })
 
     // send visbug user preference
@@ -61,22 +61,24 @@ export const getColorScheme = () => {
 // load synced scheme choice on load
 getColorScheme()
 
-platform.contextMenus.create({
-  id:     'color-scheme',
-  title:  'Theme',
-  contexts: ['all'],
-})
-
-scheme_option.forEach(option => {
+export const createColorSchemeMenus = () => {
   platform.contextMenus.create({
-    id:       option,
-    parentId: 'color-scheme',
-    title:    ' '+option,
-    checked:  false,
-    type:     'radio',
+    id:     'color-scheme',
+    title:  'Theme',
     contexts: ['all'],
   })
-})
+
+  scheme_option.forEach(option => {
+    platform.contextMenus.create({
+      id:       option,
+      parentId: 'color-scheme',
+      title:    ' '+option,
+      checked:  false,
+      type:     'radio',
+      contexts: ['all'],
+    })
+  })
+}
 
 platform.contextMenus.onClicked.addListener(({parentMenuItemId, menuItemId}, tab) => {
   if (parentMenuItemId !== 'color-scheme') return

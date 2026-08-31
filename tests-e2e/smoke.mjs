@@ -1,4 +1,6 @@
-import { serve, launch, injectVisBug, ok } from './harness.mjs'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { serve, launch, injectVisBug, ok, ROOT } from './harness.mjs'
 
 const { port, close } = await serve()
 const origin = `http://127.0.0.1:${port}`
@@ -77,6 +79,47 @@ const idempotent = await page.evaluate(() => {
 ok(idempotent.after.panel === 1 && idempotent.after.list === 1,
    `二次注入不叠加面板与列表（面板 ${idempotent.before.panel}→${idempotent.after.panel}，` +
    `列表 ${idempotent.before.list}→${idempotent.after.list}）`)
+
+// ── 回归：inject.js 的真实执行路径 ──
+// 此前所有用例都直接执行 bundle，绕过了 inject.js，
+// 于是它里面跨世界访问 customElements 的缺陷一直没被测到。
+const injectSrc = await readFile(join(ROOT, 'extension/toolbar/inject.js'), 'utf8')
+
+const injectResult = await page.evaluate(async ([src, base]) => {
+  // 清空已有编辑器，模拟首次注入
+  document.querySelectorAll('vis-bug').forEach(el => el.remove())
+
+  const errors = []
+  const onErr = e => errors.push(e.message || String(e.error))
+  addEventListener('error', onErr)
+
+  // 模拟扩展环境：inject.js 跑在隔离世界，只能拿到 chrome.runtime
+  window.chrome = {
+    runtime: {
+      getURL: path => `${base}/__ext/${path}`,
+      onMessage: { addListener: () => {} },
+    },
+  }
+
+  const run = () => { try { new Function(src)() } catch (e) { errors.push(e.message) } }
+
+  run()                       // 首次注入
+  await new Promise(r => setTimeout(r, 600))
+  const afterFirst = document.querySelectorAll('vis-bug').length
+
+  run()                       // 重复注入：必须幂等
+  await new Promise(r => setTimeout(r, 400))
+  const afterSecond = document.querySelectorAll('vis-bug').length
+
+  removeEventListener('error', onErr)
+  return { afterFirst, afterSecond, errors }
+}, [injectSrc, origin])
+
+ok(injectResult.errors.length === 0,
+   `inject.js 执行无异常${injectResult.errors.length ? '：' + injectResult.errors.join('; ') : ''}`)
+ok(injectResult.afterFirst === 1, `首次注入创建一个 vis-bug（${injectResult.afterFirst} 个）`)
+ok(injectResult.afterSecond === 1,
+   `重复注入保持幂等，不叠出第二个（${injectResult.afterSecond} 个）`)
 
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')
