@@ -178,6 +178,31 @@ export const mountVisualRevise = visbug => {
     if (!e.shiftKey) setCommentMode(false)
   }
 
+  // ── 文字编辑 ──────────────────────────────────────────────
+  // 双击页面文字会进入 VisBug 的编辑态（元素被设成 contenteditable），
+  // 改动直接落在 DOM 上，不经过 ChangeStore，所以这里补两件事：
+  //   focusin 时确保原文已经进快照（要赶在第一个按键之前）
+  //   input 时广播一次，让面板与改动列表跟上
+  const onTextFocus = e => {
+    const el = e.target
+    if (!(el instanceof HTMLElement) || !el.isContentEditable) return
+    if (isEditorUI(el)) return
+    ChangeStore.markEdited(el)
+  }
+
+  let textTimer = null
+  const onTextInput = e => {
+    const el = e.target
+    if (!(el instanceof HTMLElement) || !el.isContentEditable) return
+    if (isEditorUI(el)) return
+
+    // 逐键广播会让整张改动列表每次击键都重排一遍，攒一小会儿再说
+    clearTimeout(textTimer)
+    textTimer = setTimeout(() => ChangeStore.touch(), 200)
+  }
+
+  document.addEventListener('focusin', onTextFocus, true)
+  document.addEventListener('input', onTextInput, true)
   document.addEventListener('click', onClickCapture, true)
   document.addEventListener('keydown', onKeydown, true)
 
@@ -235,6 +260,9 @@ export const mountVisualRevise = visbug => {
     toggleInteractive,
     get interactive() { return interactive },
     destroy() {
+      clearTimeout(textTimer)
+      document.removeEventListener('focusin', onTextFocus, true)
+      document.removeEventListener('input', onTextInput, true)
       document.removeEventListener('keydown', onKeydown, true)
       document.removeEventListener('click', onClickCapture, true)
       engine.removeSelectedCallback(onSelected)

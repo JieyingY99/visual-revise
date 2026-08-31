@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 
-const SUITES = ['smoke', 'core', 'toolbar', 'controls', 'panel', 'figma', 'fill', 'list', 'comment', 'guides', 'drag', 'advanced']
+const SUITES = ['smoke', 'core', 'toolbar', 'controls', 'panel', 'figma', 'fill', 'text', 'list', 'comment', 'guides', 'drag', 'advanced']
 const results = []
 
 for (const suite of SUITES) {

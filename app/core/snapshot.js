@@ -9,17 +9,40 @@ export const elementId = el => {
   return el[KEY]
 }
 
-// 快照必须在元素被改动之前采集：记录原始 inline style，
-// 以及全部关注属性的计算值（用户看到的实际起点）。
-export const takeSnapshot = el => ({
-  id:          elementId(el),
-  el,
-  inlineStyle: el.getAttribute('style'),
-  inline:      readInline(el),
-  computed:    readComputed(el),
-  anchors:     collectAnchors(el),
-  takenAt:     Date.now(),
-})
+// 文案比对用归一化后的 textContent：源码里的换行和缩进不是用户的改动
+export const readText = el => (el.textContent || '').replace(/\s+/g, ' ').trim()
+
+const textNodesOf = el => {
+  const out = []
+  const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+  let node
+  while ((node = walk.nextNode())) out.push(node)
+  return out
+}
+
+// innerHTML 只是还原不了文本节点时的兜底，给它设个上限，
+// 免得选中一个大区块就把整棵子树的字符串留在内存里
+const HTML_LIMIT = 50000
+
+// 快照必须在元素被改动之前采集：记录原始 inline style、
+// 全部关注属性的计算值（用户看到的实际起点），以及原始文案。
+export const takeSnapshot = el => {
+  const html = el.innerHTML
+  return {
+    id:          elementId(el),
+    el,
+    inlineStyle: el.getAttribute('style'),
+    inline:      readInline(el),
+    computed:    readComputed(el),
+    text:        readText(el),
+    textNodes:   textNodesOf(el).map(n => n.nodeValue),
+    // 只有真正进过编辑态的元素才比对文案，见 diffText
+    edited:      false,
+    html:        html.length <= HTML_LIMIT ? html : null,
+    anchors:     collectAnchors(el),
+    takenAt:     Date.now(),
+  }
+}
 
 // VisBug 给选中元素加了 transition: all .15s（让键盘微调看起来跟手）。
 // 副作用是：刚写完样式马上读计算值，读到的是过渡中的中间值——通常就是旧值。
@@ -94,6 +117,40 @@ export const diffSnapshot = snapshot => {
     .sort((a, b) => TRACKED_PROPS.indexOf(a.prop) - TRACKED_PROPS.indexOf(b.prop))
 }
 
+// 双击页面文字会进入 VisBug 的编辑态，改动直接落在 DOM 上、不经过 applyProp，
+// 所以文案要单独比。
+//
+// 只看真正被放进编辑态的元素（edited）。拿容器比会得到两类假货：容器的
+// textContent 跟着子孙一起变，改一句话时所有祖先都报一条；而编辑途中才被
+// 跟踪的祖先更糟——它的「原文」本身就已经是改了一半的样子。
+export const diffText = snapshot => {
+  const { el, text, edited } = snapshot
+  if (!edited || text === undefined || !el.isConnected) return null
+
+  const now = readText(el)
+  return now === text ? null : { from: text, to: now }
+}
+
+// 还原文案优先按「文本节点逐个写回」，而不是整段 innerHTML：
+// 在一段文字中间打字不会改变节点结构，这条路径能原样恢复且不动任何元素——
+// 换成 innerHTML 会把子元素全部重建，它们身上的样式改动和快照就一起失联了。
+// 只有结构真的变了（删掉整个 <strong>、回车分段）才退回 innerHTML。
+export const revertText = snapshot => {
+  const { el, text, textNodes, html, edited } = snapshot
+  if (!edited || text === undefined || !el.isConnected) return false
+  if (readText(el) === text) return false          // 没改过就别动 DOM
+
+  const now = textNodesOf(el)
+  if (textNodes && now.length === textNodes.length) {
+    now.forEach((node, i) => { node.nodeValue = textNodes[i] })
+    return true
+  }
+
+  if (html == null) return false                   // 内容超限，当时没存
+  el.innerHTML = html
+  return true
+}
+
 // 单条撤销：把某个属性还原到快照状态
 export const revertProp = (snapshot, prop) => {
   const { el, inlineStyle } = snapshot
@@ -104,8 +161,10 @@ export const revertProp = (snapshot, prop) => {
     : el.style.removeProperty(prop)
 }
 
-// 全部重置：恢复原始 inline style
+// 全部重置：恢复原始 inline style 与原始文案
 export const revertAll = snapshot => {
+  revertText(snapshot)
+
   const { el, inlineStyle } = snapshot
   inlineStyle === null
     ? el.removeAttribute('style')

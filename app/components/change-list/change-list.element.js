@@ -118,7 +118,11 @@ export class ChangeList extends HTMLElement {
     const { edits, comments } = ChangeStore.read()
     const stats = ChangeStore.stats()
 
-    const label = { all: `全部 ${stats.total}`, style: `配置 ${stats.props}`, comment: `评论 ${stats.comments}` }
+    const label = {
+      all:     `全部 ${stats.total}`,
+      style:   `配置 ${stats.props + stats.texts}`,
+      comment: `评论 ${stats.comments}`,
+    }
     shadow.querySelectorAll('.tabs button').forEach(btn => {
       const key = btn.dataset.tab
       if (btn.textContent !== label[key]) btn.textContent = label[key]
@@ -145,13 +149,24 @@ export class ChangeList extends HTMLElement {
   }
 
   #renderEdit(entry) {
+    const esc = v => String(v ?? '').replace(/</g, '&lt;')
+
+    const textRow = entry.text ? `
+      <div class="change" data-text>
+        <span><code>文案</code>
+          <span class="from">${esc(entry.text.from) || '（空）'}</span> →
+          <span class="to">${esc(entry.text.to) || '（空）'}</span></span>
+        <button class="undo-text" data-id="${entry.id}" title="撤销文案改动">×</button>
+      </div>` : ''
+
     return `<div class="item" data-id="${entry.id}" data-kind="style">
       <div class="item-head">
         <span class="sel" title="${entry.anchors.selector}">${shortSelector(entry.anchors)}</span>
-        <span class="badge">${entry.changes.length}</span>
+        <span class="badge">${entry.changes.length + (entry.text ? 1 : 0)}</span>
         <button class="icon-btn undo-el" data-id="${entry.id}" title="撤销此元素全部改动">↺</button>
       </div>
       <div class="changes">
+        ${textRow}
         ${entry.changes.map(c => `
           <div class="change">
             <span><code>${c.prop}</code> <span class="from">${c.from || '—'}</span> → <span class="to">${c.to}</span></span>
@@ -243,6 +258,11 @@ export class ChangeList extends HTMLElement {
     on('.undo-prop', 'click', e => {
       e.stopPropagation()
       ChangeStore.undoProp(e.currentTarget.dataset.id, e.currentTarget.dataset.prop)
+    })
+
+    on('.undo-text', 'click', e => {
+      e.stopPropagation()
+      ChangeStore.undoText(e.currentTarget.dataset.id)
     })
 
     on('.undo-el', 'click', e => {

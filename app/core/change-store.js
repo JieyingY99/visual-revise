@@ -1,4 +1,6 @@
-import { takeSnapshot, diffSnapshot, revertProp, revertAll, elementId } from './snapshot.js'
+import {
+  takeSnapshot, diffSnapshot, diffText, revertProp, revertText, revertAll, elementId,
+} from './snapshot.js'
 import { collectAnchors } from './anchors.js'
 
 const createStore = () => {
@@ -16,15 +18,31 @@ const createStore = () => {
     return snapshots.get(id)
   }
 
-  const styleEdits = () =>
-    Array.from(snapshots.values())
-      .map(snap => ({
-        id:      snap.id,
-        el:      snap.el,
-        anchors: snap.anchors,
-        changes: diffSnapshot(snap),
-      }))
-      .filter(entry => entry.changes.length > 0)
+  // 元素进入文字编辑态时打个标记：只有它的文案才值得比对
+  const markEdited = el => {
+    const snap = track(el)
+    snap.edited = true
+    return snap
+  }
+
+  const styleEdits = () => {
+    const entries = Array.from(snapshots.values()).map(snap => ({
+      id:      snap.id,
+      el:      snap.el,
+      anchors: snap.anchors,
+      changes: diffSnapshot(snap),
+      text:    diffText(snap),
+    }))
+
+    // 改一句话会让它所有祖先的 textContent 都跟着变。祖先和后代都报文案改动时
+    // 只留最内层那个——它才是用户真正动的元素，外层那条是连带的。
+    const texted = entries.filter(e => e.text)
+    for (const entry of texted)
+      if (texted.some(other => other !== entry && entry.el.contains(other.el)))
+        entry.text = null
+
+    return entries.filter(entry => entry.changes.length > 0 || entry.text)
+  }
 
   const commentList = () =>
     Array.from(comments.values())
@@ -65,6 +83,13 @@ const createStore = () => {
     notify()
   }
 
+  const undoText = id => {
+    const snap = snapshots.get(id)
+    if (!snap) return
+    revertText(snap)
+    notify()
+  }
+
   const undoProp = (id, prop) => {
     const snap = snapshots.get(id)
     if (!snap) return
@@ -86,6 +111,10 @@ const createStore = () => {
     notify()
   }
 
+  // 文字编辑绕过 applyProp 直接改 DOM，store 无从感知，
+  // 由编辑态的输入事件调这个方法广播一次
+  const touch = () => notify()
+
   const clear = () => {
     snapshots.clear()
     comments.clear()
@@ -95,19 +124,23 @@ const createStore = () => {
 
   const stats = () => {
     const { edits, comments: cs } = read()
+    const props = edits.reduce((n, e) => n + e.changes.length, 0)
+    const texts = edits.filter(e => e.text).length
+
     return {
       elements: edits.length,
-      props:    edits.reduce((n, e) => n + e.changes.length, 0),
+      props,
+      texts,
       comments: cs.length,
-      total:    edits.reduce((n, e) => n + e.changes.length, 0) + cs.length,
+      total:    props + texts + cs.length,
     }
   }
 
   return {
-    track, applyProp,
+    track, markEdited, applyProp,
     addComment, updateComment, removeComment,
-    undoProp, undoElement, undoEverything, clear,
-    read, stats,
+    undoProp, undoText, undoElement, undoEverything, clear,
+    read, stats, touch,
     snapshots,
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn) },
   }

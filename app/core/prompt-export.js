@@ -91,6 +91,19 @@ const changeTable = changes => [
     `| ${c.prop}${c.note ? ` <sub>${c.note}</sub>` : ''} | \`${c.from || '—'}\` | \`${c.to}\` |`),
 ].join('\n')
 
+// 文案改动单独成段：它要改的是源码里的字符串或文案数据，
+// 和 CSS 属性表不是一类东西，混在同一张表里 AI 容易照着写成 content 之类的样式
+const textBlock = ({ from, to }) => [
+  '**文案改动**',
+  '',
+  `- 原文：\`${from || '（空）'}\``,
+  `- 改为：\`${to || '（空）'}\``,
+  '',
+  '> 请改源码里的文案本身（JSX 文本、模板、i18n 词条或数据源），',
+  '> 不要用 CSS 的 content 之类的手段覆盖显示结果。',
+  '',
+]
+
 // 编辑器自身的 UI 不算页面结构的一部分
 const isOwnUI = el =>
   el.hasAttribute?.('data-visual-revise-ui') || /^(VIS-BUG|VISBUG-)/.test(el.tagName || '')
@@ -178,7 +191,7 @@ const FOOTER = `## 给 AI 的说明
 
 定位建议：**优先用「文本特征」在代码库中搜索**——选择器里的类名在源码中
 可能不存在（Tailwind、CSS Modules、CSS-in-JS 都会改写类名），而文本内容通常
-能直接命中组件文件。
+能直接命中组件文件。文案改动请拿「原文」去搜，页面上显示的已经是改后的内容。
 
 应用建议：若项目使用设计 token、CSS 变量或工具类，请换算为项目现有的表达方式，
 不要直接写死像素值破坏既有设计系统。若某项改动与项目规范冲突，请指出并说明原因，
@@ -192,9 +205,10 @@ export const buildPrompt = (state, meta = {}) => {
 
   // order 已经由「元素重新排序」段落表达，不再重复列进属性表。
   // 必须先于下面的 summary 定义——它要统计 styleEdits 的数量。
+  // 只改了文案、没动样式的元素同样要留下（entry.text）。
   const styleEdits = edits
     .map(entry => ({ ...entry, changes: entry.changes.filter(c => c.prop !== 'order') }))
-    .filter(entry => entry.changes.length)
+    .filter(entry => entry.changes.length || entry.text)
 
   const url      = meta.url      || (typeof location !== 'undefined' ? location.href : '')
   const viewport = meta.viewport || (typeof innerWidth !== 'undefined' ? `${innerWidth} × ${innerHeight}` : '')
@@ -203,27 +217,32 @@ export const buildPrompt = (state, meta = {}) => {
   if (url)      head.push(`来源：${url}`)
   if (viewport) head.push(`视口：${viewport}`)
 
+  // 一条记录可能只有文案、只有样式，或两者都有，所以分开数
+  const textCount  = styleEdits.filter(e => e.text).length
+  const styleCount = styleEdits.filter(e => e.changes.length).length
+
   const summary = []
-  if (styleEdits.length) summary.push(`${styleEdits.length} 处元素样式`)
+  if (styleCount) summary.push(`${styleCount} 处元素样式`)
+  if (textCount)  summary.push(`${textCount} 处文案`)
   if (reorders.length)   summary.push(`${reorders.length} 处顺序调整`)
   if (comments.length)   summary.push(`${comments.length} 条交互备注`)
   head.push(`改动：${summary.join('，')}`, '')
 
   const sections = styleEdits.map((entry, i) => {
     const changes = collapseShorthand(entry.changes)
+    const kinds = [entry.text && '文案', changes.length && groupLabels(changes)].filter(Boolean)
+
     return [
       '---',
       '',
-      `## ${i + 1}. ${describeElement(entry.anchors)} — ${groupLabels(changes)}`,
+      `## ${i + 1}. ${describeElement(entry.anchors)} — ${kinds.join('、')}`,
       '',
       '**定位**',
       '',
       anchorBlock(entry.anchors),
       '',
-      '**改动**',
-      '',
-      changeTable(changes),
-      '',
+      ...(entry.text ? textBlock(entry.text) : []),
+      ...(changes.length ? ['**样式改动**', '', changeTable(changes), ''] : []),
     ].join('\n')
   })
 
@@ -244,7 +263,9 @@ export const buildPrompt = (state, meta = {}) => {
     '',
   ].join('\n') : ''
 
-  return [head.join('\n'), ...sections, reorderBlock, commentSection, '---', '', FOOTER, '']
+  // 结尾的分隔线和 FOOTER 要拼成一段：filter(Boolean) 会把中间那个空行滤掉，
+  // 让 --- 和下一个标题贴在一起
+  return [head.join('\n'), ...sections, reorderBlock, commentSection, `---\n\n${FOOTER}\n`]
     .filter(Boolean).join('\n')
 }
 
