@@ -28,12 +28,23 @@ export const coerceNumber = raw => {
   return v === '' ? '' : v
 }
 
+// 角度：裸数字补 deg；'none' 与各种写法的 0 都视为「没有旋转」，
+// 写成 0deg 会在改动列表里留下一条什么都没做的记录
+export const coerceAngle = raw => {
+  const v = String(raw).trim()
+  if (!v || /^none$/i.test(v)) return ''
+  if (/^-?0(\.0+)?(deg|rad|turn|grad)?$/i.test(v)) return ''
+  if (/^-?[\d.]+$/.test(v)) return `${v}deg`
+  return v
+}
+
 const num  = (label, opts = {}) => ({ type: 'num',  label, coerce: coerceLength, ...opts })
 const plain = (label, opts = {}) => ({ type: 'num', label, coerce: coerceNumber, ...opts })
 const sel  = (label, options)    => ({ type: 'select', label, options })
 const seg  = (label, options)    => ({ type: 'segment', label, options })
 const col  = label               => ({ type: 'color', label })
 const txt  = label               => ({ type: 'text', label })
+const ang  = (label, opts = {}) => ({ type: 'num', label, coerce: coerceAngle, ...opts })
 
 export const CONTROLS = {
   // 布局
@@ -65,6 +76,9 @@ export const CONTROLS = {
   'position': sel('定位', ['static', 'relative', 'absolute', 'fixed', 'sticky']),
   'top':      num('上'), 'right': num('右'), 'bottom': num('下'), 'left': num('左'),
   'z-index':  plain('层级'),
+  // 独立的 rotate 属性而不是 transform: rotate()：计算值直接就是 '45deg'，
+  // 而 transform 的计算值是 matrix(...)，要反解角度且和缩放/倾斜混在一起
+  'rotate':   ang('旋转'),
 
   // 文字
   'font-family':    txt('字体'),
@@ -89,6 +103,10 @@ export const CONTROLS = {
   'border-width': num('粗细'),
   'border-style': sel('样式', ['none', 'solid', 'dashed', 'dotted', 'double']),
   'border-color': col('颜色'),
+  // Figma 的 Stroke position（inside/outside/center）在 CSS 里就是 box-sizing：
+  // border-box 边框吃进尺寸内 = 内描边，content-box 边框撑大盒子 = 外描边。
+  // center 没有对应写法，故只给两项。
+  'box-sizing':   seg('位置', [['border-box', '内'], ['content-box', '外']]),
 
   // 效果
   'box-shadow':      txt('阴影'),
@@ -98,13 +116,15 @@ export const CONTROLS = {
 
 // Figma 把成对的字段并排放：X/Y、W/H、水平/垂直内边距。
 // 这里声明哪些属性构成一对，渲染时合并到同一行的两列里。
+// width/height 不在此列——它们用带比例锁的连体控件单独渲染。
 export const FIELD_PAIRS = [
-  ['width', 'height'],
+  ['left', 'top'],
+  ['right', 'bottom'],
+  ['z-index', 'rotate'],
+  ['justify-content', 'align-items'],
   ['min-width', 'min-height'],
   ['max-width', 'max-height'],
   ['row-gap', 'column-gap'],
-  ['top', 'right'],
-  ['bottom', 'left'],
   ['font-size', 'line-height'],
   ['letter-spacing', 'font-weight'],
   ['opacity', 'border-radius'],
@@ -116,14 +136,26 @@ export const FIELD_PREFIX = {
   'width': 'W', 'height': 'H',
   'min-width': 'W', 'min-height': 'H',
   'max-width': 'W', 'max-height': 'H',
-  'top': 'T', 'right': 'R', 'bottom': 'B', 'left': 'L',
+  'left': 'X', 'top': 'Y', 'right': 'R', 'bottom': 'B',
   'padding-top': '↑', 'padding-right': '→', 'padding-bottom': '↓', 'padding-left': '←',
   'margin-top': '↑', 'margin-right': '→', 'margin-bottom': '↓', 'margin-left': '←',
   'gap': '↔', 'row-gap': '↕', 'column-gap': '↔',
   'font-size': 'Aa', 'line-height': '↕', 'letter-spacing': 'AV',
   'opacity': '◍', 'border-radius': '◜', 'z-index': 'Z', 'order': '#',
-  'border-width': '▭',
+  'border-width': '▭', 'rotate': '∠',
 }
+
+// 计算值里这些关键字等同「没设置」，直接显示在输入框里只会碍事
+const BLANK_WHEN = {
+  'rotate': ['none'],
+  'background-image': ['none'],
+  'box-shadow': ['none'],
+  'filter': ['none'],
+  'backdrop-filter': ['none'],
+}
+
+export const displayValue = (prop, value) =>
+  (BLANK_WHEN[prop] || []).includes(String(value ?? '').trim()) ? '' : (value ?? '')
 
 // 间距组用合并控件呈现，不逐条渲染
 export const SIDE_GROUPS = [
@@ -154,6 +186,7 @@ const UNITLESS_OR_LENGTH = new Set(['line-height'])
 // 给这类属性一个明确的首次落点，之后按常规步进。
 const KEYWORD_START = {
   'line-height': '1.5',
+  'rotate': '0deg',
 }
 
 // 步进一个数值：无法数值化的值（normal / auto / inherit）回落到计算值；
@@ -181,6 +214,48 @@ export const stepValue = (prop, raw, delta, fallback = '') => {
 export const stepSize = (prop, shift) => {
   const base = CONTROLS[prop]?.step ?? 1
   return shift ? base * 10 : base
+}
+
+// ── 对齐按钮组 ────────────────────────────────────────────────
+// Figma 的对齐改的是画布上的绝对坐标。CSS 里「只挪自己、不动兄弟」这件事
+// 只有在 flex / grid 父容器下才有确定写法：grid 用 *-self，flex 的交叉轴用
+// align-self、主轴只能靠 auto 外边距。父容器是普通 block 时没有通用做法
+// （margin:auto 还要求元素有确定宽度），所以那种情况直接不给这组按钮。
+export const alignSupported = el => {
+  const parent = el?.parentElement
+  if (!parent) return false
+  return /flex|grid/.test(getComputedStyle(parent).display)
+}
+
+const SELF_VALUE = { start: 'start', center: 'center', end: 'end' }
+const FLEX_VALUE = { start: 'flex-start', center: 'center', end: 'flex-end' }
+
+// 返回 [{prop, value}]，value 为 '' 表示清掉这条 inline 声明
+export const alignPlan = (el, axis, where) => {
+  const parent = el?.parentElement
+  if (!parent) return []
+
+  const pcs = getComputedStyle(parent)
+  if (/grid/.test(pcs.display))
+    return [{ prop: axis === 'h' ? 'justify-self' : 'align-self', value: SELF_VALUE[where] }]
+
+  const dir      = pcs.flexDirection || 'row'
+  const mainIsH  = dir.startsWith('row')
+  const reversed = dir.endsWith('-reverse')
+
+  // 交叉轴
+  if ((axis === 'h') !== mainIsH)
+    return [{ prop: 'align-self', value: FLEX_VALUE[where] }]
+
+  // 主轴：flex 容器里唯一只影响自身的手段是 auto 外边距
+  const [a, b] = axis === 'h'
+    ? ['margin-left', 'margin-right']
+    : ['margin-top', 'margin-bottom']
+  const [head, tail] = reversed ? [b, a] : [a, b]
+
+  if (where === 'start') return [{ prop: head, value: '' },     { prop: tail, value: 'auto' }]
+  if (where === 'end')   return [{ prop: head, value: 'auto' }, { prop: tail, value: '' }]
+  return [{ prop: head, value: 'auto' }, { prop: tail, value: 'auto' }]
 }
 
 export const isRelevant = (prop, computed, el) => {

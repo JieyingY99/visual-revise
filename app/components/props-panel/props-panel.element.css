@@ -116,7 +116,7 @@ section:last-child { border-bottom: none; }
 h3 {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 4px;
   margin: 0 0 12px;
   font-size: 14px;
   font-weight: 600;
@@ -124,8 +124,18 @@ h3 {
   color: var(--vr-text);
   cursor: pointer;
 }
-h3::after {
-  content: '';
+h3 .title { flex: 1; min-width: 0; }
+
+.acts { display: flex; gap: 2px; }
+.acts .icon-btn { width: 20px; height: 20px; }
+
+/* 「重置本组」只在这一组真的改过时才出现，平时不占视觉噪音 */
+.acts .undo { display: none; }
+section[data-dirty] .acts .undo { display: grid; }
+section[data-dirty] > h3 .title { color: var(--vr-accent); }
+
+.chev {
+  flex: none;
   width: 16px; height: 16px;
   background: currentColor;
   opacity: .45;
@@ -133,7 +143,7 @@ h3::after {
   transition: transform .15s ease;
 }
 section[folded] h3 { margin-bottom: 0; }
-section[folded] h3::after { transform: rotate(-90deg); }
+section[folded] .chev { transform: rotate(-90deg); }
 section[folded] .rows { display: none; }
 
 /* ── 字段：标签在控件上方 ── */
@@ -182,6 +192,56 @@ input {
 input:hover { background: var(--vr-field-hi); }
 input:focus { border-color: var(--vr-accent); background: var(--vr-field); }
 input::placeholder { color: var(--vr-mute); }
+
+/* W/H 前缀可以横向拖着调值，所以要恢复它的命中区域 */
+.prefix[data-drag] { pointer-events: auto; cursor: ew-resize; }
+.prefix[data-drag]:hover { color: var(--vr-text); }
+
+/* ── 对齐按钮组 ── */
+.align {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 2px;
+  height: 30px;
+  padding: 2px;
+  background: var(--vr-field);
+  border-radius: 5px;
+}
+.align button {
+  display: grid; place-items: center;
+  color: var(--vr-label);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.align button:hover { background: var(--vr-field-hi); color: var(--vr-text); }
+.align button:active { background: var(--vr-accent); color: #fff; }
+/* 前三个是水平、后三个是垂直，中间留一道分隔 */
+.align button:nth-child(3) { margin-right: 3px; }
+
+/* ── 尺寸：W / H 连体，右侧括号接到比例锁 ── */
+.dims {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto auto;
+  align-items: center;
+}
+.dims .control { min-width: 0; }
+.dims .control:first-child { margin-right: 4px; }
+/* 括号紧贴 H 的右边缘长出来，再接到锁上——中间留缝就散了 */
+.dims .bracket {
+  width: 6px;
+  height: 18px;
+  margin-right: 2px;
+  border: 1px solid var(--vr-border);
+  border-left: none;
+  border-radius: 0 3px 3px 0;
+}
+.dims .ratio { width: 22px; height: 22px; }
+.dims .ratio[data-on] {
+  background: rgb(13 153 255 / .16);
+  color: var(--vr-accent);
+}
 
 .segment {
   display: flex;

@@ -36,10 +36,15 @@ const collapseShorthand = changes => {
   return out
 }
 
+// 面板里的分区标题沿用 Figma 的英文命名，导出的提示词是中文文档，
+// 所以这里取分区的中文名（GROUPS[].zh）而不是面板上的 label
 const groupLabels = changes => {
   const ids = [...new Set(changes.map(c => PROP_GROUP[c.prop] || 'appearance'))]
   return ids
-    .map(id => GROUPS.find(g => g.id === id)?.label)
+    .map(id => {
+      const g = GROUPS.find(x => x.id === id)
+      return g && (g.zh || g.label)
+    })
     .filter(Boolean)
     .join('、')
 }

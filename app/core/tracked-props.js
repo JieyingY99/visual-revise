@@ -1,54 +1,71 @@
+// 分区顺序与命名对齐 Figma 的属性面板：
+//   Position → Layout → Appearance → Fill → Stroke → Effects → Typography
+//
+// Figma 的 Constraints 在 CSS 里没有对应物——那是画布坐标系里「贴住父框哪条边」
+// 的概念，CSS 用的是完全不同的一套机制。这里换成真正决定「元素往哪儿放、
+// 压在谁上面」的 position 类型与 z-index。
+//
+// widgets 是没有单一 CSS 属性可对应的复合控件（对齐按钮组），
+// 它写入的仍是 props 里声明过的真实属性，渲染在该分区最前面。
 export const GROUPS = [
   {
-    id: 'layout',
-    label: '布局',
-    props: ['display', 'flex-direction', 'flex-wrap', 'justify-content', 'align-items', 'gap', 'row-gap', 'column-gap', 'order'],
-  },
-  {
-    id: 'size',
-    label: '尺寸',
-    props: ['width', 'height', 'min-width', 'min-height', 'max-width', 'max-height'],
-  },
-  {
-    id: 'spacing',
-    label: '间距',
+    id: 'position',
+    label: 'Position',
+    zh: '定位',
+    widgets: ['align'],
     props: [
-      'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
-      'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+      'position', 'left', 'top', 'right', 'bottom',
+      'z-index', 'rotate',
+      // 对齐按钮组写入，面板里不单独渲染字段
+      'align-self', 'justify-self',
     ],
   },
   {
-    id: 'position',
-    label: '定位',
-    props: ['position', 'top', 'right', 'bottom', 'left', 'z-index'],
-  },
-  {
-    id: 'typography',
-    label: '文字',
+    id: 'layout',
+    label: 'Layout',
+    zh: '布局',
     props: [
-      'font-family', 'font-size', 'font-weight', 'line-height',
-      'letter-spacing', 'text-align', 'text-transform', 'color',
+      'display',
+      'flex-direction', 'flex-wrap', 'justify-content', 'align-items',
+      'gap', 'row-gap', 'column-gap',
+      'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+      'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+      'width', 'height', 'min-width', 'min-height', 'max-width', 'max-height',
+      'overflow', 'order',
     ],
   },
   {
     id: 'appearance',
-    label: '外观',
-    props: ['opacity', 'border-radius', 'overflow'],
+    label: 'Appearance',
+    zh: '外观',
+    props: ['opacity', 'border-radius'],
   },
   {
     id: 'fill',
-    label: '填充',
+    label: 'Fill',
+    zh: '填充',
     props: ['background-color', 'background-image'],
   },
   {
     id: 'stroke',
-    label: '描边',
-    props: ['border-width', 'border-style', 'border-color'],
+    label: 'Stroke',
+    zh: '描边',
+    props: ['border-color', 'border-width', 'border-style', 'box-sizing'],
   },
   {
     id: 'effects',
-    label: '效果',
+    label: 'Effects',
+    zh: '效果',
     props: ['box-shadow', 'filter', 'backdrop-filter'],
+  },
+  {
+    id: 'typography',
+    label: 'Typography',
+    zh: '文字',
+    props: [
+      'font-family', 'font-size', 'font-weight', 'line-height',
+      'letter-spacing', 'text-align', 'text-transform', 'color',
+    ],
   },
 ]
 
