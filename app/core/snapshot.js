@@ -15,6 +15,7 @@ export const takeSnapshot = el => ({
   id:          elementId(el),
   el,
   inlineStyle: el.getAttribute('style'),
+  inline:      readInline(el),
   computed:    readComputed(el),
   anchors:     collectAnchors(el),
   takenAt:     Date.now(),
@@ -28,7 +29,7 @@ export const readComputed = el => {
   }, {})
 }
 
-const readInline = el => {
+export const readInline = el => {
   const style = el.style
   return TRACKED_PROPS.reduce((acc, prop) => {
     const val = style.getPropertyValue(prop)
@@ -37,22 +38,43 @@ const readInline = el => {
   }, {})
 }
 
-// 与快照对比，得出真正被改动的属性及其前后值。
-// 前值取快照时的计算值，因为那是用户实际看到的起点。
+// 基准必须是快照时的 inline 声明，不能是计算值：页面作者写的
+// style="width:50%" 计算出来是 640px，拿两者相比会把元素原有的
+// 样式当成用户的改动，凭空产出没人做过的改动记录。
+//
+// 前值优先取原始 inline 值（那是作者在源码里写的表达，AI 好对应），
+// 该属性原本没有 inline 声明时才回落到计算值（用户在屏幕上看到的起点）。
 export const diffSnapshot = snapshot => {
-  const { el, computed } = snapshot
+  const { el, computed, inline: original = {} } = snapshot
   if (!el.isConnected) return []
 
-  const inline = readInline(el)
+  const current = readInline(el)
+  const changes = []
 
-  return Object.entries(inline)
-    .filter(([prop, value]) => !sameValue(value, computed[prop]))
-    .map(([prop, value]) => ({
+  for (const [prop, value] of Object.entries(current)) {
+    if (sameValue(value, original[prop])) continue
+    changes.push({
       prop,
-      from: computed[prop] || '',
+      from: original[prop] || computed[prop] || '',
       to:   value,
+    })
+  }
+
+  // 原本有 inline 声明、之后被移除的属性同样是一次改动。
+  // 后值要读当前计算值——移除声明后元素回落到样式表，
+  // 快照里的计算值是移除前的，不是用户现在看到的。
+  const removed = Object.keys(original).filter(prop => !(prop in current))
+  if (removed.length) {
+    const now = getComputedStyle(el)
+    removed.forEach(prop => changes.push({
+      prop,
+      from: original[prop],
+      to:   now.getPropertyValue(prop).trim(),
     }))
-    .sort((a, b) => TRACKED_PROPS.indexOf(a.prop) - TRACKED_PROPS.indexOf(b.prop))
+  }
+
+  return changes.sort((a, b) =>
+    TRACKED_PROPS.indexOf(a.prop) - TRACKED_PROPS.indexOf(b.prop))
 }
 
 // 单条撤销：把某个属性还原到快照状态

@@ -15,9 +15,18 @@ var platform = typeof browser === 'undefined'
   ? chrome
   : browser
 
+// 页面尚未注入编辑器时没有接收方，这是预期情况而非错误。
+// MV3 的 sendMessage 返回 Promise，不接住就会变成 Uncaught (in promise)。
+const postToTab = (tabId, message) => {
+  try {
+    const result = platform.tabs.sendMessage(tabId, message)
+    if (result && typeof result.catch === 'function') result.catch(() => {})
+  } catch { /* 标签页已关闭或无接收方 */ }
+}
+
 const sendColorScheme = () => {
   platform.tabs.query({active: true, currentWindow: true}, ([tab]) => {
-    tab && platform.tabs.sendMessage(tab.id, {
+    if (tab) postToTab(tab.id, {
       action: 'COLOR_SCHEME',
       params: {mode:colorschemestate.mode},
     })

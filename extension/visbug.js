@@ -11,7 +11,8 @@ var platform = typeof browser === 'undefined'
   ? chrome
   : browser
 
-const toggleIn = ({id:tab_id}) => {
+// 注入是异步的：不等它完成就发消息，接收方还不存在
+const toggleIn = async ({id:tab_id}) => {
   // toggle out: it's currently loaded and injected
   if (state.loaded[tab_id] && state.injected[tab_id]) {
     platform.scripting.executeScript({
@@ -23,7 +24,7 @@ const toggleIn = ({id:tab_id}) => {
 
   // toggle in: it's loaded and needs injected
   else if (state.loaded[tab_id] && !state.injected[tab_id]) {
-    platform.scripting.executeScript({
+    await platform.scripting.executeScript({
       target: {tabId: tab_id},
       files: ['toolbar/restore.js'],
     })
@@ -34,11 +35,11 @@ const toggleIn = ({id:tab_id}) => {
 
   // fresh start in tab
   else {
-    platform.scripting.insertCSS({
+    await platform.scripting.insertCSS({
       target: {tabId: tab_id},
       files: ['toolbar/bundle.css' ],
     })
-    platform.scripting.executeScript({
+    await platform.scripting.executeScript({
       target: {tabId: tab_id},
       files: ['toolbar/inject.js'],
     })

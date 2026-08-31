@@ -125,6 +125,10 @@ app/
 - `app/utilities/common.js` — `isOffBounds` 增加穿透 shadow 边界的追溯（原实现的 `closest` 不跨 shadow root，会把本扩展自己的 UI 当成页面元素选中）
 - `app/features/selectable.js` — 导出可逆的 `pause` / `resume`（原 `disconnect` 单向不可恢复），并释放 `Tab` 键给编辑态切换
 - `app/components/vis-bug/vis-bug.element.js` — 三行挂载调用
+- `extension/visbug.js`、`extension/contextmenu/{colormode,colorscheme}.js` — 修复 service worker 竞态：
+  向尚未注入编辑器的标签页 `sendMessage` 会抛 `Could not establish connection`，
+  且 MV3 下该调用返回 Promise、无人 catch，装上扩展就会在扩展页看到 Uncaught 报错。
+  改为静默忽略「无接收方」这一预期情况，并在注入完成（await）后再发消息。
 
 新增代码全部隔离在 `app/core/` 与 `app/components/{props-panel,change-list,comment-layer}/`，便于日后 rebase 上游。
 

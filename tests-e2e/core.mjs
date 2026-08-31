@@ -66,5 +66,39 @@ console.log('\n───── 生成的提示词 ─────\n')
 console.log(result.prompt)
 console.log('───────────────────────\n')
 
+// ── 回归：元素原有的 inline style 不得被当成用户改动 ──
+const preExisting = await page.evaluate(async (base) => {
+  const { createStore } = await import(`${base}/__app/core/change-store.js`)
+  const store = createStore()
+  const el = document.querySelectorAll('.curve-card')[2]
+
+  // 页面作者写的 inline style：计算值与声明值单位不同
+  el.setAttribute('style', 'width: 50%; font-size: 1.2rem; padding-top: 2em')
+  store.track(el)
+
+  const untouched = store.read().edits.length
+
+  store.applyProp(el, 'border-radius', '12px')
+  const afterOneEdit = store.read().edits[0]?.changes || []
+
+  // 移除原有声明也算一次改动
+  store.applyProp(el, 'width', '')
+  const afterRemoval = store.read().edits[0]?.changes.find(c => c.prop === 'width')
+
+  el.removeAttribute('style')
+  return {
+    untouched,
+    editedProps: afterOneEdit.map(c => `${c.prop}:${c.from}→${c.to}`),
+    removal: afterRemoval ? `${afterRemoval.from}→${afterRemoval.to}` : null,
+  }
+}, origin)
+
+ok(preExisting.untouched === 0,
+   `元素原有 inline style 不产生假改动（选中后改动数 = ${preExisting.untouched}）`)
+ok(preExisting.editedProps.length === 1 && preExisting.editedProps[0].startsWith('border-radius'),
+   `只记录真正改的那一项：${JSON.stringify(preExisting.editedProps)}`)
+ok(preExisting.removal === '50%→260px',
+   `移除原有声明记为改动，前值取作者写的表达：width ${preExisting.removal}`)
+
 await browser.close(); await close()
 console.log(process.exitCode ? '结果：有失败项\n' : '结果：全部通过\n')
