@@ -14,12 +14,21 @@ var platform = typeof browser === 'undefined'
 // activeTab 在这些页面上无效，注入必然被拒绝
 const RESTRICTED = /^(chrome|edge|brave|about|devtools|view-source|chrome-extension|moz-extension):|^https:\/\/(chrome\.google\.com\/webstore|chromewebstore\.google\.com)/
 
+// MV3 的 action.* 返回 Promise：同步 try/catch 拦不住异步拒绝，
+// 延时清除那次调用更是整个落在 try 之外。标签页在这 2.6 秒内被关闭时
+// 会抛 "No tab with id"，正是本文件要消灭的那类未处理拒绝。
+const quiet = result => {
+  if (result && typeof result.catch === 'function') result.catch(() => {})
+  return result
+}
+
 const flashBadge = (tab_id, text, color) => {
-  try {
-    platform.action.setBadgeText({tabId: tab_id, text})
-    platform.action.setBadgeBackgroundColor({tabId: tab_id, color})
-    setTimeout(() => platform.action.setBadgeText({tabId: tab_id, text: ''}), 2600)
-  } catch { /* 标签页可能已关闭 */ }
+  quiet(platform.action.setBadgeText({tabId: tab_id, text}))
+  quiet(platform.action.setBadgeBackgroundColor({tabId: tab_id, color}))
+
+  // 不预判标签页是否还在：受限页面根本不会写入 state，
+  // 那样判断会让徽标永远留着。拒绝由 quiet 兜住即可。
+  setTimeout(() => quiet(platform.action.setBadgeText({tabId: tab_id, text: ''})), 2600)
 }
 
 // 每次点击都注册一个新 listener 会不断累积，改为全局注册一次。
