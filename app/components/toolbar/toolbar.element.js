@@ -79,7 +79,7 @@ export class ReviseToolbar extends HTMLElement {
         <div class="sep"></div>
         <button class="close icon-only" title="关闭编辑器">${ICONS.close}</button>
       </div>
-      <div class="toast"></div>`
+      `
 
     this.#bind()
     this.#unsubscribe = ChangeStore.subscribe(() => this.#schedule())
@@ -90,6 +90,8 @@ export class ReviseToolbar extends HTMLElement {
   disconnectedCallback() {
     this.#unsubscribe?.()
     if (this.#frame) cancelAnimationFrame(this.#frame)
+    clearTimeout(this.__t)
+    document.getElementById('visual-revise-toast')?.remove()
   }
 
   #schedule() {
@@ -121,13 +123,50 @@ export class ReviseToolbar extends HTMLElement {
         : btn.removeAttribute('data-on'))
   }
 
+  // toast 必须挂在 body 而不是工具条的 shadow 里：:host 上的
+  // transform: translateX(-50%) 会创建包含块，使内部 position: fixed
+  // 相对工具条而非视口定位——写 bottom 反而跑到了工具条上方。
+  #ensureToast() {
+    let el = document.getElementById('visual-revise-toast')
+    if (el) return el
+
+    el = document.createElement('div')
+    el.id = 'visual-revise-toast'
+    el.setAttribute('data-visual-revise-ui', '')
+    el.style.cssText = `
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%) translateY(6px);
+      z-index: 2147483647;
+      padding: 9px 16px;
+      font: 500 13px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      white-space: nowrap;
+      color: #fff;
+      background: #1c1c1c;
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgb(0 0 0 / .34), inset 0 0 0 1px rgb(255 255 255 / .07);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .16s ease, transform .16s ease;`
+
+    document.body.appendChild(el)
+    return el
+  }
+
   toast(message, kind = 'info') {
-    const el = this.#shadow.querySelector('.toast')
+    const el = this.#ensureToast()
+
     el.textContent = message
-    el.dataset.kind = kind
-    el.setAttribute('data-show', '')
+    el.style.color = kind === 'error' ? '#ff8f8f' : '#fff'
+    el.style.opacity = '1'
+    el.style.transform = 'translateX(-50%) translateY(0)'
+
     clearTimeout(this.__t)
-    this.__t = setTimeout(() => el.removeAttribute('data-show'), 2400)
+    this.__t = setTimeout(() => {
+      el.style.opacity = '0'
+      el.style.transform = 'translateX(-50%) translateY(6px)'
+    }, 2400)
   }
 
   #emit(name, detail) {

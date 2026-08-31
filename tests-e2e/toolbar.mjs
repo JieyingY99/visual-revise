@@ -83,7 +83,17 @@ await bar('.copy').click()
 await page.waitForTimeout(600)
 const clip = await page.evaluate(() => navigator.clipboard.readText())
 ok(clip.includes('border-radius'), '工具条复制提示词生效')
-ok(await bar('.toast').evaluate(el => el.hasAttribute('data-show')), '复制后显示反馈 toast')
+// toast 挂在 body 而非工具条 shadow 内：:host 的 transform 会创建包含块，
+// 放在里面的 fixed 定位会相对工具条而不是视口
+const toastState = await page.evaluate(() => {
+  const el = document.getElementById('visual-revise-toast')
+  if (!el) return null
+  const r = el.getBoundingClientRect()
+  return { opacity: el.style.opacity, bottomGap: Math.round(innerHeight - r.bottom), text: el.textContent }
+})
+ok(toastState?.opacity === '1', `复制后显示反馈 toast：${toastState?.text}`)
+ok(toastState && toastState.bottomGap < 60 && toastState.bottomGap > 0,
+   `toast 贴在视口底部而非工具条附近（距底 ${toastState?.bottomGap}px）`)
 
 // 记录按钮开合列表
 await bar('.list').click()

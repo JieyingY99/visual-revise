@@ -100,28 +100,6 @@ button.copy[data-ready] svg { color: var(--bar-accent); }
 }
 .count[data-empty] { background: rgb(255 255 255 / .16); color: var(--bar-dim); }
 
-/* 放屏幕底部：顶部区域已被工具条、属性面板与改动列表占满，
-   临时提示挤在那里必然遮挡其中之一 */
-.toast {
-  position: fixed;
-  bottom: 28px;
-  left: 50%;
-  transform: translateX(-50%) translateY(6px);
-  padding: 9px 16px;
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-  color: var(--bar-text);
-  background: #1c1c1c;
-  border-radius: 10px;
-  box-shadow: 0 6px 20px rgb(0 0 0 / .34), inset 0 0 0 1px rgb(255 255 255 / .07);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity .16s ease, transform .16s ease;
-}
-.toast[data-show] { opacity: 1; transform: translateX(-50%) translateY(0); }
-.toast[data-kind="error"] { color: #ff8f8f; }
-
 /* 窄屏时收起文字，只留图标 */
 @media (max-width: 860px) {
   .brand span, button:not(.copy) span:not(.count) { display: none; }

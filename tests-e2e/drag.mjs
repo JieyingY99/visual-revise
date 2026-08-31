@@ -43,8 +43,30 @@ await page.mouse.move(box.x - 200, box.y + 8, { steps: 8 })
 await page.waitForTimeout(200)
 
 const mid = await dragState()
-ok(mid.indicator === 'block' && mid.opacity === '0.4',
-   `拖拽进行中：指示线 ${mid.indicator}，被拖元素半透明 ${mid.opacity}`)
+ok(mid.indicator === 'block' && mid.opacity === '0.25',
+   `拖拽进行中：指示线 ${mid.indicator}，被拖元素压暗 ${mid.opacity}`)
+
+// 拖影必须存在并跟随指针
+const ghost1 = await page.evaluate(() => {
+  const g = document.getElementById('visual-revise-drag-ghost')
+  return g ? { left: parseFloat(g.style.left), top: parseFloat(g.style.top),
+               width: parseFloat(g.style.width), tag: g.tagName,
+               isOwnUI: g.hasAttribute('data-visual-revise-ui'),
+               pointerEvents: g.style.pointerEvents } : null
+})
+ok(!!ghost1, '拖拽时生成拖影')
+ok(ghost1?.tag === 'ARTICLE', `拖影是被拖元素的克隆（${ghost1?.tag}）`)
+ok(ghost1?.isOwnUI && ghost1?.pointerEvents === 'none',
+   '拖影标记为编辑器 UI 且不拦截指针（不会被自己选中）')
+
+await page.mouse.move(box.x - 320, box.y + 60, { steps: 4 })
+await page.waitForTimeout(120)
+const ghost2 = await page.evaluate(() => {
+  const g = document.getElementById('visual-revise-drag-ghost')
+  return g ? { left: parseFloat(g.style.left), top: parseFloat(g.style.top) } : null
+})
+ok(ghost2 && ghost2.left < ghost1.left && ghost2.top > ghost1.top,
+   `拖影跟随指针移动（${ghost1.left},${ghost1.top} → ${ghost2.left},${ghost2.top}）`)
 
 await page.evaluate(() => window.__visualRevise.setReorderMode(false))
 await page.waitForTimeout(200)
@@ -52,6 +74,8 @@ await page.waitForTimeout(200)
 const cancelled = await dragState()
 ok(cancelled.indicator === 'none', '取消后指示线隐藏')
 ok(cancelled.opacity === '', '取消后元素透明度还原')
+ok(await page.evaluate(() => !document.getElementById('visual-revise-drag-ghost')),
+   '取消后拖影已移除')
 ok(cancelled.props === 0, `取消不落下重排（改动 ${cancelled.props} 项）`)
 ok((await orders()).every(o => o === ''), '取消后无 order 写入')
 
@@ -106,6 +130,8 @@ const residue = await page.evaluate(() => ({
 ok(residue.props === 0, `十轮中断后无改动残留（${residue.props} 项）`)
 ok(residue.orders.every(o => o === ''), `十轮中断后无 order 残留`)
 ok(residue.opacities.every(o => o === ''), `十轮中断后无透明度残留`)
+ok(await page.evaluate(() => !document.getElementById('visual-revise-drag-ghost')),
+   '十轮中断后无拖影残留')
 ok(residue.indicator === 'none', `十轮中断后指示线已隐藏`)
 ok(residue.active === false, `十轮中断后模式已关闭`)
 ok(await page.evaluate(() => document.querySelectorAll('[data-vr-droppable]').length) === 0,

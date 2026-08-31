@@ -50,5 +50,21 @@ await page.evaluate(() => {
 await page.waitForTimeout(600)
 await shot('4-改动记录.png')
 
+// 5. 重排模式：可拖标记 + 拖影 + 插入指示线
+await page.evaluate(() => {
+  window.__visualRevise.store.undoEverything()
+  window.__visualRevise.setMode('reorder')
+})
+await page.waitForTimeout(500)
+
+const rb0 = await page.locator('.curve-card').nth(0).boundingBox()
+const rb2 = await page.locator('.curve-card').nth(2).boundingBox()
+await page.mouse.move(rb2.x + rb2.width / 2, rb2.y + 8)
+await page.mouse.down()
+await page.mouse.move(rb0.x + 30, rb0.y + 60, { steps: 12 })
+await page.waitForTimeout(400)
+await shot('5-重排拖影.png')
+await page.mouse.up()
+
 await browser.close(); await close()
 console.log('✔ 截图已生成')

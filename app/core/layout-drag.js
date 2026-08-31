@@ -122,6 +122,55 @@ const hideIndicator = () => {
   if (bar) bar.style.display = 'none'
 }
 
+const GHOST_ID = 'visual-revise-drag-ghost'
+const GHOST_MAX_AREA = 1600 * 1200   // 超大元素克隆开销过高，退化为轮廓
+
+// 拖影跟随指针，手上才有"拿着东西"的感觉。
+// 用克隆而非原元素：原元素要留在原位供插入位置计算，
+// 且移动它会触发容器重排，指示线会跟着乱跳。
+const createGhost = (el, clientX, clientY) => {
+  const rect = el.getBoundingClientRect()
+  const oversized = rect.width * rect.height > GHOST_MAX_AREA
+
+  const ghost = oversized ? document.createElement('div') : el.cloneNode(true)
+
+  ghost.id = GHOST_ID
+  ghost.setAttribute('data-visual-revise-ui', '')
+  ghost.removeAttribute?.('data-vr-draggable')
+  ghost.querySelectorAll?.('[data-vr-draggable]')
+    .forEach(n => n.removeAttribute('data-vr-draggable'))
+
+  ghost.style.cssText = `
+    position: fixed;
+    left: ${rect.left}px;
+    top: ${rect.top}px;
+    width: ${rect.width}px;
+    height: ${rect.height}px;
+    margin: 0;
+    z-index: 2147483646;
+    pointer-events: none;
+    opacity: .9;
+    transform: scale(.97) rotate(-1.2deg);
+    transform-origin: center;
+    box-shadow: 0 16px 40px rgb(0 0 0 / .38);
+    border-radius: ${getComputedStyle(el).borderRadius};
+    transition: none;
+    ${oversized ? 'background: rgb(13 153 255 / .16); border: 2px solid #0d99ff;' : ''}
+  `
+
+  document.body.appendChild(ghost)
+
+  return { ghost, offX: clientX - rect.left, offY: clientY - rect.top }
+}
+
+const moveGhost = (ghost, offX, offY, clientX, clientY) => {
+  if (!ghost) return
+  ghost.style.left = `${clientX - offX}px`
+  ghost.style.top  = `${clientY - offY}px`
+}
+
+const removeGhost = () => document.getElementById(GHOST_ID)?.remove()
+
 // 重排落到 order 上：纯 CSS、可被快照 diff 捕获、不改动 DOM 结构
 const applyOrder = (others, dragged, targetIndex) => {
   const ordered = [...others.slice(0, targetIndex), dragged, ...others.slice(targetIndex)]
@@ -158,14 +207,18 @@ export const createLayoutDrag = ({ onDone } = {}) => {
     e.stopPropagation()
 
     const others = siblings.filter(node => node !== el)
-    drag = { el, parent, others, row: isRow(parent), index: others.indexOf(el) }
-    el.style.opacity = '0.4'
+    const { ghost, offX, offY } = createGhost(el, e.clientX, e.clientY)
+
+    drag = { el, parent, others, row: isRow(parent), index: others.indexOf(el), ghost, offX, offY }
+    el.style.opacity = '0.25'
     document.addEventListener('pointermove', onPointerMove, true)
     document.addEventListener('pointerup', onPointerUp, true)
   }
 
   const onPointerMove = e => {
     if (!drag) return
+
+    moveGhost(drag.ghost, drag.offX, drag.offY, e.clientX, e.clientY)
     drag.index = dropIndexAt(drag.others, e.clientX, e.clientY, drag.row)
     showIndicator(drag.others, drag.index, drag.row)
   }
@@ -177,6 +230,7 @@ export const createLayoutDrag = ({ onDone } = {}) => {
     document.removeEventListener('pointermove', onPointerMove, true)
     document.removeEventListener('pointerup', onPointerUp, true)
     hideIndicator()
+    removeGhost()
 
     if (!drag) return
 
@@ -213,6 +267,7 @@ export const createLayoutDrag = ({ onDone } = {}) => {
     destroy() {
       this.setActive(false)
       clearDroppables()
+      removeGhost()
       document.getElementById(INDICATOR_ID)?.remove()
     },
   }
