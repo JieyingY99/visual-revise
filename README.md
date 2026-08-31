@@ -79,11 +79,20 @@
 
 ```bash
 npm run extension     # 构建扩展产物到 extension/
-npm run test:e2e      # 全量回归（7 个套件）
-npm run test:ext      # 真实扩展加载验证
-npm run test:live     # 真实线上站点验证
-npm run test:locate   # 端到端定位能力验证
+npm run test:e2e      # 全量回归（8 个套件，133 项断言）
+npm run test:ext      # 真实扩展加载与产物完整性
+npm run test:live     # 真实线上站点（example.com / MDN）
+npm run test:locate   # 端到端定位能力（CSS Modules 哈希场景）
 npm run zip           # 打包成可分发的 zip
+```
+
+测试需要系统已安装 Chrome（`playwright-core` 不自带浏览器）。
+路径按平台自动推断，也可显式指定：
+
+```bash
+CHROME_PATH=/path/to/chrome npm run test:e2e
+DEMO_URL=http://localhost:3000 node tests-e2e/real-demo.mjs   # 在自己的站点上跑一遍并截图
+node tests-e2e/shots.mjs                                      # 重新生成 .screenshots/
 ```
 
 代码分层：
@@ -123,13 +132,20 @@ app/
 对上游文件的修改仅三处，均为必要的能力缺口：
 
 - `app/utilities/common.js` — `isOffBounds` 增加穿透 shadow 边界的追溯（原实现的 `closest` 不跨 shadow root，会把本扩展自己的 UI 当成页面元素选中）
-- `app/features/selectable.js` — 导出可逆的 `pause` / `resume`（原 `disconnect` 单向不可恢复），并释放 `Tab` 键给编辑态切换
+- `app/features/selectable.js` — 导出可逆的 `pause` / `resume`（原 `disconnect` 单向不可恢复），
+  释放 `Tab` 键给编辑态切换，并把绑定/解绑收敛到同一份 `HOTKEYS` 清单
+  （原先两处手写已经漂移，导致每次 resume 累积一批快捷键处理器）
 - `app/components/vis-bug/vis-bug.element.js` — 三行挂载调用
-- `extension/visbug.js`、`extension/contextmenu/{colormode,colorscheme}.js` — 修复 service worker 竞态：
-  向尚未注入编辑器的标签页 `sendMessage` 会抛 `Could not establish connection`，
-  且 MV3 下该调用返回 Promise、无人 catch，装上扩展就会在扩展页看到 Uncaught 报错。
-  改为静默忽略「无接收方」这一预期情况，并在注入完成（await）后再发消息。
+- `extension/visbug.js`、`extension/toolbar/{inject,restore}.js`、
+  `extension/contextmenu/{colormode,colorscheme}.js` — service worker 相关修复：
+  向尚未注入编辑器的标签页 `sendMessage` 会抛 `Could not establish connection`
+  并冒成 Uncaught；`tabs.onUpdated` 未按 `changeInfo` 过滤会让状态机与页面脱节，
+  导致在已有编辑器的页面上重复注入。改为静默忽略「无接收方」、注入后再发消息、
+  仅在真正导航时重置状态，并以页面里是否已有 `<vis-bug>` 作幂等判据。
 
 新增代码全部隔离在 `app/core/` 与 `app/components/{props-panel,change-list,comment-layer}/`，便于日后 rebase 上游。
 
-原始 VisBug 说明见 [readme.md](./readme.md)，许可证见 [LICENSE](./LICENSE)。
+上游原始说明见 [UPSTREAM-README.md](./UPSTREAM-README.md)，许可证见 [LICENSE](./LICENSE)。
+
+> 注：macOS 文件系统不区分大小写，本项目的 `README.md` 会覆盖上游的 `readme.md`，
+> 因此上游说明另存为 `UPSTREAM-README.md`。
