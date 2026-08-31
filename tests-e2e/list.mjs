@@ -87,5 +87,40 @@ const afterReset = await page.evaluate(() => ({
 ok(afterReset.stats.total === 0, '重置后记录清空')
 ok(afterReset.titleSize === '40px', `重置后页面还原：font-size = ${afterReset.titleSize}`)
 
+// ── 回归：外部撤销后面板字段必须回读真实值 ──
+// force：此时选中框覆盖层还在，Playwright 的可操作性检查会拒绝点击，
+// 而真实用户点击时 VisBug 用 deepElementFromPoint 能穿透覆盖层
+await page.locator('.curve-card').nth(1).click({ position: { x: 130, y: 8 }, force: true })
+await page.waitForTimeout(400)
+
+const radius = page.locator('visual-revise-panel input[data-prop="border-radius"]')
+await radius.fill('30px')
+await radius.dispatchEvent('change')
+await page.waitForTimeout(300)
+const afterEdit = await radius.inputValue()
+
+// 从面板之外触发撤销（reset 按钮的点击路径已由上面的用例覆盖，
+// 这里要验证的是面板对外部 store 变更的响应）
+await page.evaluate(() => window.__visualRevise.store.undoEverything())
+await page.waitForTimeout(400)
+
+// 聚焦中的字段在同步时被有意跳过；失焦后应补上
+const focusedStill = await radius.inputValue()
+await page.evaluate(() => document.activeElement?.blur?.())
+await page.waitForTimeout(300)
+
+const afterReset2 = await radius.inputValue()
+const realValue = await page.evaluate(() =>
+  getComputedStyle(document.querySelectorAll('.curve-card')[1]).borderRadius)
+
+ok(afterEdit === '30px', `改动后字段显示新值：${afterEdit}`)
+ok(focusedStill === '30px',
+   `外部撤销时不打断正在编辑的字段（仍显示 ${focusedStill}）`)
+ok(afterReset2 === realValue,
+   `字段失焦后回读真实值：字段=${afterReset2} 实际=${realValue}`)
+
+const dirtyLeft = await page.locator('visual-revise-panel label.name[data-dirty]').count()
+ok(dirtyLeft === 0, `重置后 dirty 标记已清空（${dirtyLeft} 个）`)
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

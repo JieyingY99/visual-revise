@@ -1,4 +1,4 @@
-import { GROUPS } from '../../core/tracked-props.js'
+import { GROUPS, sameValue } from '../../core/tracked-props.js'
 import { CONTROLS, SIDE_GROUPS, SIDE_PROPS, isRelevant, coerceLength, stepValue, stepSize } from '../../core/controls.js'
 import { ChangeStore } from '../../core/change-store.js'
 import { readComputed } from '../../core/snapshot.js'
@@ -46,7 +46,10 @@ export class PropsPanel extends HTMLElement {
     this.addEventListener('keydown', e => e.stopPropagation())
 
     this.#shadow.innerHTML = `<style>${panel_css}</style><div id="root"></div>`
-    this.#unsubscribe = ChangeStore.subscribe(() => this.#refreshDirty())
+    this.#unsubscribe = ChangeStore.subscribe(() => {
+      this.#syncValues()
+      this.#refreshDirty()
+    })
     this.render()
   }
 
@@ -97,6 +100,53 @@ export class PropsPanel extends HTMLElement {
     if (!target) return new Set()
     const entry = ChangeStore.read().edits.find(e => e.el === target)
     return new Set(entry ? entry.changes.map(c => c.prop) : [])
+  }
+
+  // 改动可能来自面板之外：改动列表的撤销、整体重置、JSON 导入。
+  // 只刷新 dirty 标记而不回读值，会让字段停留在已被撤销的旧数字上，
+  // 下一次拖动标签就从那个旧数字继续，等于把撤销掉的改动又加回去。
+  #syncValues() {
+    const target = this.target
+    if (!target?.isConnected) return
+
+    this.#computed = readComputed(target)
+    const active = this.#shadow.activeElement
+
+    for (const el of this.#shadow.querySelectorAll('[data-prop]')) {
+      if (el === active) continue          // 不打断正在输入的字段
+
+      const prop = el.dataset.prop
+      if (!prop || prop.includes(',')) continue
+
+      const value = this.#computed[prop] ?? ''
+
+      if (el.tagName === 'SELECT') {
+        if (el.value !== value) el.value = value
+        continue
+      }
+
+      if (el.tagName === 'BUTTON') {       // segment 分段按钮
+        el.dataset.value === value
+          ? el.setAttribute('data-on', '')
+          : el.removeAttribute('data-on')
+        continue
+      }
+
+      if (el.tagName !== 'INPUT') continue
+
+      if (el.dataset.color !== undefined) {
+        const hex = rgbToHex(value)
+        if (el.value !== hex) el.value = hex
+        const swatch = el.closest('.swatch')?.querySelector('i')
+        if (swatch) swatch.style.background = isTransparent(value) ? 'transparent' : value
+        continue
+      }
+
+      // 颜色行里的文本输入与颜色选择器共用 data-prop
+      const isColorText = el.type === 'text' && el.closest('.color-row')
+      const next = isColorText && isTransparent(value) ? '' : value
+      if (el.value !== next) el.value = next
+    }
   }
 
   #refreshDirty() {
@@ -314,10 +364,22 @@ export class PropsPanel extends HTMLElement {
     on('.copy', 'click', () => this.dispatchEvent(new CustomEvent('vr-copy', { bubbles: true, composed: true })))
     on('.list', 'click', () => this.dispatchEvent(new CustomEvent('vr-open-list', { bubbles: true, composed: true })))
 
+    // 聚焦中的字段在同步时被跳过（不打断输入），失焦时补一次，
+    // 否则外部撤销发生在用户正编辑该字段时，它会一直停在旧值上
+    on('input[data-prop]', 'blur', () => this.#syncValues())
+
     on('input[data-prop]', 'change', e => {
       const el = e.currentTarget
       if (el.dataset.color) return
-      this.#commit(el.dataset.prop, el.value)
+
+      const prop = el.dataset.prop
+      const next = CONTROLS[prop]?.coerce?.(el.value) ?? el.value
+
+      // 与当前实际值相同就不是一次编辑。程序同步字段值后浏览器可能
+      // 补发 change，若照单提交会把刚被外部撤销的改动又写回去。
+      if (sameValue(next, this.#computed[prop])) return
+
+      this.#commit(prop, el.value)
     })
 
     on('input[data-color]', 'input', e => {
