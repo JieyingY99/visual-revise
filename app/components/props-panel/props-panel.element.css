@@ -166,7 +166,7 @@ label.name[data-dirty] { color: var(--vr-accent); font-weight: 500; }
   font-family: ui-monospace, Menlo, monospace;
 }
 
-input, select {
+input {
   width: 100%;
   height: 30px;
   padding: 0 8px;
@@ -179,21 +179,9 @@ input, select {
   outline: none;
 }
 .control:has(.prefix) input { padding-left: 24px; }
-input:hover, select:hover { background: var(--vr-field-hi); }
-input:focus, select:focus { border-color: var(--vr-accent); background: var(--vr-field); }
+input:hover { background: var(--vr-field-hi); }
+input:focus { border-color: var(--vr-accent); background: var(--vr-field); }
 input::placeholder { color: var(--vr-mute); }
-
-select {
-  cursor: pointer;
-  appearance: none;
-  padding-right: 22px;
-  background-image:
-    linear-gradient(45deg, transparent 50%, var(--vr-label) 50%),
-    linear-gradient(135deg, var(--vr-label) 50%, transparent 50%);
-  background-position: right 10px center, right 6px center;
-  background-size: 4px 4px, 4px 4px;
-  background-repeat: no-repeat;
-}
 
 .segment {
   display: flex;
@@ -237,26 +225,8 @@ select {
   color: var(--vr-accent);
 }
 
-.color-row { display: flex; gap: 6px; align-items: center; }
-.swatch {
-  flex: none;
-  width: 30px; height: 30px;
-  border-radius: 5px;
-  border: 1px solid var(--vr-border);
-  cursor: pointer;
-  padding: 0;
-  position: relative;
-  overflow: hidden;
-  background-image:
-    linear-gradient(45deg, #5a5a5a 25%, transparent 25%, transparent 75%, #5a5a5a 75%),
-    linear-gradient(45deg, #5a5a5a 25%, transparent 25%, transparent 75%, #5a5a5a 75%);
-  background-size: 8px 8px;
-  background-position: 0 0, 4px 4px;
-}
-.swatch i { position: absolute; inset: 0; display: block; }
-.swatch input[type=color] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-.color-row .control { flex: 1; min-width: 0; }
-.color-row input[type=text] { font-family: ui-monospace, Menlo, monospace; }
+.with-action { display: flex; gap: 6px; align-items: center; }
+.with-action .control { flex: 1; min-width: 0; }
 
 .empty {
   padding: 32px 20px;

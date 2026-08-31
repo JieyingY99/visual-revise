@@ -9,6 +9,8 @@ import { stableClasses } from '../../core/anchors.js'
 import { findSharedElements, describeShared } from '../../core/shared-elements.js'
 import { loadLocalFonts, isSupported as fontsSupported } from '../../core/local-fonts.js'
 import { containScroll } from '../../core/dom-utils.js'
+import '../controls/select.element.js'
+import '../controls/color.element.js'
 import { default as panel_css } from './props-panel.element.css'
 
 const rgbToHex = value => {
@@ -128,8 +130,9 @@ export class PropsPanel extends HTMLElement {
 
       const value = this.#computed[prop] ?? ''
 
-      if (el.tagName === 'SELECT') {
-        if (el.value !== value) el.value = value
+      if (el.tagName === 'VR-SELECT' || el.tagName === 'VR-COLOR') {
+        const next = el.tagName === 'VR-COLOR' && isTransparent(value) ? '' : value
+        if (el.getAttribute('value') !== next) el.setAttribute('value', next)
         continue
       }
 
@@ -142,18 +145,7 @@ export class PropsPanel extends HTMLElement {
 
       if (el.tagName !== 'INPUT') continue
 
-      if (el.dataset.color !== undefined) {
-        const hex = rgbToHex(value)
-        if (el.value !== hex) el.value = hex
-        const swatch = el.closest('.swatch')?.querySelector('i')
-        if (swatch) swatch.style.background = isTransparent(value) ? 'transparent' : value
-        continue
-      }
-
-      // 颜色行里的文本输入与颜色选择器共用 data-prop
-      const isColorText = el.type === 'text' && el.closest('.color-row')
-      const next = isColorText && isTransparent(value) ? '' : value
-      if (el.value !== next) el.value = next
+      if (el.value !== value) el.value = value
     }
   }
 
@@ -279,36 +271,27 @@ export class PropsPanel extends HTMLElement {
 
     const field = (() => {
       switch (spec.type) {
-        case 'select':
-          return `<div class="control"><select data-prop="${prop}">
-            ${!spec.options.includes(value) ? `<option value="${value}" selected>${value || '—'}</option>` : ''}
-            ${spec.options.map(o => `<option value="${o}"${o === value ? ' selected' : ''}>${o}</option>`).join('')}
-          </select></div>`
+        case 'select': {
+          const options = spec.options.includes(value) || !value
+            ? spec.options
+            : [value, ...spec.options]
+          return `<vr-select data-prop="${prop}" value="${value}"
+            options='${JSON.stringify(options).replace(/'/g, '&apos;')}'></vr-select>`
+        }
 
         case 'segment':
           return `<div class="segment">${spec.options.map(([val, label]) =>
             `<button data-prop="${prop}" data-value="${val}"${val === value ? ' data-on' : ''}>${label}</button>`
           ).join('')}</div>`
 
-        case 'color': {
-          const hex = rgbToHex(value)
-          const shown = isTransparent(value) ? '' : value
-          return `<div class="color-row">
-            <button class="swatch" title="选择颜色">
-              <i style="background:${isTransparent(value) ? 'transparent' : value}"></i>
-              <input type="color" data-prop="${prop}" data-color value="${hex}">
-            </button>
-            <div class="control">
-              <input type="text" data-prop="${prop}" value="${shown}" placeholder="transparent">
-            </div>
-          </div>`
-        }
+        case 'color':
+          return `<vr-color data-prop="${prop}" value="${isTransparent(value) ? '' : value}"></vr-color>`
 
         case 'text': {
           const input = `<div class="control"><input type="text" data-prop="${prop}"
             value="${String(value).replace(/"/g, '&quot;')}"></div>`
           return prop === 'font-family' && fontsSupported()
-            ? `<div class="color-row">${input}
+            ? `<div class="with-action">${input}
                  <button class="icon-btn load-fonts" title="读取本地已安装字体">⤓</button>
                </div>`
             : input
@@ -403,17 +386,11 @@ export class PropsPanel extends HTMLElement {
       this.#commit(prop, el.value)
     })
 
-    on('input[data-color]', 'input', e => {
-      const el = e.currentTarget
-      this.#commit(el.dataset.prop, el.value, { coerce: false })
-      const swatch = el.closest('.swatch')?.querySelector('i')
-      if (swatch) swatch.style.background = el.value
-      const text = el.closest('.color-row')?.querySelector('input[type=text]')
-      if (text) text.value = el.value
-    })
+    on('vr-color[data-prop]', 'vr-color', e =>
+      this.#commit(e.currentTarget.dataset.prop, e.detail.value || '', { coerce: false }))
 
-    on('select[data-prop]', 'change', e =>
-      this.#commit(e.currentTarget.dataset.prop, e.currentTarget.value, { coerce: false }))
+    on('vr-select[data-prop]', 'vr-select', e =>
+      this.#commit(e.currentTarget.dataset.prop, e.detail.value, { coerce: false }))
 
     on('.segment button', 'click', e => {
       const btn = e.currentTarget
