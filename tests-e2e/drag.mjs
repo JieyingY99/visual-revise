@@ -18,6 +18,23 @@ const dragState = () => page.evaluate(() => ({
   props:     window.__visualRevise.store.stats().props,
 }))
 
+// ── 进入模式后可拖区域必须可见 ──
+const hints = await page.evaluate(() => ({
+  droppable: document.querySelectorAll('[data-vr-droppable]').length,
+  draggable: document.querySelectorAll('[data-vr-draggable]').length,
+  styleTag:  !!document.getElementById('visual-revise-drag-hints'),
+  cardsMarked: document.querySelector('.cards')?.hasAttribute('data-vr-droppable'),
+  // 标记不能写进 inline style，否则会被当成用户改动
+  noInlinePollution: Array.from(document.querySelectorAll('.curve-card'))
+    .every(c => !c.getAttribute('style')),
+}))
+ok(hints.styleTag, '已注入可拖区域的提示样式')
+ok(hints.cardsMarked, 'flex 容器被标记为可拖放区域')
+ok(hints.draggable >= 3, `可拖子元素已标记（${hints.draggable} 个）`)
+ok(hints.noInlinePollution, '标记不写 inline style，不污染改动记录')
+ok((await page.evaluate(() => window.__visualRevise.store.stats().props)) === 0,
+   '进入模式本身不产生任何改动记录')
+
 // ── 拖拽中途取消：必须完整收尾，且不落下重排 ──
 const box = await page.locator('.curve-card').nth(2).boundingBox()
 await page.mouse.move(box.x + box.width / 2, box.y + 8)
@@ -91,6 +108,8 @@ ok(residue.orders.every(o => o === ''), `十轮中断后无 order 残留`)
 ok(residue.opacities.every(o => o === ''), `十轮中断后无透明度残留`)
 ok(residue.indicator === 'none', `十轮中断后指示线已隐藏`)
 ok(residue.active === false, `十轮中断后模式已关闭`)
+ok(await page.evaluate(() => document.querySelectorAll('[data-vr-droppable]').length) === 0,
+   '关闭模式后可拖标记已清除')
 
 // 之后仍能正常拖拽
 await page.evaluate(() => window.__visualRevise.setReorderMode(true))
@@ -104,9 +123,17 @@ await page.waitForTimeout(150)
 await page.mouse.up()
 await page.waitForTimeout(300)
 
-const revived = await page.evaluate(() =>
-  window.__visualRevise.store.read().edits.flatMap(e => e.changes).filter(c => c.prop === 'order').length)
-ok(revived === 3, `十轮中断之后拖拽仍能正常提交重排（写入 ${revived} 个 order）`)
+// 断言重排结果本身，而不是改动条数：落回 order:0 的元素与默认值相同，
+// 会被"等值不记录"正确过滤掉，条数取决于最终落位
+const revived = await page.evaluate(() => ({
+  orders: Array.from(document.querySelectorAll('.curve-card')).map(c => c.style.order),
+  recorded: window.__visualRevise.store.read().edits
+    .flatMap(e => e.changes).filter(c => c.prop === 'order').length,
+}))
+ok(revived.orders.join(',') === '1,2,0',
+   `十轮中断之后拖拽仍能正常提交重排：order = [${revived.orders}]`)
+ok(revived.recorded === 2,
+   `落回默认值的那一项不计入改动（记录 ${revived.recorded} 条，写入 3 个 order）`)
 
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

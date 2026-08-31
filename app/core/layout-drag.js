@@ -3,6 +3,59 @@ import { isOffBounds } from '../utilities/common.js'
 import { pageElementAt, isEditorUI } from './dom-utils.js'
 
 const INDICATOR_ID = 'visual-revise-drop-indicator'
+const HINT_STYLE_ID = 'visual-revise-drag-hints'
+
+// 用属性 + 全局样式表标记可拖区域，而不是写 inline style——
+// 后者会被快照 diff 当成用户改动记进提示词。
+const HINT_CSS = `
+  [data-vr-droppable] {
+    outline: 1px dashed rgba(13, 153, 255, .5) !important;
+    outline-offset: 3px !important;
+  }
+  [data-vr-draggable] { cursor: grab !important; }
+  [data-vr-draggable]:hover {
+    outline: 2px solid rgba(13, 153, 255, .85) !important;
+    outline-offset: 1px !important;
+  }`
+
+const ensureHintStyle = () => {
+  if (document.getElementById(HINT_STYLE_ID)) return
+
+  const style = document.createElement('style')
+  style.id = HINT_STYLE_ID
+  style.setAttribute('data-visual-revise-ui', '')
+  style.textContent = HINT_CSS
+  document.head.appendChild(style)
+}
+
+// 扫描整页开销不小，设上限并跳过不可见元素；
+// 真实页面里可重排的容器通常只有个位数
+const SCAN_LIMIT = 4000
+
+const markDroppables = () => {
+  ensureHintStyle()
+
+  let scanned = 0
+  for (const el of document.querySelectorAll('body *')) {
+    if (++scanned > SCAN_LIMIT) break
+    if (el.children.length < 2 || isOffBounds(el)) continue
+
+    const cs = getComputedStyle(el)
+    if (!/flex|grid/.test(cs.display)) continue
+    if (cs.visibility === 'hidden' || cs.display === 'none') continue
+
+    el.setAttribute('data-vr-droppable', '')
+    Array.from(el.children).forEach(child => {
+      if (!isOffBounds(child)) child.setAttribute('data-vr-draggable', '')
+    })
+  }
+}
+
+const clearDroppables = () => {
+  document.querySelectorAll('[data-vr-droppable]').forEach(el => el.removeAttribute('data-vr-droppable'))
+  document.querySelectorAll('[data-vr-draggable]').forEach(el => el.removeAttribute('data-vr-draggable'))
+  document.getElementById(HINT_STYLE_ID)?.remove()
+}
 
 const indicator = () => {
   let el = document.getElementById(INDICATOR_ID)
@@ -144,14 +197,22 @@ export const createLayoutDrag = ({ onDone } = {}) => {
     setActive(on) {
       active = on
       if (on) {
+        markDroppables()
         document.addEventListener('pointerdown', onPointerDown, true)
       } else {
         document.removeEventListener('pointerdown', onPointerDown, true)
         endDrag()   // 取消而非提交：模式被关掉时不应落下一次重排
+        clearDroppables()
       }
+    },
+
+    // 页面结构变化后重新标记（例如重排完成、或 SPA 切换了视图）
+    refresh() {
+      if (active) markDroppables()
     },
     destroy() {
       this.setActive(false)
+      clearDroppables()
       document.getElementById(INDICATOR_ID)?.remove()
     },
   }
