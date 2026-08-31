@@ -7,6 +7,7 @@ export class CommentLayer extends HTMLElement {
   #draft = null          // { el, x, y, editingId }
   #unsubscribe = null
   #reposition = null
+  #frame = null
 
   constructor() {
     super()
@@ -17,9 +18,12 @@ export class CommentLayer extends HTMLElement {
     this.setAttribute('data-visual-revise-ui', '')
     this.addEventListener('keydown', e => e.stopPropagation())
     this.#shadow.innerHTML = `<style>${layer_css}</style><div id="root"></div>`
-    this.#unsubscribe = ChangeStore.subscribe(() => this.render())
+    this.#unsubscribe = ChangeStore.subscribe(() => this.schedule())
 
-    this.#reposition = () => this.render()
+    // scroll 与 resize 会以远高于帧率的频率触发，而每次 render 都要为
+    // 每个 pin 取一次 getBoundingClientRect（强制重排）并重建 innerHTML。
+    // 合并到同一帧只渲染一次。
+    this.#reposition = () => this.schedule()
     addEventListener('scroll', this.#reposition, { passive: true })
     addEventListener('resize', this.#reposition, { passive: true })
 
@@ -28,8 +32,17 @@ export class CommentLayer extends HTMLElement {
 
   disconnectedCallback() {
     this.#unsubscribe?.()
+    if (this.#frame) cancelAnimationFrame(this.#frame)
     removeEventListener('scroll', this.#reposition)
     removeEventListener('resize', this.#reposition)
+  }
+
+  schedule() {
+    if (this.#frame) return
+    this.#frame = requestAnimationFrame(() => {
+      this.#frame = null
+      this.render()
+    })
   }
 
   get active() { return this.#active }

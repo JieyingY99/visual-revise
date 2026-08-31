@@ -122,5 +122,49 @@ ok(afterReset2 === realValue,
 const dirtyLeft = await page.locator('visual-revise-panel label.name[data-dirty]').count()
 ok(dirtyLeft === 0, `重置后 dirty 标记已清空（${dirtyLeft} 个）`)
 
+// ── 回归：高频更新不得重建 header/footer，否则拖动手势会被摧毁 ──
+await page.evaluate(() => {
+  const list = window.__visualRevise.list
+  list.hidden = false
+  list.render()
+})
+await page.waitForTimeout(300)
+
+const stability = await page.evaluate(async () => {
+  const list   = window.__visualRevise.list
+  const store  = window.__visualRevise.store
+  const shadow = list.shadowRoot
+
+  const header = shadow.querySelector('header')
+  const footer = shadow.querySelector('footer')
+  const copyBtn = shadow.querySelector('.copy')
+
+  const el = document.querySelectorAll('.curve-card')[1]
+  store.track(el)
+
+  // 模拟拖动标签：以指针事件的频率连续提交
+  for (let i = 0; i < 30; i++) store.applyProp(el, 'padding-top', `${20 + i}px`)
+
+  await new Promise(r => requestAnimationFrame(r))
+  await new Promise(r => requestAnimationFrame(r))
+
+  return {
+    sameHeader: shadow.querySelector('header') === header,
+    sameFooter: shadow.querySelector('footer') === footer,
+    sameCopy:   shadow.querySelector('.copy') === copyBtn,
+    tabText:    shadow.querySelector('.tabs button[data-tab="all"]').textContent,
+    items:      shadow.querySelectorAll('.item').length,
+    applied:    el.style.paddingTop,
+  }
+})
+
+ok(stability.sameHeader && stability.sameFooter && stability.sameCopy,
+   `30 次连续更新后 header/footer/按钮均为同一节点（拖动手势不会被打断）`)
+ok(stability.items === 1 && stability.applied === '49px',
+   `列表内容正常更新：${stability.items} 项，最终值 ${stability.applied}`)
+ok(stability.tabText.includes('1'), `计数同步更新：${stability.tabText.trim()}`)
+
+await page.evaluate(() => window.__visualRevise.store.undoEverything())
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

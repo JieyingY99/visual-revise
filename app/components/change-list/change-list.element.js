@@ -47,6 +47,8 @@ export class ChangeList extends HTMLElement {
   #shadow
   #tab = 'all'
   #unsubscribe = null
+  #frame = null
+  #built = false
 
   constructor() {
     super()
@@ -57,21 +59,70 @@ export class ChangeList extends HTMLElement {
     this.setAttribute('data-visual-revise-ui', '')
     this.addEventListener('keydown', e => e.stopPropagation())
     this.#shadow.innerHTML = `<style>${list_css}</style><div id="root"></div>`
-    this.#unsubscribe = ChangeStore.subscribe(() => this.render())
+    this.#buildSkeleton()
+    this.#unsubscribe = ChangeStore.subscribe(() => this.schedule())
     this.render()
   }
 
   disconnectedCallback() {
     this.#unsubscribe?.()
+    if (this.#frame) cancelAnimationFrame(this.#frame)
     clearHighlight()
   }
 
-  render() {
-    const root = this.#shadow.querySelector('#root')
-    if (!root) return
+  // 合并同一帧内的多次通知：拖动面板标签时 applyProp 会以指针事件的
+  // 频率触发订阅，逐次全量渲染既浪费也会打断交互。
+  schedule() {
+    if (this.#frame) return
+    this.#frame = requestAnimationFrame(() => {
+      this.#frame = null
+      this.render()
+    })
+  }
 
+  // header 与 footer 只建一次。它们若随每次通知重建，正在进行的
+  // 面板拖动会因为 pointer capture 的目标节点被替换而当场中断。
+  #buildSkeleton() {
+    const root = this.#shadow.querySelector('#root')
+
+    root.innerHTML = `
+      <header>
+        <div class="tabs">
+          <button data-tab="all">全部 0</button>
+          <button data-tab="style">配置 0</button>
+          <button data-tab="comment">评论 0</button>
+        </div>
+        <button class="icon-btn close" title="关闭">×</button>
+      </header>
+      <div class="items"></div>
+      <footer>
+        <button class="primary copy" disabled>复制提示词</button>
+        <button class="ghost export" disabled title="导出为 JSON，交给开发导入">导出</button>
+        <button class="ghost import" title="导入他人导出的 JSON 配置">导入</button>
+        <button class="ghost danger reset" title="撤销全部改动">重置</button>
+      </footer>`
+
+    this.#bindStatic()
+    this.#makeDraggable(root.querySelector('header'))
+    this.#built = true
+  }
+
+  render() {
+    if (!this.#built) return
+
+    const shadow = this.#shadow
     const { edits, comments } = ChangeStore.read()
     const stats = ChangeStore.stats()
+
+    const label = { all: `全部 ${stats.total}`, style: `配置 ${stats.props}`, comment: `评论 ${stats.comments}` }
+    shadow.querySelectorAll('.tabs button').forEach(btn => {
+      const key = btn.dataset.tab
+      if (btn.textContent !== label[key]) btn.textContent = label[key]
+      key === this.#tab ? btn.setAttribute('data-on', '') : btn.removeAttribute('data-on')
+    })
+
+    shadow.querySelector('.copy').disabled   = stats.total === 0
+    shadow.querySelector('.export').disabled = stats.total === 0
 
     const showStyles   = this.#tab === 'all' || this.#tab === 'style'
     const showComments = this.#tab === 'all' || this.#tab === 'comment'
@@ -81,26 +132,12 @@ export class ChangeList extends HTMLElement {
       ...(showComments ? comments.map(c => this.#renderComment(c)) : []),
     ]
 
-    root.innerHTML = `
-      <header>
-        <div class="tabs">
-          <button data-tab="all"${this.#tab === 'all' ? ' data-on' : ''}>全部 ${stats.total}</button>
-          <button data-tab="style"${this.#tab === 'style' ? ' data-on' : ''}>配置 ${stats.props}</button>
-          <button data-tab="comment"${this.#tab === 'comment' ? ' data-on' : ''}>评论 ${stats.comments}</button>
-        </div>
-        <button class="icon-btn close" title="关闭">×</button>
-      </header>
-      <div class="items">
-        ${items.length ? items.join('') : '<div class="empty">还没有任何改动<br>在页面上选中元素并调整属性</div>'}
-      </div>
-      <footer>
-        <button class="primary copy"${stats.total ? '' : ' disabled'}>复制提示词</button>
-        <button class="ghost export"${stats.total ? '' : ' disabled'} title="导出为 JSON，交给开发导入">导出</button>
-        <button class="ghost import" title="导入他人导出的 JSON 配置">导入</button>
-        <button class="ghost danger reset" title="撤销全部改动">重置</button>
-      </footer>`
+    const container = shadow.querySelector('.items')
+    container.innerHTML = items.length
+      ? items.join('')
+      : '<div class="empty">还没有任何改动<br>在页面上选中元素并调整属性</div>'
 
-    this.#bind()
+    this.#bindItems()
   }
 
   #renderEdit(entry) {
@@ -138,7 +175,8 @@ export class ChangeList extends HTMLElement {
       : edits.find(e => e.id === id)?.el
   }
 
-  #bind() {
+  // header / footer 的事件只绑一次，它们的节点不会被重建
+  #bindStatic() {
     const shadow = this.#shadow
     const on = (sel, evt, fn) => shadow.querySelectorAll(sel).forEach(el => el.addEventListener(evt, fn))
 
@@ -176,6 +214,12 @@ export class ChangeList extends HTMLElement {
       ChangeStore.undoEverything()
       clearHighlight()
     })
+  }
+
+  // 列表项每次渲染都会重建，事件随之重绑
+  #bindItems() {
+    const shadow = this.#shadow
+    const on = (sel, evt, fn) => shadow.querySelectorAll(sel).forEach(el => el.addEventListener(evt, fn))
 
     on('.item', 'mouseenter', e =>
       highlight(this.#elementOf(e.currentTarget.dataset.id, e.currentTarget.dataset.kind)))
@@ -206,8 +250,6 @@ export class ChangeList extends HTMLElement {
       e.stopPropagation()
       ChangeStore.removeComment(e.currentTarget.dataset.id)
     })
-
-    this.#makeDraggable(shadow.querySelector('header'))
   }
 
   #makeDraggable(handle) {
