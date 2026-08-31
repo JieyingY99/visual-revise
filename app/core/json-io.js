@@ -41,27 +41,44 @@ export const downloadJSON = (meta) => {
   return data
 }
 
+// 任何一次 querySelector 都可能因选择器语法非法而抛错：Tailwind 的类名
+// 常含 CSS 保留字符（hover:bg-blue-500、w-1/2、top-[3px]）。一次抛错若
+// 逸出，整个导入会中断，而前面已经应用的记录既不回滚也不上报。
+const query = selector => {
+  if (!selector) return null
+  try {
+    return document.querySelector(selector)
+  } catch {
+    return null
+  }
+}
+
+const queryAll = selector => {
+  if (!selector) return []
+  try {
+    return Array.from(document.querySelectorAll(selector))
+  } catch {
+    return []
+  }
+}
+
 // 选择器在另一台机器 / 另一次构建后可能失效（类名被重新哈希），
 // 因此按 选择器 → 文本特征 → DOM 路径 的顺序逐级回退。
 const resolveElement = record => {
   const { selector, anchors } = record
 
-  try {
-    const direct = document.querySelector(selector)
-    if (direct) return { el: direct, via: 'selector' }
-  } catch { /* 选择器语法在目标页面无效时忽略 */ }
+  const direct = query(selector)
+  if (direct) return { el: direct, via: 'selector' }
 
   const wanted = anchors?.text?.[0]
   if (wanted) {
     const tag = anchors.tag || '*'
-    const byText = Array.from(document.querySelectorAll(tag))
-      .find(el => textLandmarks(el, 1)[0] === wanted)
+    const byText = queryAll(tag).find(el => textLandmarks(el, 1)[0] === wanted)
     if (byText) return { el: byText, via: 'text' }
   }
 
   if (anchors?.domPath) {
-    const last = anchors.domPath.split(' > ').pop()
-    const byPath = document.querySelector(last)
+    const byPath = query(anchors.domPath.split(' > ').pop())
     if (byPath) return { el: byPath, via: 'path' }
   }
 
@@ -72,26 +89,37 @@ export const importJSON = (data, { apply = true } = {}) => {
   if (!data || data.schema !== SCHEMA_VERSION)
     return { ok: false, reason: `不支持的文件格式（schema=${data?.schema}）` }
 
-  const report = { ok: true, matched: [], missing: [], comments: 0, viaText: 0 }
+  const report = { ok: true, matched: [], missing: [], failed: [], comments: 0, viaText: 0 }
+
+  // 单条记录出问题不应连累其余：逐条隔离，失败的计入 failed 并继续
+  report.failed = []
 
   for (const record of data.edits || []) {
-    const { el, via } = resolveElement(record)
+    try {
+      const { el, via } = resolveElement(record)
 
-    if (!el) { report.missing.push(record.selector); continue }
-    if (via === 'text') report.viaText++
+      if (!el) { report.missing.push(record.selector); continue }
+      if (via === 'text') report.viaText++
 
-    ChangeStore.track(el)
-    if (apply)
-      record.changes.forEach(c => ChangeStore.applyProp(el, c.prop, c.to))
+      ChangeStore.track(el)
+      if (apply)
+        record.changes.forEach(c => ChangeStore.applyProp(el, c.prop, c.to))
 
-    report.matched.push({ selector: record.selector, via, count: record.changes.length })
+      report.matched.push({ selector: record.selector, via, count: record.changes.length })
+    } catch (err) {
+      report.failed.push({ selector: record.selector, reason: err?.message || String(err) })
+    }
   }
 
   for (const record of data.comments || []) {
-    const { el } = resolveElement(record)
-    if (!el) { report.missing.push(record.selector); continue }
-    ChangeStore.addComment(el, record.text)
-    report.comments++
+    try {
+      const { el } = resolveElement(record)
+      if (!el) { report.missing.push(record.selector); continue }
+      ChangeStore.addComment(el, record.text)
+      report.comments++
+    } catch (err) {
+      report.failed.push({ selector: record.selector, reason: err?.message || String(err) })
+    }
   }
 
   return report

@@ -142,13 +142,61 @@ ok(report.comments === 1, '导入还原评论')
 const fallback = await page.evaluate(data => {
   const { importJSON } = window.__visualRevise.lib
   window.__visualRevise.store.undoEverything()
-  // 模拟另一次构建后类名被重新哈希
-  document.querySelectorAll('.curve-card').forEach((c, i) => { c.className = `css-x${i}k9f` })
+
+  // 模拟另一次构建后类名被重新哈希，用完恢复以免污染后续用例
+  const cards = Array.from(document.querySelectorAll('.curve-card'))
+  const originals = cards.map(c => c.className)
+  cards.forEach((c, i) => { c.className = `css-x${i}k9f` })
+
   const r = importJSON(data)
+
+  cards.forEach((c, i) => { c.className = originals[i] })
   return { via: r.matched[0]?.via, matched: r.matched.length, viaText: r.viaText }
 }, exported)
 ok(fallback.matched === 1 && fallback.via === 'text',
    `选择器失效时靠文本特征回退匹配成功（via=${fallback.via}）`)
+
+// 回归：含 CSS 非法字符的选择器不得中断整个导入
+const tolerant = await page.evaluate(() => {
+  const { importJSON } = window.__visualRevise.lib
+  window.__visualRevise.store.undoEverything()
+
+  const payload = {
+    schema: 1,
+    edits: [
+      { selector: 'section.cards > article.curve-card:nth-of-type(2)',
+        anchors: { tag: 'article', text: ['Thinking Five'], domPath: 'body > section.cards > article.curve-card' },
+        changes: [{ prop: 'border-radius', from: '18px', to: '6px' }] },
+      // Tailwind 风格类名：: / [ ] 在选择器里非法
+      { selector: 'div.hover:bg-blue-500',
+        anchors: { tag: 'div', text: ['不存在的文本锚点'], domPath: 'div.w-1/2 > div.top-[3px]' },
+        changes: [{ prop: 'padding-top', from: '0px', to: '8px' }] },
+      { selector: 'h1.hero-title',
+        anchors: { tag: 'h1', text: ['A Gallery of Mathematical Loading Animations'], domPath: 'body > main.hero > h1.hero-title' },
+        changes: [{ prop: 'font-size', from: '40px', to: '48px' }] },
+    ],
+    comments: [
+      { seq: 1, selector: 'div.w-1/2', anchors: { tag: 'div', text: ['同样不存在'], domPath: 'div.top-[3px]' }, text: '这条也定位不到' },
+    ],
+  }
+
+  const r = importJSON(payload)
+  return {
+    report: r,
+    radius: document.querySelectorAll('.curve-card')[1].style.borderRadius,
+    fontSize: document.querySelector('.hero-title').style.fontSize,
+  }
+})
+
+ok(tolerant.report.ok, '非法选择器不再让整个导入抛错')
+ok(tolerant.report.matched.length === 2,
+   `可定位的记录全部应用（${tolerant.report.matched.length}/3）`)
+ok(tolerant.radius === '6px' && tolerant.fontSize === '48px',
+   `非法记录之后的记录仍被处理：radius=${tolerant.radius}, font-size=${tolerant.fontSize}`)
+ok(tolerant.report.missing.length === 2,
+   `定位不到的记录如实上报（${tolerant.report.missing.length} 条）`)
+
+await page.evaluate(() => window.__visualRevise.store.undoEverything())
 
 // ── 本地字体降级 ──
 const fontResult = await page.evaluate(async () => {
