@@ -117,18 +117,27 @@ export const createLayoutDrag = ({ onDone } = {}) => {
     showIndicator(drag.others, drag.index, drag.row)
   }
 
-  const onPointerUp = () => {
+  // 拖拽的收尾必须与「是否提交重排」分开：中途取消（Esc、模式关闭、
+  // destroy）同样要解绑这两个捕获阶段的监听，否则每次中断都留下一对，
+  // 此后每个 pointermove 都会白跑一遍，且 destroy 也清不掉。
+  const endDrag = ({ commit } = { commit: false }) => {
+    document.removeEventListener('pointermove', onPointerMove, true)
+    document.removeEventListener('pointerup', onPointerUp, true)
+    hideIndicator()
+
     if (!drag) return
 
     drag.el.style.opacity = ''
-    hideIndicator()
-    document.removeEventListener('pointermove', onPointerMove, true)
-    document.removeEventListener('pointerup', onPointerUp, true)
-
-    const ordered = applyOrder(drag.others, drag.el, drag.index)
-    onDone?.({ container: drag.parent, ordered })
+    const pending = drag
     drag = null
+
+    if (!commit) return
+
+    const ordered = applyOrder(pending.others, pending.el, pending.index)
+    onDone?.({ container: pending.parent, ordered })
   }
+
+  const onPointerUp = () => endDrag({ commit: true })
 
   return {
     get active() { return active },
@@ -138,8 +147,7 @@ export const createLayoutDrag = ({ onDone } = {}) => {
         document.addEventListener('pointerdown', onPointerDown, true)
       } else {
         document.removeEventListener('pointerdown', onPointerDown, true)
-        hideIndicator()
-        if (drag) { drag.el.style.opacity = ''; drag = null }
+        endDrag()   // 取消而非提交：模式被关掉时不应落下一次重排
       }
     },
     destroy() {
