@@ -100,5 +100,30 @@ ok(preExisting.editedProps.length === 1 && preExisting.editedProps[0].startsWith
 ok(preExisting.removal === '50%→260px',
    `移除原有声明记为改动，前值取作者写的表达：width ${preExisting.removal}`)
 
+// ── 回归：含分号的合法值（data URI）单条撤销后必须原样恢复 ──
+const dataUri = await page.evaluate(async (base) => {
+  const { createStore } = await import(`${base}/__app/core/change-store.js`)
+  const store = createStore()
+  const el = document.querySelectorAll('.curve-card')[0]
+
+  const original = `url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=")`
+  el.style.setProperty('background-image', original)
+  el.style.setProperty('border-radius', '4px')
+  const before = el.style.getPropertyValue('background-image')
+
+  store.track(el)
+  store.applyProp(el, 'background-image', 'none')
+  store.applyProp(el, 'border-radius', '20px')
+
+  const id = store.read().edits[0].id
+  store.undoProp(id, 'background-image')
+  const restored = el.style.getPropertyValue('background-image')
+
+  el.removeAttribute('style')
+  return { ok: restored === before, restored: restored.slice(0, 46), before: before.slice(0, 46) }
+}, origin)
+
+ok(dataUri.ok, `含分号的 data URI 单条撤销后原样恢复：${dataUri.restored}…`)
+
 await browser.close(); await close()
 console.log(process.exitCode ? '结果：有失败项\n' : '结果：全部通过\n')

@@ -95,14 +95,16 @@ export const revertAll = snapshot => {
     : el.setAttribute('style', inlineStyle)
 }
 
+// 交给浏览器自己的 CSS 解析器。按裸分号切分会截断合法值里的分号，
+// 例如 url("data:image/svg+xml;base64,...")——单条撤销时会把原样式
+// 还原成一个被切碎的非法 url()，等于毁掉而不是恢复。
 export const parseInlineStyle = cssText => {
   if (!cssText) return {}
-  return cssText.split(';').reduce((acc, decl) => {
-    const idx = decl.indexOf(':')
-    if (idx < 0) return acc
-    const prop = decl.slice(0, idx).trim()
-    const value = decl.slice(idx + 1).trim()
-    if (prop) acc[prop] = value
-    return acc
-  }, {})
+
+  const probe = document.createElement('div')
+  probe.style.cssText = cssText
+
+  const out = {}
+  for (const prop of probe.style) out[prop] = probe.style.getPropertyValue(prop)
+  return out
 }
