@@ -56,11 +56,11 @@ const setProp = async (prop, value) => {
 }
 const log = m => console.log(`  ${m}`)
 
-console.log('\n【真实改稿演示】Kuse 登录页\n')
+console.log(`\n【真实改稿演示】${TARGET}\n`)
 
 // ① 标题：字号加大
 console.log('① 选中主标题「Chaos in, Genius out」')
-await page.locator('h1.auth-tagline').click()
+await page.locator('h1').first().click()
 await page.waitForTimeout(600)
 log(`面板显示: ${await panel('.tag').textContent()}`)
 log(`当前字号: ${await panel('input[data-prop="font-size"]').inputValue()}`)
@@ -70,7 +70,7 @@ log('→ 字号 44px → 52px，字距 +0.5px')
 
 // ② 邮箱输入框：圆角与高度
 console.log('\n② 选中邮箱输入框')
-await page.locator('input.form-input-field').first().click()
+await page.locator('input').first().click()
 await page.waitForTimeout(600)
 log(`面板显示: ${await panel('.tag').textContent()}`)
 await setProp('border-radius', '12px')
@@ -79,7 +79,7 @@ log('→ 圆角 12px，高度 44px')
 
 // ③ Sign up 链接：字重与颜色
 console.log('\n③ 选中「Sign up」链接')
-await page.locator('text=Sign up').first().click()
+await page.locator('a').first().click()
 await page.waitForTimeout(600)
 log(`面板显示: ${await panel('.tag').textContent()}`)
 await setProp('font-weight', '600')
@@ -87,7 +87,7 @@ log('→ 字重 600')
 
 // ④ Tailwind 元素：Debug 按钮
 console.log('\n④ 选中 Debug 按钮（Tailwind 工具类）')
-await page.locator('button:has-text("Debug")').first().click()
+await page.locator('button').first().click()
 await page.waitForTimeout(600)
 log(`面板显示: ${await panel('.tag').textContent()}`)
 await setProp('border-radius', '999px')
@@ -96,7 +96,7 @@ log('→ 圆角改为全圆')
 // ⑤ 交互评论
 console.log('\n⑤ 给邮箱输入框加一条交互说明')
 await page.evaluate(() => window.__visualRevise.setCommentMode(true))
-await page.locator('input.form-input-field').first().click()
+await page.locator('input').first().click()
 await page.waitForTimeout(500)
 await page.locator('visual-revise-comment-layer textarea').fill('鼠标移入时上浮 2px 并加柔和阴影，过渡 150ms')
 await page.locator('visual-revise-comment-layer .save').click()
@@ -109,7 +109,7 @@ await page.evaluate(() => document.activeElement?.blur?.())
 await page.keyboard.press('Tab')
 await page.waitForTimeout(500)
 log(`交互态: ${await page.evaluate(() => window.__visualRevise.interactive)}`)
-await page.locator('input.form-input-field').first().hover()
+await page.locator('input').first().hover()
 await page.waitForTimeout(300)
 await page.screenshot({ path: join(ROOT, '.screenshots/real-1-交互态验证.png') })
 await page.keyboard.press('Tab')
