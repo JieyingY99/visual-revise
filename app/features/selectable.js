@@ -19,6 +19,23 @@ import {
   getTextShadowValues, isFixed, onRemove
 } from '../utilities/'
 
+// 绑定与解绑必须共用同一份清单：两处手写会漂移，
+// listen/unlisten 成对调用（编辑态与交互态来回切换）时，
+// 解绑遗漏的快捷键会在每次 resume 后累积一份处理器。
+const HOTKEYS = metaKey => [
+  `${metaKey}+alt+c`,
+  `${metaKey}+alt+v`,
+  'esc',
+  `${metaKey}+d`,
+  'backspace,del,delete',
+  'alt+del,alt+backspace',
+  `${metaKey}+e,${metaKey}+shift+e`,
+  `${metaKey}+g,${metaKey}+shift+g`,
+  'enter,shift+enter',
+  `${metaKey}+shift+enter`,
+  "shift+'",
+].join(',')
+
 export function Selectable(visbug) {
   const page              = document.body
   let selected            = []
@@ -68,7 +85,7 @@ export function Selectable(visbug) {
     document.removeEventListener('cut', on_cut)
     document.removeEventListener('paste', on_paste)
 
-    hotkeys.unbind(`esc,${metaKey}+d,backspace,del,delete,alt+del,alt+backspace,${metaKey}+e,${metaKey}+shift+e,${metaKey}+g,${metaKey}+shift+g,tab,shift+tab,enter,shift+enter`)
+    hotkeys.unbind(HOTKEYS(metaKey))
   }
 
   const on_click = e => {

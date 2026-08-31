@@ -138,5 +138,40 @@ ok(padding.applied.endsWith('px'),
 await page.evaluate(() => window.__visualRevise.store.undoEverything())
 await page.waitForTimeout(200)
 
+// ── 回归：反复切换编辑态/交互态不得累积快捷键处理器 ──
+// ⌘⇧Enter 是「选中所有子元素」。处理器若累积 N 份，一次按键会连续
+// 下钻 N 层，选中的就不再是直接子元素。
+await page.evaluate(() => window.__visualRevise.store.undoEverything())
+await page.locator('.curve-card').nth(1).click({ position: { x: 130, y: 8 }, force: true })
+await page.waitForTimeout(400)
+
+for (let i = 0; i < 3; i++) {
+  await page.evaluate(() => document.activeElement?.blur?.())
+  await page.keyboard.press('Tab')      // 进入交互态
+  await page.waitForTimeout(200)
+  await page.keyboard.press('Tab')      // 回到编辑态
+  await page.waitForTimeout(200)
+}
+
+const beforeDrill = await page.evaluate(() =>
+  window.__visualRevise.panel.target?.tagName)
+
+await page.keyboard.press('Meta+Shift+Enter')
+await page.waitForTimeout(400)
+
+const drilled = await page.evaluate(() => {
+  const sel = Array.from(document.querySelectorAll('[data-selected]'))
+  const card = document.querySelectorAll('.curve-card')[1]
+  return {
+    count: sel.length,
+    allDirectChildren: sel.every(el => el.parentElement === card),
+    tags: [...new Set(sel.map(el => el.tagName))],
+  }
+})
+
+ok(beforeDrill === 'ARTICLE', `三轮切换后选中仍在原元素（${beforeDrill}）`)
+ok(drilled.allDirectChildren,
+   `⌘⇧Enter 只下钻一层：选中 ${drilled.count} 个 [${drilled.tags}]，均为直接子元素`)
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')
