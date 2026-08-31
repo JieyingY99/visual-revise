@@ -4,7 +4,7 @@ import '../components/props-panel/props-panel.element.js'
 import '../components/change-list/change-list.element.js'
 import '../components/comment-layer/comment-layer.element.js'
 import { createLayoutDrag } from './layout-drag.js'
-import { pageElementAt, isEditorUI } from './dom-utils.js'
+import { pageElementAt, isEditorUI, isTypingTarget } from './dom-utils.js'
 import { buildPrompt } from './prompt-export.js'
 import { exportJSON, importJSON, downloadJSON, pickAndImport } from './json-io.js'
 import { fingerprint, findSharedElements } from './shared-elements.js'
@@ -88,6 +88,11 @@ export const mountVisualRevise = visbug => {
     if (e.metaKey || e.ctrlKey || e.altKey) return
 
     if (isEditorUI(e)) return   // 面板内部按键归面板（Tab 切焦点、Esc 关弹窗）
+
+    // 页面输入控件里打字时让路：单字母快捷键会吞掉字符，
+    // Tab 则要保留表单字段间的正常跳转。Esc 仍然接管，
+    // 因为它在这里的语义是「退出当前模式」，不与输入冲突。
+    if (isTypingTarget(e) && e.key !== 'Escape') return
 
     if (e.key === 'Tab') {
       e.preventDefault()

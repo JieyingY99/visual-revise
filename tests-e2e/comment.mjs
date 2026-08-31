@@ -68,6 +68,58 @@ await page.keyboard.press('Escape')
 await page.waitForTimeout(200)
 ok(!(await page.evaluate(() => window.__visualRevise.comments.active)), 'Esc 退出评论模式')
 
+// ── 回归：页面输入控件里打字不得被单字母快捷键吞掉 ──
+await page.evaluate(() => {
+  const input = document.createElement('input')
+  input.id = 'vr-typing-probe'
+  input.type = 'text'
+  document.querySelector('.hero').appendChild(input)
+
+  const editable = document.createElement('div')
+  editable.id = 'vr-editable-probe'
+  editable.contentEditable = 'true'
+  document.querySelector('.hero').appendChild(editable)
+})
+
+const probe = page.locator('#vr-typing-probe')
+await probe.click()
+await probe.type('correct', { delay: 30 })
+await page.waitForTimeout(300)
+
+const typed = await page.evaluate(() => ({
+  value: document.querySelector('#vr-typing-probe').value,
+  comment: window.__visualRevise.comments.active,
+  reorder: window.__visualRevise.layoutDrag.active,
+}))
+ok(typed.value === 'correct', `输入框内容完整：「${typed.value}」`)
+ok(!typed.comment && !typed.reorder,
+   `输入过程中未误触模式（评论=${typed.comment}, 重排=${typed.reorder}）`)
+
+// contenteditable 同样要让路
+const editable = page.locator('#vr-editable-probe')
+await editable.click()
+await editable.type('rc', { delay: 30 })
+await page.waitForTimeout(300)
+const ce = await page.evaluate(() => ({
+  text: document.querySelector('#vr-editable-probe').textContent,
+  comment: window.__visualRevise.comments.active,
+  reorder: window.__visualRevise.layoutDrag.active,
+}))
+ok(ce.text === 'rc' && !ce.comment && !ce.reorder,
+   `contenteditable 内输入正常：「${ce.text}」，未误触模式`)
+
+// 焦点离开输入控件后，快捷键恢复正常
+await page.evaluate(() => document.activeElement?.blur?.())
+await page.keyboard.press('c')
+await page.waitForTimeout(200)
+ok(await page.evaluate(() => window.__visualRevise.comments.active),
+   '离开输入控件后 C 仍能正常切换评论模式')
+await page.keyboard.press('Escape')
+await page.evaluate(() => {
+  document.querySelector('#vr-typing-probe')?.remove()
+  document.querySelector('#vr-editable-probe')?.remove()
+})
+
 // 评论进入提示词
 const prompt = await page.evaluate(async (base) => {
   const { buildPrompt } = await import(`${base}/__app/core/prompt-export.js`)
