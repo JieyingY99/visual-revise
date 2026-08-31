@@ -19,6 +19,7 @@ import {
 } from '../styles.store'
 
 import { VisBugModel }            from './model'
+import { mountVisualRevise }      from '../../core/visual-revise.js'
 import * as Icons                 from './vis-bug.icons'
 import { provideSelectorEngine }  from '../../features/search'
 import { PluginRegistry }         from '../../plugins/_registry'
@@ -56,9 +57,12 @@ export default class VisBug extends HTMLElement {
     provideSelectorEngine(this.selectorEngine)
 
     this.toolSelected($('[data-tool="guides"]', this.$shadow)[0])
+
+    this.visualRevise = mountVisualRevise(this)
   }
 
   disconnectedCallback() {
+    this.visualRevise?.destroy()
     this.deactivate_feature()
     this.cleanup()
     this.selectorEngine.disconnect()

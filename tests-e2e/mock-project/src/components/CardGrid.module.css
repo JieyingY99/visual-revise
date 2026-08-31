@@ -1,0 +1,6 @@
+.cards { display: flex; gap: 16px; padding: 0 32px 48px; flex-wrap: wrap; }
+.curveCard { width: 260px; padding: 15px; border-radius: 18px; border: 1px solid #1e1e24; background: #101014; }
+.cardTitle { font-size: 16px; font-weight: 600; margin: 12px 0 4px; }
+.cardTag { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #8a8a94; }
+.cardBody { font-size: 13px; line-height: 1.5; color: #a5a5ae; margin: 8px 0 0; }
+.swatch { height: 90px; border-radius: 12px; background: linear-gradient(135deg,#4f46e5,#0ea5e9); }

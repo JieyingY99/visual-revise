@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Visual Revise Test Fixture</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, sans-serif; background: #0b0b0d; color: #eee; }
+  .hero { padding: 48px 32px; }
+  .hero-eyebrow { font-size: 12px; letter-spacing: .18em; text-transform: uppercase; color: #8a8a94; margin: 0 0 12px; }
+  .hero-title { font-size: 40px; font-weight: 600; margin: 0 0 8px; }
+  .hero-bar { display: flex; gap: 12px; margin-top: 20px; }
+  .btn { padding: 10px 18px; border-radius: 8px; border: 1px solid #2c2c33; background: #17171c; color: #eee; font-size: 14px; }
+  .btn-primary { background: #4f46e5; border-color: #4f46e5; }
+  .cards { display: flex; gap: 16px; padding: 0 32px 48px; flex-wrap: wrap; }
+  .curve-card { width: 260px; padding: 15px; border-radius: 18px; border: 1px solid #1e1e24; background: #101014; }
+  .card-title { font-size: 16px; font-weight: 600; margin: 12px 0 4px; }
+  .card-tag { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #8a8a94; }
+  .card-body { font-size: 13px; line-height: 1.5; color: #a5a5ae; margin: 8px 0 0; }
+  .swatch { height: 90px; border-radius: 12px; background: linear-gradient(135deg,#4f46e5,#0ea5e9); }
+</style>
+</head>
+<body>
+  <main class="hero">
+    <p class="hero-eyebrow">Mathematical Curve Motion</p>
+    <h1 class="hero-title">A Gallery of Mathematical Loading Animations</h1>
+    <div class="hero-bar">
+      <button class="btn btn-primary">Get started</button>
+      <button class="btn">Documentation</button>
+    </div>
+  </main>
+  <section class="cards">
+    <article class="curve-card">
+      <div class="swatch"></div>
+      <h2 class="card-title">Original Thinking</h2>
+      <span class="card-tag">Custom Rose Trail</span>
+      <p class="card-body">The base circle is carved by a sevenfold cosine term, so the trail blooms into a rotating seven-petal ring.</p>
+    </article>
+    <article class="curve-card">
+      <div class="swatch"></div>
+      <h2 class="card-title">Thinking Five</h2>
+      <span class="card-tag">Custom Rose Trail</span>
+      <p class="card-body">Replacing the sevenfold term with a fivefold term reduces the inner loops, giving the curve a cleaner five-petal rhythm.</p>
+    </article>
+    <article class="curve-card">
+      <div class="swatch"></div>
+      <h2 class="card-title">Thinking Nine</h2>
+      <span class="card-tag">Custom Rose Trail</span>
+      <p class="card-body">A ninefold term packs more inner turns into the same orbit, so the floral ring feels denser and more finely braided.</p>
+    </article>
+  </section>
+</body>
+</html>

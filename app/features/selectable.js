@@ -52,7 +52,7 @@ export function Selectable(visbug) {
     hotkeys('alt+del,alt+backspace', on_clearstyles)
     hotkeys(`${metaKey}+e,${metaKey}+shift+e`, on_expand_selection)
     hotkeys(`${metaKey}+g,${metaKey}+shift+g`, on_group)
-    hotkeys('tab,shift+tab,enter,shift+enter', on_keyboard_traversal)
+    hotkeys('enter,shift+enter', on_keyboard_traversal)
     hotkeys(`${metaKey}+shift+enter`, on_select_children)
     hotkeys(`shift+'`, on_select_parent)
   }
@@ -782,6 +782,8 @@ export function Selectable(visbug) {
     onSelectedUpdate,
     removeSelectedCallback,
     disconnect,
+    pause:  unlisten,
+    resume: listen,
   }
 }
 

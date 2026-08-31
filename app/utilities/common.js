@@ -78,18 +78,36 @@ export const htmlStringToDom = (htmlString = "") =>
   (new DOMParser().parseFromString(htmlString, 'text/html'))
     .body.firstChild
 
-export const isOffBounds = node =>
-  node.closest && (
-       node.closest('vis-bug')
-    || node.closest('hotkey-map')
-    || node.closest('visbug-metatip')
-    || node.closest('visbug-ally')
-    || node.closest('visbug-label')
-    || node.closest('visbug-handles')
-    || node.closest('visbug-corners')
-    || node.closest('visbug-grip')
-    || node.closest('visbug-gridlines')
-  )
+// 编辑器自身的 UI 不可被编辑器选中。除既有的 visbug-* 组件外，
+// 本 fork 新增的 UI 一律带 data-visual-revise-ui 属性，无需再改这里。
+export const OFF_BOUNDS_SELECTOR = [
+  'vis-bug',
+  'hotkey-map',
+  'visbug-metatip',
+  'visbug-ally',
+  'visbug-label',
+  'visbug-handles',
+  'visbug-corners',
+  'visbug-grip',
+  'visbug-gridlines',
+  '[data-visual-revise-ui]',
+].join(',')
+
+// 命中检测用 deepElementFromPoint，它会穿透 open shadow root 拿到内部节点，
+// 而 closest 不跨 shadow 边界——只查一层会把编辑器自己的 UI 当成页面元素。
+// 因此沿 shadow host 逐层向上追溯。
+export const isOffBounds = node => {
+  let current = node
+
+  while (current) {
+    if (current.closest?.(OFF_BOUNDS_SELECTOR)) return true
+
+    const root = current.getRootNode?.()
+    current = root instanceof ShadowRoot ? root.host : null
+  }
+
+  return false
+}
 
 export const isSelectorValid = (qs => (
   selector => {

@@ -1,0 +1,97 @@
+:host {
+  --vr-pin:    #ff5c8a;
+  --vr-bg:     #2c2c2c;
+  --vr-raised: #383838;
+  --vr-border: #444;
+  --vr-text:   #fff;
+  --vr-mute:   #8c8c8c;
+  --vr-accent: #0d99ff;
+
+  position: absolute;
+  top: 0; left: 0;
+  width: 0; height: 0;
+  z-index: 2147483644;
+  font: 400 11px/1.4 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+}
+:host([hidden]) { display: none; }
+* { box-sizing: border-box; }
+
+.pin {
+  position: absolute;
+  width: 20px; height: 20px;
+  display: grid; place-items: center;
+  background: var(--vr-pin);
+  color: #fff;
+  font-size: 10px; font-weight: 600;
+  border: 2px solid #fff;
+  border-radius: 50% 50% 50% 2px;
+  box-shadow: 0 2px 6px rgb(0 0 0 / .35);
+  cursor: pointer;
+  pointer-events: auto;
+  transform: translate(-50%, -50%);
+  transition: transform .12s;
+}
+.pin:hover { transform: translate(-50%, -50%) scale(1.15); }
+.pin[data-active] { background: var(--vr-accent); }
+
+.bubble {
+  position: absolute;
+  width: 240px;
+  padding: 8px;
+  background: var(--vr-bg);
+  border: 1px solid var(--vr-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / .4);
+  pointer-events: auto;
+  color: var(--vr-text);
+}
+
+.bubble .sel {
+  display: block;
+  margin-bottom: 6px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 10px;
+  color: var(--vr-accent);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.bubble textarea {
+  width: 100%;
+  min-height: 60px;
+  padding: 6px;
+  font: inherit;
+  color: var(--vr-text);
+  background: var(--vr-raised);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  outline: none;
+  resize: vertical;
+}
+.bubble textarea:focus { border-color: var(--vr-accent); }
+.bubble textarea::placeholder { color: var(--vr-mute); }
+
+.bubble .actions { display: flex; gap: 6px; margin-top: 6px; }
+.bubble button {
+  flex: 1; height: 24px;
+  font: inherit; font-size: 11px;
+  border: none; border-radius: 4px; cursor: pointer;
+}
+.bubble .save { background: var(--vr-accent); color: #fff; }
+.bubble .cancel { background: var(--vr-raised); color: var(--vr-mute); }
+.bubble .cancel:hover { color: var(--vr-text); }
+.bubble .hint { margin-top: 6px; font-size: 10px; color: var(--vr-mute); text-align: center; }
+
+.banner {
+  position: fixed;
+  top: 16px; left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  background: var(--vr-pin);
+  color: #fff;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 500;
+  box-shadow: 0 4px 16px rgb(0 0 0 / .3);
+  pointer-events: none;
+  white-space: nowrap;
+}
