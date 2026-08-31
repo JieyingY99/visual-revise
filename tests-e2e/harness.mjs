@@ -6,7 +6,29 @@ import { dirname, join, extname } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 export const ROOT = join(__dirname, '..')
-export const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+
+// 测试依赖系统已安装的 Chrome（playwright-core 不自带浏览器）。
+// 路径按平台给默认值，可用 CHROME_PATH 覆盖。
+const CHROME_DEFAULTS = {
+  darwin: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  linux:  '/usr/bin/google-chrome',
+  win32:  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+}
+
+export const CHROME = process.env.CHROME_PATH || CHROME_DEFAULTS[process.platform] || 'google-chrome'
+
+export const assertChrome = async () => {
+  const { access } = await import('node:fs/promises')
+  try {
+    await access(CHROME)
+  } catch {
+    console.error(
+      `\n找不到 Chrome：${CHROME}\n` +
+      `请安装 Google Chrome，或用环境变量指定路径：\n` +
+      `  CHROME_PATH=/path/to/chrome npm run test:e2e\n`)
+    process.exit(1)
+  }
+}
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.gif': 'image/gif', '.png': 'image/png' }
 
@@ -32,6 +54,7 @@ export async function serve(dir = __dirname, port = 0) {
 }
 
 export async function launch({ headless = true } = {}) {
+  await assertChrome()
   const browser = await chromium.launch({ executablePath: CHROME, headless })
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   page.on('console', m => { if (m.type() === 'error') console.log('  [page error]', m.text()) })

@@ -15,7 +15,16 @@ const cdp = await context.browser().newBrowserCDPSession()
 const { id } = await cdp.send('Extensions.loadUnpacked', { path: extPath })
 
 const page = context.pages()[0] || await context.newPage()
-await page.goto('http://localhost:3002/f', { waitUntil: 'networkidle', timeout: 60000 }).catch(() => {})
+// 目标站点由环境变量指定，默认用仓库自带的固件，
+// 不再硬编码某个私有项目的地址
+const TARGET = process.env.DEMO_URL
+if (!TARGET) {
+  console.log('用法：DEMO_URL=http://localhost:3000 node tests-e2e/real-demo.mjs')
+  console.log('（在任意真实站点上跑一遍改稿流程并截图）')
+  await context.close()
+  process.exit(0)
+}
+await page.goto(TARGET, { waitUntil: 'networkidle', timeout: 60000 }).catch(() => {})
 await page.waitForTimeout(2000)
 
 // 以扩展的真实注入方式启动编辑器
