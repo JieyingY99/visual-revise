@@ -161,11 +161,6 @@ export class PropsPanel extends HTMLElement {
       isDirty ? label.setAttribute('data-dirty', '') : label.removeAttribute('data-dirty')
     })
 
-    const stats = ChangeStore.stats()
-    const copyBtn = this.#shadow.querySelector('.copy')
-    const listBtn = this.#shadow.querySelector('.list')
-    if (copyBtn) copyBtn.disabled = stats.total === 0
-    if (listBtn) listBtn.textContent = `记录 ${stats.total}`
     const sub = this.#shadow.querySelector('.sub')
     if (sub && this.target) sub.textContent = this.#subtitle()
   }
@@ -203,19 +198,13 @@ export class PropsPanel extends HTMLElement {
           <span class="tag">${describeTarget(this.target)}</span>
           <span class="sub">${this.#subtitle()}</span>
         </div>
-        <button class="icon-btn comment" title="评论模式（C）：在元素上添加交互说明">💬</button>
-        <button class="icon-btn reorder" title="拖拽重排（R）：在页面上拖动子元素调整顺序">⇅</button>
         <button class="icon-btn shared"${this.#shared ? ' data-on' : ''}
           title="共享元素：同步修改页面中结构相同的元素">⧉</button>
         <button class="icon-btn fold" title="折叠面板">▾</button>
         <button class="icon-btn close" title="关闭">×</button>
       </header>
       <div class="scroll">${sections}</div>
-      <div class="toast"></div>
-      <footer>
-        <button class="primary copy">复制提示词</button>
-        <button class="ghost list">记录 0</button>
-      </footer>`
+      <div class="toast"></div>`
   }
 
   #renderGroup(group) {
@@ -340,8 +329,6 @@ export class PropsPanel extends HTMLElement {
         bubbles: true, composed: true, detail: { on: this.#shared, count },
       }))
     })
-    on('.comment', 'click', () => this.dispatchEvent(new CustomEvent('vr-comment-toggle', { bubbles: true, composed: true })))
-    on('.reorder', 'click', () => this.dispatchEvent(new CustomEvent('vr-reorder-toggle', { bubbles: true, composed: true })))
     on('.load-fonts', 'click', async e => {
       const btn = e.currentTarget
       btn.textContent = '…'
@@ -361,8 +348,6 @@ export class PropsPanel extends HTMLElement {
       input?.setAttribute('list', 'vr-font-list')
       this.#toast(`已读取 ${result.fonts.length} 个本地字体`)
     })
-    on('.copy', 'click', () => this.dispatchEvent(new CustomEvent('vr-copy', { bubbles: true, composed: true })))
-    on('.list', 'click', () => this.dispatchEvent(new CustomEvent('vr-open-list', { bubbles: true, composed: true })))
 
     // 聚焦中的字段在同步时被跳过（不打断输入），失焦时补一次，
     // 否则外部撤销发生在用户正编辑该字段时，它会一直停在旧值上

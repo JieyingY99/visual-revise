@@ -24,7 +24,7 @@ await page.waitForTimeout(200)
 // 打开列表
 await page.locator('.curve-card').nth(1).click({ position: { x: 4, y: 4 } })
 await page.waitForTimeout(300)
-await page.locator('visual-revise-panel .list').click()
+await page.locator('visual-revise-toolbar .list').click()
 await page.waitForTimeout(300)
 
 ok(!(await page.locator('visual-revise-list').getAttribute('hidden')), '点击「记录」打开列表')

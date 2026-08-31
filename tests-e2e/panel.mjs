@@ -11,9 +11,10 @@ await injectVisBug(page, origin)
 ok(await page.locator('visual-revise-panel').count() === 1, '属性面板已挂载')
 ok(await page.evaluate(() => !!window.__visualRevise), '集成 API 已暴露')
 
-// 空状态
-const emptyText = await page.locator('visual-revise-panel .empty').textContent().catch(() => '')
-ok(emptyText.includes('点击页面上的任意元素'), '未选中时显示空状态引导')
+// 打开后的第一屏只有工具条，属性面板要等选中元素才出现
+ok(await page.locator('visual-revise-toolbar').count() === 1, '工具条已挂载')
+ok(await page.locator('visual-revise-panel').evaluate(el => el.hidden),
+   '未选中元素时属性面板不出现（工具条才是入口）')
 
 // 选中元素
 const card = page.locator('.curve-card').nth(1)
@@ -23,6 +24,8 @@ await page.waitForTimeout(400)
 const tag = await page.locator('visual-revise-panel .tag').textContent()
 ok(tag.includes('article.curve-card'), `面板显示选中元素：${tag}`)
 
+ok(!(await page.locator('visual-revise-panel').evaluate(el => el.hidden)),
+   '选中元素后属性面板出现')
 const groups = await page.locator('visual-revise-panel section').count()
 ok(groups >= 5, `渲染了 ${groups} 个属性分组`)
 
@@ -94,9 +97,9 @@ const back = await page.evaluate(() => ({
 ok(back.mode === false, 'Tab 退出交互态')
 ok(back.radius === '12px', '切换过程中改动完整保留')
 
-// 复制提示词
+// 复制提示词（全局动作现在归工具条）
 await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
-await page.locator('visual-revise-panel .copy').click()
+await page.locator('visual-revise-toolbar .copy').click()
 await page.waitForTimeout(500)
 const clip = await page.evaluate(() => navigator.clipboard.readText())
 ok(clip.includes('# 页面视觉修改需求'), '复制提示词到剪贴板')

@@ -14,8 +14,9 @@ ok(await page.locator('visual-revise-comment-layer').count() === 1, '评论层�
 await page.keyboard.press('c')
 await page.waitForTimeout(300)
 ok(await page.evaluate(() => window.__visualRevise.comments.active), 'C 键进入评论模式')
-const banner = await page.locator('visual-revise-comment-layer .banner').textContent().catch(() => '')
-ok(banner.includes('评论模式'), `显示模式提示条：${banner.slice(0, 20)}…`)
+// 常驻提示条已移除（与工具条重叠），改由工具条高亮表明当前模式
+const activeMode = await page.evaluate(() => window.__visualRevise.toolbar.mode)
+ok(activeMode === 'comment', `工具条高亮当前模式：${activeMode}`)
 
 // 点击元素起草评论
 await page.locator('.curve-card').nth(1).click({ position: { x: 4, y: 4 } })

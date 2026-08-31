@@ -1,0 +1,130 @@
+:host {
+  --bar-bg:      #2b2b2b;
+  --bar-text:    #fff;
+  --bar-dim:     rgba(255, 255, 255, .62);
+  --bar-hover:   rgba(255, 255, 255, .09);
+  --bar-active:  rgba(255, 255, 255, .16);
+  --bar-line:    rgba(255, 255, 255, .14);
+  --bar-accent:  #0d99ff;
+
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2147483647;
+  font: 500 15px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  color: var(--bar-text);
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+:host([hidden]) { display: none; }
+
+* { box-sizing: border-box; }
+
+.bar {
+  display: flex;
+  align-items: center;
+  height: 56px;
+  padding: 0 8px;
+  background: var(--bar-bg);
+  border-radius: 16px;
+  box-shadow:
+    0 8px 28px rgb(0 0 0 / .32),
+    0 2px 6px rgb(0 0 0 / .22),
+    inset 0 0 0 1px rgb(255 255 255 / .06);
+  cursor: grab;
+}
+.bar:active { cursor: grabbing; }
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px 0 12px;
+  white-space: nowrap;
+}
+.brand svg { flex: none; }
+
+.sep {
+  flex: none;
+  width: 1px;
+  height: 26px;
+  margin: 0 6px;
+  background: var(--bar-line);
+}
+
+button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 40px;
+  padding: 0 14px;
+  font: inherit;
+  color: var(--bar-text);
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .12s ease;
+}
+button:hover { background: var(--bar-hover); }
+button:active { background: var(--bar-active); }
+button svg { flex: none; }
+
+/* 三个互斥模式：当前模式常亮 */
+button[data-on] { background: var(--bar-active); }
+button[data-on] svg { color: var(--bar-accent); }
+
+button.icon-only { padding: 0; width: 40px; justify-content: center; }
+
+/* 出口按钮：有改动时点亮，无改动时压暗但仍可点（点了给提示） */
+button.copy { color: var(--bar-dim); }
+button.copy[data-ready] { color: var(--bar-text); }
+button.copy[data-ready] svg { color: var(--bar-accent); }
+
+.count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  margin-left: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  color: #fff;
+  background: var(--bar-accent);
+  border-radius: 10px;
+}
+.count[data-empty] { background: rgb(255 255 255 / .16); color: var(--bar-dim); }
+
+/* 放屏幕底部：顶部区域已被工具条、属性面板与改动列表占满，
+   临时提示挤在那里必然遮挡其中之一 */
+.toast {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%) translateY(6px);
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--bar-text);
+  background: #1c1c1c;
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / .34), inset 0 0 0 1px rgb(255 255 255 / .07);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .16s ease, transform .16s ease;
+}
+.toast[data-show] { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast[data-kind="error"] { color: #ff8f8f; }
+
+/* 窄屏时收起文字，只留图标 */
+@media (max-width: 860px) {
+  .brand span, button:not(.copy) span:not(.count) { display: none; }
+  button { padding: 0; width: 40px; justify-content: center; }
+  .brand { padding: 0 10px; }
+}

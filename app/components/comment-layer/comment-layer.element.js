@@ -106,12 +106,11 @@ export class CommentLayer extends HTMLElement {
                 title="${c.text.replace(/"/g, '&quot;')}"${active}>${c.seq}</div>`
     }).join('')
 
+    // 不再画常驻提示条：它会与顶部工具条重叠，而工具条本身
+    // 已经高亮显示当前处于评论模式，操作提示改由工具条 toast 给出一次
     const bubble = this.#draft ? this.#renderBubble() : ''
-    const banner = this.#active && !this.#draft
-      ? '<div class="banner">评论模式：点击任意元素添加说明 · 按住 Shift 连续添加 · Esc 退出</div>'
-      : ''
 
-    root.innerHTML = pins + bubble + banner
+    root.innerHTML = pins + bubble
     this.#bind()
   }
 

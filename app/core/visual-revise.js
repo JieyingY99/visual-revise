@@ -3,6 +3,7 @@ import { copyPrompt } from './prompt-export.js'
 import '../components/props-panel/props-panel.element.js'
 import '../components/change-list/change-list.element.js'
 import '../components/comment-layer/comment-layer.element.js'
+import '../components/toolbar/toolbar.element.js'
 import { createLayoutDrag } from './layout-drag.js'
 import { pageElementAt, isEditorUI, isTypingTarget } from './dom-utils.js'
 import { buildPrompt } from './prompt-export.js'
@@ -36,6 +37,9 @@ export const mountVisualRevise = visbug => {
   const comments = document.createElement('visual-revise-comment-layer')
   document.body.appendChild(comments)
 
+  const toolbar = document.createElement('visual-revise-toolbar')
+  document.body.appendChild(toolbar)
+
   const layoutDrag = createLayoutDrag({
     onDone: ({ ordered }) => panel.toast(`已重排 ${ordered.length} 个元素`),
   })
@@ -46,7 +50,12 @@ export const mountVisualRevise = visbug => {
 
   const onSelected = els => {
     if (interactive) return
+
     panel.setTargets(els)
+
+    // 工具条是入口，属性面板只在真正选中元素后出现，
+    // 否则一打开就有两块 UI 抢注意力
+    panel.hidden = !(els && els.length)
   }
 
   engine.onSelectedUpdate(onSelected)
@@ -64,8 +73,8 @@ export const mountVisualRevise = visbug => {
     listWasOpen = !list.hidden
     list.hidden = true
     comments.hidden = true
-    setCommentMode(false)
-    setReorderMode(false)
+    toolbar.hidden = true
+    setMode('select')
     clearHighlight()
   }
 
@@ -74,9 +83,9 @@ export const mountVisualRevise = visbug => {
     interactive = false
     engine.resume()
     document.querySelectorAll(UI_TAGS).forEach(el => { el.style.display = '' })
-    panel.hidden = false
     list.hidden = !listWasOpen
     comments.hidden = false
+    toolbar.hidden = false
     suspended.filter(el => el.isConnected).forEach(el => engine.select(el))
     panel.setTargets(engine.selection())
   }
@@ -104,39 +113,52 @@ export const mountVisualRevise = visbug => {
     if (e.key === 'r' && !interactive) {
       e.preventDefault()
       e.stopPropagation()
-      setReorderMode(!layoutDrag.active)
+      setMode(mode === 'reorder' ? 'select' : 'reorder')
       return
     }
 
     if (e.key === 'c' && !interactive) {
       e.preventDefault()
       e.stopPropagation()
-      setCommentMode(!comments.active)
+      setMode(mode === 'comment' ? 'select' : 'comment')
       return
     }
 
     if (e.key === 'Escape') {
       if (comments.hasDraft) { e.preventDefault(); e.stopPropagation(); comments.cancelDraft(); return }
-      if (comments.active)   { e.preventDefault(); e.stopPropagation(); setCommentMode(false); return }
-      if (layoutDrag.active) { e.preventDefault(); e.stopPropagation(); setReorderMode(false) }
+      if (mode !== 'select') { e.preventDefault(); e.stopPropagation(); setMode('select') }
     }
   }
 
-  const setCommentMode = on => {
-    if (on) setReorderMode(false)
-    comments.setActive(on)
-    panel.setCommentMode(on)
+  // select / comment / reorder 三态互斥，且都要接管页面指针事件，
+  // 因此收敛到单一入口：按钮点击与快捷键最终都走这里，
+  // 状态与工具条高亮不会分叉。
+  let mode = 'select'
+
+  const MODE_HINTS = {
+    comment: '点击任意元素写下需求 · 按住 Shift 连续添加 · Esc 退出',
+    reorder: '拖动 flex / grid 容器里的子元素调整顺序 · Esc 退出',
   }
 
-  // 拖拽重排与评论模式互斥：两者都要接管页面上的指针事件
-  const setReorderMode = on => {
-    if (on) {
-      comments.setActive(false)
-      panel.setCommentMode(false)
+  const setMode = next => {
+    const changed = mode !== next
+    mode = next
+
+    comments.setActive(next === 'comment')
+    layoutDrag.setActive(next === 'reorder')
+    toolbar.setMode(next)
+
+    if (next !== 'select') {
+      engine.unselect_all()
+      panel.hidden = true
     }
-    layoutDrag.setActive(on)
-    panel.setReorderMode(on)
+
+    if (changed && MODE_HINTS[next]) toolbar.toast(MODE_HINTS[next])
   }
+
+  // 兼容既有调用点
+  const setCommentMode = on => setMode(on ? 'comment' : 'select')
+  const setReorderMode = on => setMode(on ? 'reorder' : 'select')
 
   // 评论模式下点击不选中元素，而是在该元素上起草评论。
   // 用 document capture 抢在 VisBug 的 body capture 监听之前。
@@ -162,20 +184,28 @@ export const mountVisualRevise = visbug => {
   const doCopy = async () => {
     const result = await copyPrompt(ChangeStore.read())
     result.ok
-      ? panel.toast(`已复制 ${ChangeStore.stats().total} 项改动`)
-      : panel.toast(result.reason === 'empty' ? '还没有任何改动' : '复制失败，请检查剪贴板权限', 'error')
+      ? toolbar.toast(`已复制 ${ChangeStore.stats().total} 项改动到剪贴板`)
+      : toolbar.toast(result.reason === 'empty' ? '还没有任何改动' : '复制失败，请检查剪贴板权限', 'error')
     return result
   }
 
   panel.addEventListener('vr-copy', doCopy)
   list.addEventListener('vr-copy', doCopy)
+  toolbar.addEventListener('vr-copy', doCopy)
+
+  toolbar.addEventListener('vr-mode', e => setMode(e.detail.mode))
+  toolbar.addEventListener('vr-close', () => visbug.remove())
+  toolbar.addEventListener('vr-open-list', () => {
+    list.hidden = !list.hidden
+    if (!list.hidden) list.render()
+  })
 
   // 面板的 × 等同关闭整个编辑器：只藏面板会让用户以为关不掉，
   // 而页面上其实还挂着选择引擎在拦截点击。
   panel.addEventListener('vr-close', () => visbug.remove())
   panel.addEventListener('vr-comment-toggle', () => setCommentMode(!comments.active))
   panel.addEventListener('vr-reorder-toggle', () => setReorderMode(!layoutDrag.active))
-  list.addEventListener('vr-toast', e => panel.toast(e.detail.message, e.detail.kind))
+  list.addEventListener('vr-toast', e => toolbar.toast(e.detail.message, e.detail.kind))
 
   panel.addEventListener('vr-open-list', () => {
     list.hidden = !list.hidden
@@ -194,7 +224,10 @@ export const mountVisualRevise = visbug => {
     panel,
     list,
     comments,
+    toolbar,
     layoutDrag,
+    get mode() { return mode },
+    setMode,
     setCommentMode,
     setReorderMode,
     enterInteractive,
@@ -208,6 +241,7 @@ export const mountVisualRevise = visbug => {
       panel.remove()
       list.remove()
       comments.remove()
+      toolbar.remove()
       layoutDrag.destroy()
       document.getElementById('visual-revise-locate-overlay')?.remove()
     },

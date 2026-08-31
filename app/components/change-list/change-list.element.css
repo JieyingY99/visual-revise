@@ -11,11 +11,12 @@
   --vr-radius:    4px;
 
   position: fixed;
-  top: 16px;
+  /* 让开顶部工具条（top:20 + 高 56），否则会被它盖住 */
+  top: 88px;
   right: 304px;
   z-index: 2147483646;
   width: 300px;
-  max-height: calc(100vh - 32px);
+  max-height: calc(100vh - 104px);
   display: flex;
   flex-direction: column;
   font: 400 11px/1.4 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
