@@ -1,4 +1,5 @@
 import { PROP_GROUP, GROUPS, sameValue } from './tracked-props.js'
+import { textLandmarks } from './anchors.js'
 
 const SIDES = ['top', 'right', 'bottom', 'left']
 
@@ -85,6 +86,86 @@ const changeTable = changes => [
     `| ${c.prop}${c.note ? ` <sub>${c.note}</sub>` : ''} | \`${c.from || '—'}\` | \`${c.to}\` |`),
 ].join('\n')
 
+// 编辑器自身的 UI 不算页面结构的一部分
+const isOwnUI = el =>
+  el.hasAttribute?.('data-visual-revise-ui') || /^(VIS-BUG|VISBUG-)/.test(el.tagName || '')
+
+const orderOf = el => {
+  const raw = parseInt(el.style?.order, 10)
+  return Number.isFinite(raw) ? raw : 0
+}
+
+// 重排产生的是一组 order 数值，但用户的意图是「换个顺序」。
+// 把这组数值还原成顺序本身：AI 拿到顺序才能去调数组或 JSX，
+// 拿到 order 数值只会照搬成 CSS——那是下策，见段落末尾的说明。
+const collectReorders = edits => {
+  const containers = new Map()
+
+  for (const entry of edits) {
+    if (!entry.changes.some(c => c.prop === 'order')) continue
+
+    const parent = entry.el?.parentElement
+    if (!parent || containers.has(parent)) continue
+
+    const siblings = Array.from(parent.children).filter(el => !isOwnUI(el))
+    if (siblings.length < 2) continue
+
+    containers.set(parent, {
+      parent,
+      before: siblings,
+      after: siblings.slice().sort((a, b) => orderOf(a) - orderOf(b)),
+    })
+  }
+
+  return Array.from(containers.values())
+    .filter(g => g.before.some((el, i) => el !== g.after[i]))   // 顺序确实变了
+}
+
+// 取第一条独立的短文本，而不是把整棵子树拼起来——
+// 后者既难读，也无法用来在源码里检索
+const textOf = el => textLandmarks(el, 1)[0] || ''
+
+const nameOf = el => {
+  const text = textOf(el)
+  if (text) return `「${text}」`
+
+  const cls = Array.from(el.classList || []).filter(c => !/^(_|css-)/.test(c))[0]
+  return cls ? `${el.tagName.toLowerCase()}.${cls}` : `<${el.tagName.toLowerCase()}>`
+}
+
+const containerSelector = el => {
+  const tag = el.tagName.toLowerCase()
+  const cls = Array.from(el.classList || []).filter(c => !/^(_|css-)/.test(c))
+  return cls.length ? `${tag}.${cls[0]}` : tag
+}
+
+const reorderSection = groups => {
+  if (!groups.length) return ''
+
+  const blocks = groups.map(({ parent, before, after }) => [
+    `**容器**：\`${containerSelector(parent)}\``,
+    '',
+    '调整后的顺序（从前到后）：',
+    '',
+    ...after.map((el, i) => `${i + 1}. ${nameOf(el)}`),
+    '',
+    `原顺序：${before.map(nameOf).join(' → ')}`,
+  ].join('\n'))
+
+  return [
+    '---',
+    '',
+    '## 元素重新排序',
+    '',
+    blocks.join('\n\n'),
+    '',
+    '> 请直接调整源码中元素或数据的顺序（数组顺序、JSX 中的书写顺序等）。',
+    '> 不建议改用 CSS `order` 实现：它只改变视觉顺序，DOM 顺序不变，',
+    '> 会让键盘 Tab 顺序与读屏顺序和用户看到的不一致。',
+    '',
+  ].join('\n')
+}
+
 const FOOTER = `## 给 AI 的说明
 
 以上改动是在浏览器中可视化调整后导出的，数值为实测有效值。
@@ -102,6 +183,14 @@ export const buildPrompt = (state, meta = {}) => {
   const { edits = [], comments = [] } = state
   if (!edits.length && !comments.length) return ''
 
+  const reorders = collectReorders(edits)
+
+  // order 已经由「元素重新排序」段落表达，不再重复列进属性表。
+  // 必须先于下面的 summary 定义——它要统计 styleEdits 的数量。
+  const styleEdits = edits
+    .map(entry => ({ ...entry, changes: entry.changes.filter(c => c.prop !== 'order') }))
+    .filter(entry => entry.changes.length)
+
   const url      = meta.url      || (typeof location !== 'undefined' ? location.href : '')
   const viewport = meta.viewport || (typeof innerWidth !== 'undefined' ? `${innerWidth} × ${innerHeight}` : '')
 
@@ -110,11 +199,12 @@ export const buildPrompt = (state, meta = {}) => {
   if (viewport) head.push(`视口：${viewport}`)
 
   const summary = []
-  if (edits.length)    summary.push(`${edits.length} 处元素`)
-  if (comments.length) summary.push(`${comments.length} 条交互备注`)
+  if (styleEdits.length) summary.push(`${styleEdits.length} 处元素样式`)
+  if (reorders.length)   summary.push(`${reorders.length} 处顺序调整`)
+  if (comments.length)   summary.push(`${comments.length} 条交互备注`)
   head.push(`改动：${summary.join('，')}`, '')
 
-  const sections = edits.map((entry, i) => {
+  const sections = styleEdits.map((entry, i) => {
     const changes = collapseShorthand(entry.changes)
     return [
       '---',
@@ -132,6 +222,8 @@ export const buildPrompt = (state, meta = {}) => {
     ].join('\n')
   })
 
+  const reorderBlock = reorderSection(reorders)
+
   const commentSection = comments.length ? [
     '---',
     '',
@@ -140,14 +232,15 @@ export const buildPrompt = (state, meta = {}) => {
     '这些是 CSS 无法表达的行为需求，请实现对应的交互逻辑：',
     '',
     ...comments.map(c => {
-      const idx = edits.findIndex(e => e.el === c.el)
+      const idx = styleEdits.findIndex(e => e.el === c.el)
       const ref = idx >= 0 ? `（同上述第 ${idx + 1} 项）` : ''
       return `- **${describeElement(c.anchors)}**${ref}\n  - 选择器：\`${c.anchors.selector}\`\n  - 需求：${c.text}`
     }),
     '',
   ].join('\n') : ''
 
-  return [head.join('\n'), ...sections, commentSection, '---', '', FOOTER, ''].filter(Boolean).join('\n')
+  return [head.join('\n'), ...sections, reorderBlock, commentSection, '---', '', FOOTER, '']
+    .filter(Boolean).join('\n')
 }
 
 export const copyPrompt = async (state, meta) => {

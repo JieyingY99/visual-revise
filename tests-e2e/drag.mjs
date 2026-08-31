@@ -135,5 +135,34 @@ ok(revived.orders.join(',') === '1,2,0',
 ok(revived.recorded === 2,
    `落回默认值的那一项不计入改动（记录 ${revived.recorded} 条，写入 3 个 order）`)
 
+// ── 提示词必须表达「顺序意图」，而不是一串 order 数值 ──
+await page.evaluate(() => {
+  const s = window.__visualRevise.store
+  const title = document.querySelector('.hero-title')
+  s.track(title)
+  s.applyProp(title, 'font-size', '52px')   // 混入一条普通样式改动
+})
+await page.waitForTimeout(300)
+
+const prompt = await page.evaluate(() =>
+  window.__visualRevise.lib.buildPrompt(window.__visualRevise.store.read()))
+
+ok(prompt.includes('## 元素重新排序'), '提示词含「元素重新排序」段落')
+ok(/调整后的顺序（从前到后）/.test(prompt), '给出调整后的顺序')
+ok(/原顺序：/.test(prompt), '同时给出原顺序供对照')
+
+const orderSection = prompt.slice(prompt.indexOf('## 元素重新排序'))
+ok(/1\. 「Thinking Nine」/.test(orderSection),
+   `新顺序首位是被拖动的元素：${orderSection.split('\n').find(l => l.startsWith('1.'))?.trim()}`)
+ok(!/「[^」]{40,}」/.test(orderSection), '元素名取短文本，不是整棵子树拼成的长串')
+
+ok(!/\| order \|/.test(prompt) && !/order.*→/.test(prompt.split('## 元素重新排序')[0]),
+   'order 数值不再出现在属性改动表里')
+ok(prompt.includes('不建议改用 CSS `order`') && prompt.includes('键盘 Tab'),
+   '说明了直接改源码顺序的理由（order 会破坏键盘与读屏顺序）')
+ok(prompt.includes('font-size'), '同时存在的普通样式改动不受影响')
+ok(/改动：1 处元素样式，1 处顺序调整/.test(prompt),
+   `摘要分别统计两类改动：${prompt.split('\n').find(l => l.startsWith('改动：'))}`)
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')
