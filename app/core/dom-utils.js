@@ -29,3 +29,24 @@ export const isTypingTarget = event => {
 
   return node.isContentEditable === true
 }
+
+// 悬停在浮层上时，滚轮应该滚浮层而不是底下的页面。
+// overscroll-behavior 只在滚到边界时起作用；当滚动容器本身不可滚动
+// （内容没超出、或指针落在 header 这类非滚动区），事件仍会冒泡到页面。
+// 因此统一接管：在浮层范围内一律 preventDefault，自行驱动滚动。
+export const containScroll = (host, getScroller) => {
+  const onWheel = e => {
+    const el = getScroller()
+    if (!el) return
+
+    e.preventDefault()
+
+    const max = el.scrollHeight - el.clientHeight
+    if (max <= 0) return
+
+    el.scrollTop = Math.max(0, Math.min(max, el.scrollTop + e.deltaY))
+  }
+
+  host.addEventListener('wheel', onWheel, { passive: false })
+  return () => host.removeEventListener('wheel', onWheel, { passive: false })
+}

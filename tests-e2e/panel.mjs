@@ -176,5 +176,58 @@ ok(beforeDrill === 'ARTICLE', `三轮切换后选中仍在原元素（${beforeDr
 ok(drilled.allDirectChildren,
    `⌘⇧Enter 只下钻一层：选中 ${drilled.count} 个 [${drilled.tags}]，均为直接子元素`)
 
+// ── 回归：面板上滚动不得穿透到页面 ──
+await page.locator('.curve-card').nth(1).click({ position: { x: 130, y: 8 }, force: true })
+await page.waitForTimeout(400)
+
+// 先把页面撑高，确保它本身可滚动
+await page.evaluate(() => {
+  const spacer = document.createElement('div')
+  spacer.id = 'vr-scroll-spacer'
+  spacer.style.height = '3000px'
+  document.body.appendChild(spacer)
+  scrollTo(0, 0)
+})
+await page.waitForTimeout(200)
+
+const panelBox = await page.locator('visual-revise-panel').boundingBox()
+const before = await page.evaluate(() => ({
+  page: scrollY,
+  panel: document.querySelector('visual-revise-panel').shadowRoot.querySelector('.scroll').scrollTop,
+}))
+
+// 在面板正中滚动
+await page.mouse.move(panelBox.x + panelBox.width / 2, panelBox.y + panelBox.height / 2)
+await page.mouse.wheel(0, 400)
+await page.waitForTimeout(400)
+
+const afterPanel = await page.evaluate(() => ({
+  page: scrollY,
+  panel: document.querySelector('visual-revise-panel').shadowRoot.querySelector('.scroll').scrollTop,
+}))
+
+ok(afterPanel.page === before.page,
+   `面板上滚动不带动页面（页面 scrollY ${before.page} → ${afterPanel.page}）`)
+ok(afterPanel.panel > before.panel,
+   `面板内容确实滚动了（scrollTop ${before.panel} → ${afterPanel.panel}）`)
+
+// 在面板 header（非滚动区）滚动，同样不该带动页面
+await page.mouse.move(panelBox.x + panelBox.width / 2, panelBox.y + 12)
+await page.mouse.wheel(0, 300)
+await page.waitForTimeout(300)
+ok(await page.evaluate(() => scrollY) === before.page,
+   '在面板头部滚动同样不穿透')
+
+// 页面本身仍可正常滚动
+await page.mouse.move(200, 500)
+await page.mouse.wheel(0, 400)
+await page.waitForTimeout(300)
+ok(await page.evaluate(() => scrollY) > before.page, '面板之外的区域页面照常滚动')
+
+await page.evaluate(() => {
+  document.getElementById('vr-scroll-spacer')?.remove()
+  scrollTo(0, 0)
+})
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

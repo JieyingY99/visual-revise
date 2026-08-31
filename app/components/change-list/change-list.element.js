@@ -1,5 +1,6 @@
 import { ChangeStore } from '../../core/change-store.js'
 import { downloadJSON, pickAndImport } from '../../core/json-io.js'
+import { containScroll } from '../../core/dom-utils.js'
 import { default as list_css } from './change-list.element.css'
 
 const OVERLAY_ID = 'visual-revise-locate-overlay'
@@ -49,6 +50,7 @@ export class ChangeList extends HTMLElement {
   #unsubscribe = null
   #frame = null
   #built = false
+  #releaseScroll = null
 
   constructor() {
     super()
@@ -60,12 +62,14 @@ export class ChangeList extends HTMLElement {
     this.addEventListener('keydown', e => e.stopPropagation())
     this.#shadow.innerHTML = `<style>${list_css}</style><div id="root"></div>`
     this.#buildSkeleton()
+    this.#releaseScroll = containScroll(this, () => this.#shadow.querySelector('.items'))
     this.#unsubscribe = ChangeStore.subscribe(() => this.schedule())
     this.render()
   }
 
   disconnectedCallback() {
     this.#unsubscribe?.()
+    this.#releaseScroll?.()
     if (this.#frame) cancelAnimationFrame(this.#frame)
     clearHighlight()
   }

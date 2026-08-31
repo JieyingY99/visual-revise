@@ -1,10 +1,14 @@
 import { GROUPS, sameValue } from '../../core/tracked-props.js'
-import { CONTROLS, SIDE_GROUPS, SIDE_PROPS, isRelevant, coerceLength, stepValue, stepSize } from '../../core/controls.js'
+import {
+  CONTROLS, SIDE_GROUPS, SIDE_PROPS, FIELD_PAIRS, FIELD_PREFIX,
+  isRelevant, coerceLength, stepValue, stepSize,
+} from '../../core/controls.js'
 import { ChangeStore } from '../../core/change-store.js'
 import { readComputed } from '../../core/snapshot.js'
 import { stableClasses } from '../../core/anchors.js'
 import { findSharedElements, describeShared } from '../../core/shared-elements.js'
 import { loadLocalFonts, isSupported as fontsSupported } from '../../core/local-fonts.js'
+import { containScroll } from '../../core/dom-utils.js'
 import { default as panel_css } from './props-panel.element.css'
 
 const rgbToHex = value => {
@@ -28,6 +32,7 @@ export class PropsPanel extends HTMLElement {
   #computed = {}
   #folded = new Set(['position', 'effects'])
   #unsubscribe = null
+  #releaseScroll = null
   #dirtyProps = new Set()
   #shared = false
   #sharedEls = []
@@ -46,6 +51,8 @@ export class PropsPanel extends HTMLElement {
     this.addEventListener('keydown', e => e.stopPropagation())
 
     this.#shadow.innerHTML = `<style>${panel_css}</style><div id="root"></div>`
+    this.#releaseScroll = containScroll(this, () => this.#shadow.querySelector('.scroll'))
+
     this.#unsubscribe = ChangeStore.subscribe(() => {
       this.#syncValues()
       this.#refreshDirty()
@@ -55,6 +62,7 @@ export class PropsPanel extends HTMLElement {
 
   disconnectedCallback() {
     this.#unsubscribe?.()
+    this.#releaseScroll?.()
   }
 
   // 由宿主在选中变化时调用
@@ -214,10 +222,27 @@ export class PropsPanel extends HTMLElement {
     if (sideGroup)
       SIDE_GROUPS.forEach(sg => rows.push(this.#renderSides(sg)))
 
-    group.props
+    // 成对字段并排成两列，其余单独占一行——Figma 的布局节奏
+    const remaining = group.props
       .filter(prop => !SIDE_PROPS.has(prop))
       .filter(prop => isRelevant(prop, this.#computed, this.target))
-      .forEach(prop => rows.push(this.#renderControl(prop)))
+
+    const consumed = new Set()
+
+    for (const prop of remaining) {
+      if (consumed.has(prop)) continue
+
+      const pair = FIELD_PAIRS.find(([a, b]) =>
+        (a === prop && remaining.includes(b)) || (b === prop && remaining.includes(a)))
+
+      if (pair && !consumed.has(pair[0]) && !consumed.has(pair[1])) {
+        consumed.add(pair[0]); consumed.add(pair[1])
+        rows.push(`<div class="pair">${this.#renderField(pair[0])}${this.#renderField(pair[1])}</div>`)
+      } else {
+        consumed.add(prop)
+        rows.push(this.#renderField(prop))
+      }
+    }
 
     if (!rows.filter(Boolean).length) return ''
 
@@ -231,29 +256,34 @@ export class PropsPanel extends HTMLElement {
   #renderSides(sg) {
     const values = sg.props.map(p => this.#computed[p] || '')
     const linked = values.every(v => v === values[0])
-    return `<div class="row">
+
+    return `<div class="field">
       <label class="name" data-prop="${sg.props.join(',')}">${sg.label}</label>
       <div class="sides">
-        ${sg.props.map((p, i) => `<input type="text" data-prop="${p}" data-side
-            value="${values[i]}" title="${p}">`).join('')}
+        ${sg.props.map((p, i) => `
+          <div class="control">
+            <span class="prefix">${FIELD_PREFIX[p] || ''}</span>
+            <input type="text" data-prop="${p}" data-side value="${values[i]}" title="${p}">
+          </div>`).join('')}
         <button class="icon-btn lock" data-lock="${sg.base}" ${linked ? 'data-on' : ''}
           title="四边联动">⛓</button>
       </div>
     </div>`
   }
 
-  #renderControl(prop) {
+  #renderField(prop) {
     const spec = CONTROLS[prop]
     if (!spec) return ''
     const value = this.#computed[prop] ?? ''
+    const prefix = FIELD_PREFIX[prop]
 
     const field = (() => {
       switch (spec.type) {
         case 'select':
-          return `<select data-prop="${prop}">
+          return `<div class="control"><select data-prop="${prop}">
             ${!spec.options.includes(value) ? `<option value="${value}" selected>${value || '—'}</option>` : ''}
             ${spec.options.map(o => `<option value="${o}"${o === value ? ' selected' : ''}>${o}</option>`).join('')}
-          </select>`
+          </select></div>`
 
         case 'segment':
           return `<div class="segment">${spec.options.map(([val, label]) =>
@@ -268,26 +298,32 @@ export class PropsPanel extends HTMLElement {
               <i style="background:${isTransparent(value) ? 'transparent' : value}"></i>
               <input type="color" data-prop="${prop}" data-color value="${hex}">
             </button>
-            <input type="text" data-prop="${prop}" value="${shown}" placeholder="transparent">
+            <div class="control">
+              <input type="text" data-prop="${prop}" value="${shown}" placeholder="transparent">
+            </div>
           </div>`
         }
 
         case 'text': {
-          const field = `<input type="text" data-prop="${prop}" value="${String(value).replace(/"/g, '&quot;')}">`
+          const input = `<div class="control"><input type="text" data-prop="${prop}"
+            value="${String(value).replace(/"/g, '&quot;')}"></div>`
           return prop === 'font-family' && fontsSupported()
-            ? `<div class="color-row">${field}
+            ? `<div class="color-row">${input}
                  <button class="icon-btn load-fonts" title="读取本地已安装字体">⤓</button>
                </div>`
-            : field
+            : input
         }
 
         default:
-          return `<input type="text" data-prop="${prop}" data-num value="${value}">`
+          return `<div class="control">
+            ${prefix ? `<span class="prefix">${prefix}</span>` : ''}
+            <input type="text" data-prop="${prop}" data-num value="${value}">
+          </div>`
       }
     })()
 
     const draggable = spec.type === 'num' ? ' data-drag' : ''
-    return `<div class="row">
+    return `<div class="field">
       <label class="name" data-prop="${prop}"${draggable} title="${prop}">${spec.label}</label>
       ${field}
     </div>`

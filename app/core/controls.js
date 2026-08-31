@@ -96,6 +96,35 @@ export const CONTROLS = {
   'backdrop-filter': txt('背景滤镜'),
 }
 
+// Figma 把成对的字段并排放：X/Y、W/H、水平/垂直内边距。
+// 这里声明哪些属性构成一对，渲染时合并到同一行的两列里。
+export const FIELD_PAIRS = [
+  ['width', 'height'],
+  ['min-width', 'min-height'],
+  ['max-width', 'max-height'],
+  ['row-gap', 'column-gap'],
+  ['top', 'right'],
+  ['bottom', 'left'],
+  ['font-size', 'line-height'],
+  ['letter-spacing', 'font-weight'],
+  ['opacity', 'border-radius'],
+  ['border-width', 'border-style'],
+]
+
+// 输入框内嵌的前缀标识，替代冗长的中文标签
+export const FIELD_PREFIX = {
+  'width': 'W', 'height': 'H',
+  'min-width': 'W', 'min-height': 'H',
+  'max-width': 'W', 'max-height': 'H',
+  'top': 'T', 'right': 'R', 'bottom': 'B', 'left': 'L',
+  'padding-top': '↑', 'padding-right': '→', 'padding-bottom': '↓', 'padding-left': '←',
+  'margin-top': '↑', 'margin-right': '→', 'margin-bottom': '↓', 'margin-left': '←',
+  'gap': '↔', 'row-gap': '↕', 'column-gap': '↔',
+  'font-size': 'Aa', 'line-height': '↕', 'letter-spacing': 'AV',
+  'opacity': '◍', 'border-radius': '◜', 'z-index': 'Z', 'order': '#',
+  'border-width': '▭',
+}
+
 // 间距组用合并控件呈现，不逐条渲染
 export const SIDE_GROUPS = [
   { base: 'padding', label: '内边距', props: ['padding-top', 'padding-right', 'padding-bottom', 'padding-left'] },
