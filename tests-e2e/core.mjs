@@ -125,5 +125,31 @@ const dataUri = await page.evaluate(async (base) => {
 
 ok(dataUri.ok, `含分号的 data URI 单条撤销后原样恢复：${dataUri.restored}…`)
 
+// ── 回归：前后值相等不得记为改动 ──
+const noNoop = await page.evaluate(async (base) => {
+  const { createStore } = await import(`${base}/__app/core/change-store.js`)
+  const store = createStore()
+  const el = document.querySelectorAll('.curve-card')[0]
+
+  store.track(el)
+  const computedRadius = getComputedStyle(el).borderRadius
+
+  store.applyProp(el, 'border-radius', computedRadius)  // 写回原值
+  const afterSame = store.stats().props
+
+  store.applyProp(el, 'order', '0')                      // 默认就是 0
+  const afterDefault = store.stats().props
+
+  store.applyProp(el, 'border-radius', '30px')           // 真改动
+  const afterReal = store.stats().props
+
+  el.removeAttribute('style')
+  return { afterSame, afterDefault, afterReal }
+}, origin)
+
+ok(noNoop.afterSame === 0, `写回原值不记为改动（${noNoop.afterSame} 项）`)
+ok(noNoop.afterDefault === 0, `写入与默认值相同的 order 不记为改动（${noNoop.afterDefault} 项）`)
+ok(noNoop.afterReal === 1, `真正的改动仍被记录（${noNoop.afterReal} 项）`)
+
 await browser.close(); await close()
 console.log(process.exitCode ? '结果：有失败项\n' : '结果：全部通过\n')

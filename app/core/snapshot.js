@@ -73,8 +73,12 @@ export const diffSnapshot = snapshot => {
     }))
   }
 
-  return changes.sort((a, b) =>
-    TRACKED_PROPS.indexOf(a.prop) - TRACKED_PROPS.indexOf(b.prop))
+  // 前后值相等的不是改动。批量写入时很容易产生这种项：
+  // 重排会给每个兄弟元素都写 order，其中恰好落回原位的那个
+  // 会得到一条 "0→0" 的记录，既污染改动列表也污染提示词。
+  return changes
+    .filter(c => !sameValue(c.from, c.to))
+    .sort((a, b) => TRACKED_PROPS.indexOf(a.prop) - TRACKED_PROPS.indexOf(b.prop))
 }
 
 // 单条撤销：把某个属性还原到快照状态
