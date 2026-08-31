@@ -21,12 +21,25 @@ export const takeSnapshot = el => ({
   takenAt:     Date.now(),
 })
 
+// VisBug 给选中元素加了 transition: all .15s（让键盘微调看起来跟手）。
+// 副作用是：刚写完样式马上读计算值，读到的是过渡中的中间值——通常就是旧值。
+// 面板每次改动后都要回读来刷新字段，读慢半拍就会把旧值显示出来、甚至拿旧值
+// 去做下一步计算（新建渐变接不上当前填充色就是这么来的）。
+//
+// 读之前先把过渡关掉再还原。代价是正在跑的过渡会被取消，也就是面板发起的改动
+// 变成立刻生效而不是渐变过去——对一个改稿工具来说这反而是对的。
 export const readComputed = el => {
+  const prev = el.style?.transition
+  if (el.style) el.style.transition = 'none'
+
   const style = getComputedStyle(el)
-  return TRACKED_PROPS.reduce((acc, prop) => {
+  const out = TRACKED_PROPS.reduce((acc, prop) => {
     acc[prop] = style.getPropertyValue(prop).trim()
     return acc
   }, {})
+
+  if (el.style) prev ? (el.style.transition = prev) : el.style.removeProperty('transition')
+  return out
 }
 
 export const readInline = el => {

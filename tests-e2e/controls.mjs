@@ -61,7 +61,9 @@ await page.evaluate(() => window.__visualRevise.store.undoEverything())
 await page.waitForTimeout(200)
 
 // ── 色盘 ──
-const swatch = panel('vr-color[data-prop="background-color"] .swatch')
+// background-color 已经归「填充」控件管（见 fill.mjs），这里用描边色考察
+// vr-color 本身：两者共用 picker.js 的同一套色盘主体
+const swatch = panel('vr-color[data-prop="border-color"] .swatch')
 
 // 色盘可能因为值更新等原因被关掉，每步操作前确保它开着
 const ensurePicker = async () => {
@@ -105,7 +107,7 @@ await valInput.press('Enter')
 await page.waitForTimeout(400)
 const typed = await page.evaluate(() => ({
   recorded: window.__visualRevise.store.read().edits
-    .flatMap(e => e.changes).find(c => c.prop === 'background-color')?.to || '',
+    .flatMap(e => e.changes).find(c => c.prop === 'border-color')?.to || '',
   field: document.getElementById('visual-revise-color-panel')?.querySelector('.val')?.value,
 }))
 ok(/255,\s*136,\s*0|ff8800/i.test(typed.recorded),
@@ -142,12 +144,12 @@ await page.waitForTimeout(400)
 const afterHue = await page.evaluate(() => {
   const entry = window.__visualRevise.store.read().edits[0]
   return {
-    recorded: entry?.changes.find(c => c.prop === 'background-color')?.to || '',
+    recorded: entry?.changes.find(c => c.prop === 'border-color')?.to || '',
     field: document.getElementById('visual-revise-color-panel')?.querySelector('.val')?.value,
   }
 })
 ok(!!afterHue.recorded,
-   `拖动色相条即时写入并记录：background-color → ${afterHue.recorded}`)
+   `拖动色相条即时写入并记录：border-color → ${afterHue.recorded}`)
 ok(afterHue.field !== picker.value, `色值输入同步更新：${picker.value} → ${afterHue.field}`)
 
 // 颜色换算正确性

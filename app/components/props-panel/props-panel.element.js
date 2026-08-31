@@ -12,6 +12,7 @@ import { loadLocalFonts, isSupported as fontsSupported } from '../../core/local-
 import { containScroll } from '../../core/dom-utils.js'
 import '../controls/select.element.js'
 import '../controls/color.element.js'
+import '../controls/fill.element.js'
 import { default as panel_css } from './props-panel.element.css'
 
 const svg = (body, size = 14) =>
@@ -57,6 +58,11 @@ const HIDEABLE = {
 // display 决定 flex 那一组是否生效。改了它们必须整块重画，
 // 否则刚变得可用的字段要等下次重新选中才看得见。
 const RERENDER_ON = new Set(['position', 'display'])
+
+// 这些属性的编辑界面在分区的 widget 里，不再单独渲染成一行字段。
+// background-image 不在此列——它还留着原来的文本框，那是 url(...) 的去处，
+// 也是渐变编辑器产物的原始值视图。
+const WIDGET_OWNED = new Set(['background-color'])
 
 // VisBug 给选中元素加了 transition: all .15s（让微调看起来跟手）。
 // 副作用是刚写完样式马上量，量到的是过渡中的中间值——往往就是旧值本身。
@@ -184,12 +190,32 @@ export class PropsPanel extends HTMLElement {
     const active = this.#shadow.activeElement
 
     for (const el of this.#shadow.querySelectorAll('[data-prop]')) {
-      if (el === active) continue          // 不打断正在输入的字段
+      if (el.tagName === 'VR-FILL') {
+        for (const [attr, p] of [['color', 'background-color'], ['image', 'background-image']]) {
+          const next = this.#computed[p] ?? ''
+          if (el.getAttribute(attr) !== next) el.setAttribute(attr, next)
+        }
+        continue
+      }
 
       const prop = el.dataset.prop
       if (!prop || prop.includes(',')) continue
 
       const value = displayValue(prop, this.#computed[prop] ?? '')
+
+      // 正在输入的字段不能覆盖。但外部改动确实发生了，得记一笔：
+      // 失焦时浏览器会补发一个带着「用户离开前的值」的 change，
+      // 照单提交就等于把刚被撤销的改动又写回去。
+      if (el === active) {
+        if (el.tagName === 'INPUT' && el.value !== value) {
+          el.dataset.vrPending = value
+          el.dataset.vrSeen = el.value
+        }
+        continue
+      }
+
+      delete el.dataset.vrPending
+      delete el.dataset.vrSeen
 
       if (el.tagName === 'VR-SELECT' || el.tagName === 'VR-COLOR') {
         const next = el.tagName === 'VR-COLOR' && isTransparent(value) ? '' : value
@@ -284,7 +310,9 @@ export class PropsPanel extends HTMLElement {
       if (widget) rows.push(widget)
     }
 
-    const props = group.props.filter(prop => isRelevant(prop, this.#computed, this.target))
+    const props = group.props
+      .filter(prop => !WIDGET_OWNED.has(prop))
+      .filter(prop => isRelevant(prop, this.#computed, this.target))
 
     for (const prop of props) {
       if (consumed.has(prop)) continue
@@ -341,6 +369,15 @@ export class PropsPanel extends HTMLElement {
   }
 
   #renderWidget(name) {
+    if (name === 'fill') {
+      return `<div class="field">
+        <label class="name" data-prop="background-color,background-image">填充</label>
+        <vr-fill data-prop="background-color,background-image"
+          color="${esc(this.#computed['background-color'])}"
+          image="${esc(this.#computed['background-image'])}"></vr-fill>
+      </div>`
+    }
+
     if (name !== 'align') return ''
     if (!alignSupported(this.target)) return ''
 
@@ -613,9 +650,25 @@ export class PropsPanel extends HTMLElement {
     // 否则外部撤销发生在用户正编辑该字段时，它会一直停在旧值上
     on('input[data-prop]', 'blur', () => this.#syncValues())
 
+    on('input[data-prop]', 'focus', e => {
+      delete e.currentTarget.dataset.vrPending
+      delete e.currentTarget.dataset.vrSeen
+    })
+
     on('input[data-prop]', 'change', e => {
       const el = e.currentTarget
       const prop = el.dataset.prop
+
+      // 这个字段在聚焦期间被外部改动覆盖过（撤销、重置、导入）。
+      // 用户此后没再动过它，就采纳外部结果；动过才算一次真的编辑。
+      const pending = el.dataset.vrPending
+      if (pending !== undefined) {
+        const untouched = el.value === el.dataset.vrSeen
+        delete el.dataset.vrPending
+        delete el.dataset.vrSeen
+        if (untouched) { el.value = pending; return }
+      }
+
       const next = CONTROLS[prop]?.coerce?.(el.value) ?? el.value
 
       // 与当前实际值相同就不是一次编辑。程序同步字段值后浏览器可能
@@ -623,6 +676,14 @@ export class PropsPanel extends HTMLElement {
       if (sameValue(next, this.#computed[prop])) return
 
       this.#commit(prop, el.value)
+    })
+
+    // 填充控件一次可能改两条属性；detail 里为 null 的那条表示「不动它」
+    on('vr-fill', 'vr-fill', e => {
+      const { color, image } = e.detail
+      if (color != null) this.#applyToAll('background-color', color)
+      if (image != null) this.#applyToAll('background-image', image)
+      this.dispatchEvent(new CustomEvent('vr-change', { bubbles: true, composed: true }))
     })
 
     on('vr-color[data-prop]', 'vr-color', e =>

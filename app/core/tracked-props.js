@@ -44,6 +44,9 @@ export const GROUPS = [
     id: 'fill',
     label: 'Fill',
     zh: '填充',
+    // 填充控件同时管这两条：Figma 里「一个填充」是一件事，
+    // CSS 里是两件——background-image 画在 background-color 上面
+    widgets: ['fill'],
     props: ['background-color', 'background-image'],
   },
   {
