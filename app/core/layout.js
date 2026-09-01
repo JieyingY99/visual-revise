@@ -100,14 +100,20 @@ export const SIDE_SETS = {
   },
 }
 
-// 两边不等时显示「混合」而不是随便挑一个——挑一个会让用户以为两边相同，
-// 一敲回车就把另一边悄悄改掉了
-export const pairValue = (computed, props) => {
+// 两边不等时把两个值都写出来（"0, 138"），而不是一句「混合」。
+// 「混合」只说明「不一样」，具体是多少还得展开四边才看得到；两个数字则是
+// 直接可读、也直接可改的。format 用来去掉默认单位，和普通字段保持一致。
+export const pairDisplay = (computed, props, format = v => v) => {
   const values = props.map(p => (computed?.[p] || '').trim())
-  return values.every(v => v === values[0]) ? values[0] : ''
+  return values.every(v => v === values[0])
+    ? format(values[0])
+    : values.map(format).join(', ')
 }
 
-export const isMixed = (computed, props) => {
-  const values = props.map(p => (computed?.[p] || '').trim())
-  return !values.every(v => v === values[0])
+// "0, 138" / "0 138" → 分别给两条属性；只填一个值 → 两条都用它。
+// 显示成什么样就能照着改回去，不用先展开四边。
+export const parsePair = raw => {
+  const parts = String(raw ?? '').split(/[,，\s]+/).map(v => v.trim()).filter(Boolean)
+  if (!parts.length) return ['', '']
+  return parts.length === 1 ? [parts[0], parts[0]] : [parts[0], parts[1]]
 }

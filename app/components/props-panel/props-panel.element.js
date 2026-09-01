@@ -22,7 +22,7 @@ import {
 } from '../../core/grid.js'
 import {
   FLOWS, FLOW_LABEL, flowOf, planFlow, isFlexFlow,
-  alignmentOf, planAlignment, SIDE_SETS, pairValue, isMixed,
+  alignmentOf, planAlignment, SIDE_SETS, pairDisplay, parsePair,
 } from '../../core/layout.js'
 import '../controls/select.element.js'
 import '../controls/color.element.js'
@@ -753,14 +753,12 @@ export class PropsPanel extends HTMLElement {
 
     const cell = dir => {
       const props = set[dir]
-      const mixed = isMixed(this.#computed, props)
-      const value = pairValue(this.#computed, props)
+      const value = pairDisplay(this.#computed, props, v => displayValue(props[0], v))
 
       return `<div class="control">
         <span class="prefix" data-drag data-pair="${kind}:${dir}">${SIDE_ICON[dir]}</span>
         <input type="text" data-pair="${kind}:${dir}" data-num
-          value="${esc(mixed ? '' : displayValue(props[0], value))}"
-          placeholder="${mixed ? '混合' : ''}"
+          value="${esc(value)}"
           title="${props.join(' / ')}">
       </div>`
     }
@@ -1322,8 +1320,13 @@ export class PropsPanel extends HTMLElement {
       const props = SIDE_SETS[kind]?.[dir]
       if (!props) return
 
-      const value = coerceLength(e.currentTarget.value)
-      this.#batch(SIDE_SETS[kind].label, () => props.forEach(prop => this.#commit(prop, value)))
+      // 输入支持 "0, 138" 这种写法：显示成什么样就能照着改回去。
+      // 只填一个值时两边一起写。
+      const [a, b] = parsePair(e.currentTarget.value)
+      this.#batch(SIDE_SETS[kind].label, () => {
+        this.#commit(props[0], coerceLength(a))
+        this.#commit(props[1], coerceLength(b))
+      })
       this.render()
     })
 

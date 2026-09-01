@@ -129,12 +129,31 @@ const bothSides = await page.evaluate(() => {
 ok(bothSides.l === '32px' && bothSides.r === '32px' && bothSides.t === '12px',
    `一个框写两条声明，另一轴不受影响：${JSON.stringify(bothSides)}`)
 
-// 两边不等时显示「混合」，而不是随便挑一个
+// 两边不等时把两个值都写出来，而不是一句「混合」
 await page.evaluate(() => { document.querySelector('.lo-row').style.paddingLeft = '4px' })
 await select('.lo-grid'); await select('.lo-row')
-ok(await padH.inputValue() === '' &&
-   await padH.getAttribute('placeholder') === '混合',
-   '左右不等时留空并提示「混合」——挑一个显示会让人以为两边相同，一敲回车就把另一边悄悄改了')
+ok(await padH.inputValue() === '4, 32',
+   `左右不等时两个值都显示（"混合"只说明不一样，具体多少还得展开四边才看得到）：${await padH.inputValue()}`)
+
+// 显示成什么样就能照着改回去
+await padH.fill('8, 40')
+await padH.press('Enter')
+await page.waitForTimeout(400)
+const pairWrote = await page.evaluate(() => {
+  const s = document.querySelector('.lo-row').style
+  return { l: s.paddingLeft, r: s.paddingRight }
+})
+ok(pairWrote.l === '8px' && pairWrote.r === '40px',
+   `输入 "8, 40" 分别写给左右两条：${JSON.stringify(pairWrote)}`)
+
+await padH.fill('16')
+await padH.press('Enter')
+await page.waitForTimeout(400)
+const single = await page.evaluate(() => {
+  const s = document.querySelector('.lo-row').style
+  return { l: s.paddingLeft, r: s.paddingRight }
+})
+ok(single.l === '16px' && single.r === '16px', '只填一个值时两边一起写')
 
 // ── 展开成四边 ──────────────────────────────────────────────
 ok(await panel('input[data-prop="padding-top"]').count() === 0, '默认没有四边独立字段')

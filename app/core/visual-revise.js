@@ -393,6 +393,12 @@ export const mountVisualRevise = visbug => {
     parseTracks, serializeTracks, readTracks, gridShape,
     flowOf, planFlow, alignmentOf, planAlignment,
   }
+  // 构建时间由 rollup 注入。一句话回答「我这份是不是最新的」——
+  // 扩展重载、页面刷新、脚本缓存，三者任缺一环看到的都是上一版，
+  // 而界面上分辨不出来。
+  api.build = typeof __VR_BUILD__ === 'string' ? __VR_BUILD__ : 'dev'
+  console.log(`[Visual Revise] 已就绪 · 构建于 ${api.build}`)
+
   window.__visualRevise = api
   return api
 }
