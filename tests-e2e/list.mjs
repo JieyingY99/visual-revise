@@ -94,10 +94,13 @@ await page.locator('.curve-card').nth(1).click({ position: { x: 130, y: 8 }, for
 await page.waitForTimeout(400)
 
 const radius = page.locator('visual-revise-panel input[data-prop="border-radius"]')
-await radius.fill('30px')
+// 填裸数字：长度字段只显示数字，px 由 coerceLength 在写入时补回
+await radius.fill('30')
 await radius.dispatchEvent('change')
 await page.waitForTimeout(300)
 const afterEdit = await radius.inputValue()
+const writtenStyle = await page.evaluate(() =>
+  document.querySelectorAll('.curve-card')[1].style.borderRadius)
 
 // 从面板之外触发撤销（reset 按钮的点击路径已由上面的用例覆盖，
 // 这里要验证的是面板对外部 store 变更的响应）
@@ -113,10 +116,11 @@ const afterReset2 = await radius.inputValue()
 const realValue = await page.evaluate(() =>
   getComputedStyle(document.querySelectorAll('.curve-card')[1]).borderRadius)
 
-ok(afterEdit === '30px', `改动后字段显示新值：${afterEdit}`)
-ok(focusedStill === '30px',
+ok(afterEdit === '30', `改动后字段显示新值：${afterEdit}`)
+ok(writtenStyle === '30px', `写进样式的仍是带单位的值：${writtenStyle}`)
+ok(focusedStill === '30',
    `外部撤销时不打断正在编辑的字段（仍显示 ${focusedStill}）`)
-ok(afterReset2 === realValue,
+ok(afterReset2 === realValue.replace(/px$/, ''),
    `字段失焦后回读真实值：字段=${afterReset2} 实际=${realValue}`)
 
 const dirtyLeft = await page.locator('visual-revise-panel label.name[data-dirty]').count()

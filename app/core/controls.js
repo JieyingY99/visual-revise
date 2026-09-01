@@ -162,8 +162,24 @@ const BLANK_WHEN = {
   'backdrop-filter': ['none'],
 }
 
+// px 是这些字段的默认单位，写在框里只是噪音——Figma 的尺寸/间距框里就只有
+// 数字。写回时 coerceLength 会把裸数字补回 px，来回是等价的。
+//
+// 只对「会自动补 px」的字段这么做。line-height 这类接受纯数字的属性不能碰：
+// 24px 与 24 语义完全不同（后者是 24 倍行高），去掉单位等于改了含义。
+// 非 px 的写法（1rem / 50% / auto / calc(...)）一律原样显示。
+const PX_ONLY = /^-?[\d.]+px$/
+
+export const stripDefaultUnit = (prop, value) => {
+  const v = String(value ?? '').trim()
+  if (!PX_ONLY.test(v)) return value ?? ''
+  return CONTROLS[prop]?.coerce === coerceLength ? v.slice(0, -2) : value
+}
+
 export const displayValue = (prop, value) =>
-  (BLANK_WHEN[prop] || []).includes(String(value ?? '').trim()) ? '' : (value ?? '')
+  (BLANK_WHEN[prop] || []).includes(String(value ?? '').trim())
+    ? ''
+    : stripDefaultUnit(prop, value)
 
 // 间距组用合并控件呈现，不逐条渲染
 export const SIDE_GROUPS = [

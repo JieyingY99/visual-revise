@@ -116,10 +116,10 @@ const padH = panel('input[data-pair="padding:horizontal"]')
 const padV = panel('input[data-pair="padding:vertical"]')
 ok(await padH.count() === 1 && await padV.count() === 1,
    '内边距默认收成「水平 / 垂直」两个框，而不是四行')
-ok(await padH.inputValue() === '20px' && await padV.inputValue() === '12px',
-   `左右 / 上下分别读出：${await padH.inputValue()} / ${await padV.inputValue()}`)
+ok(await padH.inputValue() === '20' && await padV.inputValue() === '12',
+   `左右 / 上下分别读出（只显示数字，px 由写入时补回）：${await padH.inputValue()} / ${await padV.inputValue()}`)
 
-await padH.fill('32px')
+await padH.fill('32')
 await padH.press('Enter')
 await page.waitForTimeout(400)
 const bothSides = await page.evaluate(() => {

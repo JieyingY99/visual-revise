@@ -927,7 +927,7 @@ export class PropsPanel extends HTMLElement {
       // 固定尺寸时输入框里就是那个数字；其余模式下数字是实测值，
       // 真正生效的是模式，所以把模式名摆在旁边，不让人以为那个数字是写死的
       const value = mode === 'fixed'
-        ? this.#computed[axis]
+        ? displayValue(axis, this.#computed[axis])
         : `${size[axis]}`
 
       return `<div class="control resize-cell" data-axis="${axis}">
@@ -946,7 +946,7 @@ export class PropsPanel extends HTMLElement {
         ? `<div class="control limit">
              <span class="prefix" data-drag data-prop="${prop}">${FIELD_PREFIX[prop]}</span>
              <input type="text" data-prop="${prop}" data-num
-               value="${esc(this.#computed[prop])}" title="${prop}">
+               value="${esc(displayValue(prop, this.#computed[prop]))}" title="${prop}">
              <button class="drop-limit" data-prop="${prop}" title="移除这条限制">×</button>
            </div>`
         : '<div class="control limit is-empty"></div>'
@@ -1047,7 +1047,8 @@ export class PropsPanel extends HTMLElement {
         ${sg.props.map((p, i) => `
           <div class="control">
             <span class="prefix">${FIELD_PREFIX[p] || ''}</span>
-            <input type="text" data-prop="${p}" data-side value="${values[i]}" title="${p}">
+            <input type="text" data-prop="${p}" data-side
+              value="${esc(displayValue(p, values[i]))}" title="${p}">
           </div>`).join('')}
         <button class="icon-btn lock" data-lock="${sg.base}" ${linked ? 'data-on' : ''}
           title="四边联动">${ICON.link}</button>
@@ -1155,7 +1156,8 @@ export class PropsPanel extends HTMLElement {
     this.#ratioBusy = false
 
     const input = this.#shadow.querySelector(`input[data-prop="${other}"]`)
-    if (input) input.value = `${value}px`
+    // 写进样式的是带单位的值，显示给人看的不带——两者不是同一件事
+    if (input) input.value = displayValue(other, `${value}px`)
   }
 
   #align(key) {
@@ -1484,7 +1486,7 @@ export class PropsPanel extends HTMLElement {
         const steps = Math.round((ev.clientX - startX) / 2)
         const next = stepValue(prop, origin, steps * unitStep, this.#computed[prop])
         if (next === null) return
-        input.value = next
+        input.value = displayValue(prop, next)
         this.#commit(prop, next, { coerce: false })
       }
       const up = ev => {
@@ -1507,7 +1509,7 @@ export class PropsPanel extends HTMLElement {
       const next = stepValue(prop, input.value, delta, this.#computed[prop])
 
       if (next === null) return   // normal / auto 等无法步进的值
-      input.value = next
+      input.value = displayValue(prop, next)
       this.#commit(prop, next, { coerce: false })
     })
 
