@@ -110,6 +110,9 @@ ok(clip.includes('Thinking Five'), '提示词含文本锚点')
 const nudge = async (prop, key = 'ArrowDown') => {
   const input = page.locator(`visual-revise-panel input[data-prop="${prop}"]`)
   if (!(await input.count())) return { skipped: true }
+  // 字段可能落在折叠的分区里（Typography 对非文字元素默认折叠）。
+  // 折叠只隐藏 .rows，input 仍在 DOM 中但无法聚焦，按键会静默落空。
+  await input.evaluate(el => el.closest('section')?.removeAttribute('folded'))
   await input.focus()
   await input.press(key)
   await page.waitForTimeout(200)

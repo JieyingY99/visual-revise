@@ -50,3 +50,22 @@ export const containScroll = (host, getScroller) => {
   host.addEventListener('wheel', onWheel, { passive: false })
   return () => host.removeEventListener('wheel', onWheel, { passive: false })
 }
+
+// 元素是否以文字为主体。判据是「直接子节点里有非空文本」，而不是 textContent
+// 非空——后者会让任何一个包着文字的外层容器都算文字元素，判断永远为真也就
+// 失去了意义。输入控件没有文本子节点，但它显示的就是文字，单独认。
+const TEXT_INPUT_TYPES = new Set([
+  '', 'text', 'search', 'url', 'tel', 'email', 'password', 'number',
+])
+
+export const isTextElement = el => {
+  if (!el || el.nodeType !== 1) return false
+
+  const tag = el.tagName.toLowerCase()
+  if (tag === 'textarea') return true
+  if (tag === 'input')
+    return TEXT_INPUT_TYPES.has((el.getAttribute('type') || '').trim().toLowerCase())
+  if (el.isContentEditable) return true
+
+  return Array.from(el.childNodes).some(n => n.nodeType === 3 && n.textContent.trim())
+}

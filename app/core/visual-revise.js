@@ -5,7 +5,7 @@ import '../components/change-list/change-list.element.js'
 import '../components/comment-layer/comment-layer.element.js'
 import '../components/toolbar/toolbar.element.js'
 import { createLayoutDrag } from './layout-drag.js'
-import { pageElementAt, isEditorUI, isTypingTarget } from './dom-utils.js'
+import { pageElementAt, isEditorUI, isTypingTarget, isTextElement } from './dom-utils.js'
 import { buildPrompt } from './prompt-export.js'
 import { exportJSON, importJSON, downloadJSON, pickAndImport } from './json-io.js'
 import { fingerprint, findSharedElements } from './shared-elements.js'
@@ -285,6 +285,7 @@ export const mountVisualRevise = visbug => {
     exportJSON, importJSON, downloadJSON, pickAndImport,
     fingerprint, findSharedElements,
     loadLocalFonts, fontsSupported,
+    isTextElement,
   }
   window.__visualRevise = api
   return api

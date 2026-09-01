@@ -9,7 +9,7 @@ import { readComputed, elementId } from '../../core/snapshot.js'
 import { stableClasses } from '../../core/anchors.js'
 import { findSharedElements, describeShared } from '../../core/shared-elements.js'
 import { loadLocalFonts, isSupported as fontsSupported } from '../../core/local-fonts.js'
-import { containScroll } from '../../core/dom-utils.js'
+import { containScroll, isTextElement } from '../../core/dom-utils.js'
 import '../controls/select.element.js'
 import '../controls/color.element.js'
 import '../controls/fill.element.js'
@@ -90,7 +90,10 @@ export class PropsPanel extends HTMLElement {
   #shadow
   #targets = []
   #computed = {}
-  #folded = new Set(['effects'])
+  // Typography 默认折叠：非文字元素上它多半没用，Figma 干脆不渲染这个分区。
+  // 选中文字元素时会自动展开（见 setTargets）。
+  #folded = new Set(['effects', 'typography'])
+  #autoExpandedFor = null
   #unsubscribe = null
   #releaseScroll = null
   #dirtyProps = new Set()
@@ -139,6 +142,15 @@ export class PropsPanel extends HTMLElement {
     // 比例锁与分区隐藏都是绑定在具体元素上的临时状态，换元素就作废
     this.#ratio = null
     this.#hiddenSections.clear()
+
+    // 选中文字元素时自动展开 Typography。只在目标真的换了才做一次：
+    // 每次 render 都强制展开的话，用户手动折叠后会被下一帧原地弹开。
+    // 反向不成立——不会因为选中非文字元素就把它折回去，那是用户的选择。
+    if (this.target !== this.#autoExpandedFor) {
+      this.#autoExpandedFor = this.target
+      if (this.target && isTextElement(this.target)) this.#folded.delete('typography')
+    }
+
     this.render()
   }
 
