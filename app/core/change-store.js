@@ -88,19 +88,33 @@ const createStore = () => {
   const assetForUrl = url => (url ? assetByUrl.get(url) || null : null)
   const allAssets   = ()  => Array.from(assets.values())
 
-  const addComment = (el, text) => {
+  const addComment = (el, text, images = []) => {
     track(el)
     const seq = ++commentSeq
     const id  = `c-${seq}`
-    comments.set(id, { id, seq, el, text, anchors: collectAnchors(el) })
+    images.forEach(addAsset)
+    comments.set(id, { id, seq, el, text, images: images.slice(), anchors: collectAnchors(el) })
     notify()
     return id
   }
 
-  const updateComment = (id, text) => {
+  // images 省略时不动原有的图——调用方只想改文字的场景占多数
+  const updateComment = (id, text, images) => {
     const c = comments.get(id)
     if (!c) return
     c.text = text
+    if (images) {
+      images.forEach(addAsset)
+      c.images = images.slice()
+    }
+    notify()
+  }
+
+  const setCommentImages = (id, images = []) => {
+    const c = comments.get(id)
+    if (!c) return
+    images.forEach(addAsset)
+    c.images = images.slice()
     notify()
   }
 
@@ -164,13 +178,16 @@ const createStore = () => {
     const { edits, comments: cs } = read()
     const props = edits.reduce((n, e) => n + e.changes.length, 0)
     const texts = edits.filter(e => e.text).length
-    const attrs = edits.reduce((n, e) => n + (e.attrs?.length || 0), 0)
+    const attrs  = edits.reduce((n, e) => n + (e.attrs?.length || 0), 0)
+    // 参考图不单独计入 total：它是评论的附属物，不是一条独立改动
+    const refImages = cs.reduce((n, c) => n + (c.images?.length || 0), 0)
 
     return {
       elements: edits.length,
       props,
       texts,
       attrs,
+      refImages,
       comments: cs.length,
       total:    props + texts + attrs + cs.length,
     }
@@ -179,7 +196,7 @@ const createStore = () => {
   return {
     track, markEdited, applyProp, applyAttr,
     addAsset, getAsset, assetForUrl, allAssets,
-    addComment, updateComment, removeComment,
+    addComment, updateComment, removeComment, setCommentImages,
     undoProp, undoText, undoAttr, undoElement, undoEverything, clear,
     read, stats, touch,
     snapshots,

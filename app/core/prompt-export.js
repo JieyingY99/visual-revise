@@ -411,19 +411,42 @@ export const buildPrompt = (state, meta = {}, refs = null) => {
 
   const reorderBlock = reorderSection(reorders)
 
+  const hasRefImages = comments.some(c => c.images?.length)
+
   const commentSection = comments.length ? [
     '---',
     '',
     '## 交互备注',
     '',
-    '这些是 CSS 无法表达的行为需求，请实现对应的交互逻辑：',
+    hasRefImages
+      ? '这些是样式表达不了的需求（行为、交互，或「照着参考图改」）：'
+      : '这些是 CSS 无法表达的行为需求，请实现对应的交互逻辑：',
     '',
     ...comments.map(c => {
       const idx = styleEdits.findIndex(e => e.el === c.el)
-      const ref = idx >= 0 ? `（同上述第 ${idx + 1} 项）` : ''
-      return `- **${describeElement(c.anchors)}**${ref}\n  - 选择器：\`${c.anchors.selector}\`\n  - 需求：${c.text}`
+      const same = idx >= 0 ? `（同上述第 ${idx + 1} 项）` : ''
+
+      const lines = [
+        `- **${describeElement(c.anchors)}**${same}`,
+        `  - 选择器：\`${c.anchors.selector}\``,
+      ]
+      if (c.text) lines.push(`  - 需求：${c.text}`)
+
+      for (const img of c.images || []) {
+        const file = refs?.files?.find(f => f.id === img.id)
+        const note = img.note ? ` —— ${img.note}` : ''
+
+        lines.push(file?.path
+          ? `  - 参考图：\`${file.path}\`${refs?.exact === false ? '（路径为推测）' : ''}${note}`
+          : `  - 参考图：${img.name}${note}（落盘失败，请向用户索取此文件）`)
+      }
+
+      return lines.join('\n')
     }),
     '',
+    ...(hasRefImages
+      ? ['> 参考图是用户想要的目标效果，请先用读图工具打开看过再动手，', '']
+      : []),
   ].join('\n') : ''
 
   // 结尾的分隔线和 FOOTER 要拼成一段：filter(Boolean) 会把中间那个空行滤掉，

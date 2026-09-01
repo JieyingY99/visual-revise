@@ -200,13 +200,19 @@ export class ChangeList extends HTMLElement {
   }
 
   #renderComment(c) {
+    const n = c.images?.length || 0
+    const imageTag = n
+      ? `<span class="badge" data-kind="image" title="带 ${n} 张参考图">🖼 ${n}</span>`
+      : ''
+
     return `<div class="item" data-id="${c.id}" data-kind="comment">
       <div class="item-head">
         <span class="sel" title="${c.anchors.selector}">${shortSelector(c.anchors)}</span>
+        ${imageTag}
         <span class="badge" data-kind="comment">#${c.seq}</span>
         <button class="icon-btn del-comment" data-id="${c.id}" title="删除评论">×</button>
       </div>
-      <div class="comment-text">${c.text.replace(/</g, '&lt;')}</div>
+      <div class="comment-text">${(c.text || '（仅参考图）').replace(/</g, '&lt;')}</div>
     </div>`
   }
 

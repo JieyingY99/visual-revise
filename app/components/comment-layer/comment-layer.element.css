@@ -36,7 +36,7 @@
 
 .bubble {
   position: absolute;
-  width: 240px;
+  width: 288px;
   padding: 8px;
   background: var(--vr-bg);
   border: 1px solid var(--vr-border);
@@ -80,3 +80,95 @@
 .bubble .cancel { background: var(--vr-raised); color: var(--vr-mute); }
 .bubble .cancel:hover { color: var(--vr-text); }
 .bubble .hint { margin-top: 6px; font-size: 10px; color: var(--vr-mute); text-align: center; }
+
+/* ── 参考图 ── */
+.bubble[data-drop] { outline: 2px dashed var(--vr-accent); outline-offset: 2px; }
+
+.refs { display: grid; gap: 4px; margin-top: 6px; }
+
+.ref {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 4px;
+  background: var(--vr-raised);
+  border-radius: 4px;
+}
+
+.ref-thumb {
+  flex: none;
+  width: 30px; height: 30px;
+  border-radius: 3px;
+  border: 1px solid var(--vr-border);
+  overflow: hidden;
+  background: #222;
+}
+.ref-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* CSP 禁掉 data: 图片时的退化形态：显示类型而不是一个裂图占位 */
+.ref-noimg {
+  display: grid; place-items: center;
+  font: 500 9px/1 ui-monospace, Menlo, monospace;
+  color: var(--vr-mute);
+}
+
+/* min-width:0 不能省：flex 子项默认按内容固有宽度撑开，
+   长文件名会把整行顶出气泡，省略号也就永远不生效 */
+.ref-body { display: grid; gap: 2px; min-width: 0; flex: 1; }
+
+.ref-name {
+  font-size: 10px;
+  color: var(--vr-mute);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.ref-note {
+  width: 100%;
+  height: 20px;
+  padding: 0 4px;
+  font: inherit; font-size: 11px;
+  color: var(--vr-text);
+  background: var(--vr-bg);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  outline: none;
+}
+.ref-note:focus { border-color: var(--vr-accent); }
+.ref-note::placeholder { color: var(--vr-mute); }
+
+.ref-size {
+  flex: none;
+  font: 400 9px/1 ui-monospace, Menlo, monospace;
+  color: var(--vr-mute);
+}
+
+.ref-del {
+  flex: none;
+  width: 18px; height: 18px;
+  display: grid; place-items: center;
+  font: inherit; font-size: 13px;
+  color: var(--vr-mute);
+  background: transparent;
+  border: none; border-radius: 3px;
+  cursor: pointer;
+}
+.ref-del:hover { background: #4a3030; color: var(--vr-text); }
+
+.ref-add { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+
+.add-image {
+  flex: none;
+  height: 22px; padding: 0 8px;
+  font: inherit; font-size: 11px;
+  color: var(--vr-text);
+  background: var(--vr-raised);
+  border: none; border-radius: 4px;
+  cursor: pointer;
+}
+.add-image:hover { background: #454545; }
+
+.ref-hint { font-size: 10px; color: var(--vr-mute); }
+
+/* 带参考图的 pin 加一圈标记，不用点开就知道里面有图 */
+.pin[data-has-images] { box-shadow: 0 2px 6px rgb(0 0 0 / .35), 0 0 0 2px var(--vr-accent); }
