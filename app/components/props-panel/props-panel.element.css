@@ -375,3 +375,54 @@ input::placeholder { color: var(--vr-mute); }
 }
 
 .image-row .swap-image { flex: none; }
+
+/* ── Resizing ──
+   模式名贴在输入框右侧，和 Figma 一样。它不是标签而是按钮：
+   点开能切换 固定/贴合/填满，以及添加尺寸限制。 */
+.resize-cell { position: relative; }
+
+.resize-cell .mode {
+  flex: none;
+  height: 22px;
+  padding: 0 6px;
+  margin-right: 2px;
+  font: inherit;
+  font-size: 10px;
+  color: var(--vr-label);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.resize-cell .mode:hover { background: var(--vr-field-hi); color: var(--vr-text); }
+.resize-cell .mode[data-menu-open] { background: var(--vr-accent); color: #fff; }
+
+/* 尺寸限制：按需出现的一行，左边一个窄标签，右边两列对齐 W/H */
+.limit-row {
+  display: grid;
+  grid-template-columns: 26px 1fr 1fr;
+  gap: 4px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.limit-label { font-size: 10px; color: var(--vr-mute); }
+
+.limit-row .control.is-empty {
+  background: transparent;
+  border-color: transparent;
+  pointer-events: none;
+}
+
+.limit-row .drop-limit {
+  flex: none;
+  width: 18px; height: 18px;
+  margin-right: 2px;
+  display: grid; place-items: center;
+  font: inherit; font-size: 12px;
+  color: var(--vr-mute);
+  background: transparent;
+  border: none; border-radius: 3px;
+  cursor: pointer;
+}
+.limit-row .drop-limit:hover { background: #4a3030; color: var(--vr-text); }

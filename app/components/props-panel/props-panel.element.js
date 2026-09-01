@@ -12,6 +12,10 @@ import { loadLocalFonts, isSupported as fontsSupported } from '../../core/local-
 import { containScroll, isTextElement } from '../../core/dom-utils.js'
 import { imageSourceOf, measureNatural, describeSize } from '../../core/image-source.js'
 import { pickImages, canRenderDataUrl } from '../../core/image-assets.js'
+import {
+  AXES, MODES, resizeMode, planResize, currentSize, isMainAxis, cssVariables,
+} from '../../core/resizing.js'
+import { openMenu } from '../controls/menu.js'
 import '../controls/select.element.js'
 import '../controls/color.element.js'
 import '../controls/fill.element.js'
@@ -65,7 +69,12 @@ const RERENDER_ON = new Set(['position', 'display'])
 // 这些属性的编辑界面在分区的 widget 里，不再单独渲染成一行字段。
 // background-image 不在此列——它还留着原来的文本框，那是 url(...) 的去处，
 // 也是渐变编辑器产物的原始值视图。
-const WIDGET_OWNED = new Set(['background-color'])
+const WIDGET_OWNED = new Set([
+  'background-color',
+  // min/max 收进 Resizing 行的下拉里，按需才出现——它们常年空着却占两整行，
+  // 这也是 Figma 的做法（Add min width… / Add max width…）
+  'min-width', 'min-height', 'max-width', 'max-height',
+])
 
 // VisBug 给选中元素加了 transition: all .15s（让微调看起来跟手）。
 // 副作用是刚写完样式马上量，量到的是过渡中的中间值——往往就是旧值本身。
@@ -97,6 +106,8 @@ export class PropsPanel extends HTMLElement {
   // 选中文字元素时会自动展开（见 setTargets）。
   #folded = new Set(['effects', 'typography'])
   #autoExpandedFor = null
+  // 用户主动「添加」出来的尺寸限制。本来就有值的不用记，靠读值判断。
+  #limits = new Set()
   #unsubscribe = null
   #releaseScroll = null
   #dirtyProps = new Set()
@@ -142,9 +153,10 @@ export class PropsPanel extends HTMLElement {
     this.#sharedEls = this.#shared && this.target ? findSharedElements(this.target) : []
     this.#sharedEls.forEach(el => ChangeStore.track(el))
 
-    // 比例锁与分区隐藏都是绑定在具体元素上的临时状态，换元素就作废
+    // 比例锁、分区隐藏、临时展开的尺寸限制都绑在具体元素上，换元素就作废
     this.#ratio = null
     this.#hiddenSections.clear()
+    this.#limits.clear()
 
     // 选中文字元素时自动展开 Typography。只在目标真的换了才做一次：
     // 每次 render 都强制展开的话，用户手动折叠后会被下一帧原地弹开。
@@ -502,11 +514,55 @@ export class PropsPanel extends HTMLElement {
   }
 
   // Figma 的 W/H：两个字段并排，右侧一个括号把它们和比例锁连起来
+  // 尺寸限制是否该出现：本来就有值的一定显示（不能把元素已有的样式藏掉），
+  // 其余等用户从下拉里主动添加
+  #hasLimit(prop) {
+    if (this.#limits.has(prop)) return true
+
+    const v = (this.#computed[prop] || '').trim()
+    if (!v) return false
+    if (prop.startsWith('max')) return v !== 'none'
+    return v !== '0px' && v !== '0' && v !== 'auto'
+  }
+
   #renderDims() {
-    const cell = prop => `<div class="control">
-      <span class="prefix" data-drag data-prop="${prop}">${FIELD_PREFIX[prop]}</span>
-      <input type="text" data-prop="${prop}" data-num value="${esc(this.#computed[prop])}" title="${prop}">
-    </div>`
+    const el = this.target
+    const size = el ? currentSize(el) : { width: 0, height: 0 }
+
+    const cell = axis => {
+      const mode = el ? resizeMode(el, axis, this.#computed) : 'fixed'
+      // 固定尺寸时输入框里就是那个数字；其余模式下数字是实测值，
+      // 真正生效的是模式，所以把模式名摆在旁边，不让人以为那个数字是写死的
+      const value = mode === 'fixed'
+        ? this.#computed[axis]
+        : `${size[axis]}`
+
+      return `<div class="control resize-cell" data-axis="${axis}">
+        <span class="prefix" data-drag data-prop="${axis}">${AXES[axis].prefix}</span>
+        <input type="text" data-prop="${axis}" data-num value="${esc(value)}" title="${axis}">
+        <button class="mode" data-axis="${axis}"
+          title="${MODES[mode].label}｜点击切换尺寸模式">${MODES[mode].label}</button>
+      </div>`
+    }
+
+    const limitRow = kind => {
+      const props = [AXES.width[kind], AXES.height[kind]]
+      if (!props.some(p => this.#hasLimit(p))) return ''
+
+      const one = prop => this.#hasLimit(prop)
+        ? `<div class="control limit">
+             <span class="prefix" data-drag data-prop="${prop}">${FIELD_PREFIX[prop]}</span>
+             <input type="text" data-prop="${prop}" data-num
+               value="${esc(this.#computed[prop])}" title="${prop}">
+             <button class="drop-limit" data-prop="${prop}" title="移除这条限制">×</button>
+           </div>`
+        : '<div class="control limit is-empty"></div>'
+
+      return `<div class="limit-row" data-kind="${kind}">
+        <span class="limit-label">${kind === 'min' ? '最小' : '最大'}</span>
+        ${one(props[0])}${one(props[1])}
+      </div>`
+    }
 
     return `<div class="field">
       <label class="name" data-prop="width,height">尺寸</label>
@@ -516,7 +572,76 @@ export class PropsPanel extends HTMLElement {
         <button class="icon-btn ratio"${this.#ratio ? ' data-on' : ''}
           title="锁定宽高比">${ICON.link}</button>
       </div>
+      ${limitRow('min')}
+      ${limitRow('max')}
     </div>`
+  }
+
+  #resizeMenu(axis) {
+    const el = this.target
+    if (!el) return
+
+    const anchor = this.#shadow.querySelector(`.mode[data-axis="${axis}"]`)
+    if (!anchor) return
+
+    const mode = resizeMode(el, axis, this.#computed)
+    const size = currentSize(el)
+    const A = AXES[axis]
+    const mainAxis = isMainAxis(el, axis)
+
+    openMenu(anchor, [
+      { id: 'fixed', label: `固定${A.label}度`, hint: `${size[axis]}px`, checked: mode === 'fixed' },
+      { id: 'hug',   label: '贴合内容', hint: 'fit-content', checked: mode === 'hug' },
+      { id: 'fill',  label: '填满容器', hint: mainAxis ? 'flex: 1' : '100%', checked: mode === 'fill' },
+      { separator: true },
+      { id: 'min', label: `添加最小${A.label}度…`, disabled: this.#hasLimit(A.min) },
+      { id: 'max', label: `添加最大${A.label}度…`, disabled: this.#hasLimit(A.max) },
+      { separator: true },
+      { id: 'var', label: '使用 CSS 变量…' },
+    ], id => this.#applyResizePick(axis, id), { align: 'right' })
+  }
+
+  #applyResizePick(axis, id) {
+    const el = this.target
+    if (!el) return
+    const A = AXES[axis]
+
+    if (id === 'min' || id === 'max') {
+      // 只是把字段显示出来，不写任何声明——凭空写一条 min-width:0 会在改动
+      // 记录里留下一条用户没做过的改动
+      this.#limits.add(A[id])
+      this.render()
+      requestAnimationFrame(() =>
+        this.#shadow.querySelector(`input[data-prop="${A[id]}"]`)?.focus())
+      return
+    }
+
+    if (id === 'var') return this.#varMenu(axis)
+
+    const patch = planResize(el, axis, id, this.#computed)
+    for (const [prop, value] of Object.entries(patch)) this.#applyToAll(prop, value ?? '')
+
+    this.#computed = readComputed(el)
+    this.render()
+    this.toast(`${A.label}：${MODES[id].label}`)
+  }
+
+  #varMenu(axis) {
+    const anchor = this.#shadow.querySelector(`.mode[data-axis="${axis}"]`)
+    if (!anchor) return
+
+    const names = cssVariables()
+    if (!names.length) {
+      this.toast('页面上没有定义在 :root 的 CSS 变量', 'error')
+      return
+    }
+
+    openMenu(anchor, names.slice(0, 60).map(n => ({ id: n, label: n })), name => {
+      this.#applyToAll(axis, `var(${name})`)
+      this.#computed = readComputed(this.target)
+      this.render()
+      this.toast(`${AXES[axis].label}：var(${name})`)
+    }, { align: 'right' })
   }
 
   #renderSides(sg) {
@@ -710,6 +835,18 @@ export class PropsPanel extends HTMLElement {
     on('[data-undo]', 'click', e => this.#resetGroup(e.currentTarget.dataset.undo))
     on('[data-align]', 'click', e => this.#align(e.currentTarget.dataset.align))
     on('.swap-image', 'click', e => { e.stopPropagation(); this.#swapImage() })
+
+    on('.mode', 'click', e => { e.stopPropagation(); this.#resizeMenu(e.currentTarget.dataset.axis) })
+
+    on('.drop-limit', 'click', e => {
+      e.stopPropagation()
+      const prop = e.currentTarget.dataset.prop
+      this.#limits.delete(prop)
+      // 清掉声明本身，而不只是把字段藏起来——留着一条看不见的 min-width
+      // 会在改动记录与提示词里冒出来，用户却找不到它在哪
+      this.#applyToAll(prop, '')
+      this.render()
+    })
 
     on('.close', 'click', () => this.dispatchEvent(new CustomEvent('vr-close', { bubbles: true, composed: true })))
     on('.fold', 'click', () => this.toggleAttribute('collapsed'))

@@ -11,6 +11,7 @@ import { exportJSON, importJSON, downloadJSON, pickAndImport } from './json-io.j
 import { fingerprint, findSharedElements } from './shared-elements.js'
 import { loadLocalFonts, isSupported as fontsSupported } from './local-fonts.js'
 import { clearHighlight } from '../components/change-list/change-list.element.js'
+import { resizeMode, planResize, currentSize, isMainAxis, cssVariables } from './resizing.js'
 
 const UI_TAGS = 'visbug-handles, visbug-label, visbug-hover, visbug-grip, visbug-metatip, visbug-ally, visbug-corners, visbug-gridlines'
 
@@ -342,6 +343,7 @@ export const mountVisualRevise = visbug => {
     fingerprint, findSharedElements,
     loadLocalFonts, fontsSupported,
     isTextElement,
+    resizeMode, planResize, currentSize, isMainAxis, cssVariables,
   }
   window.__visualRevise = api
   return api
