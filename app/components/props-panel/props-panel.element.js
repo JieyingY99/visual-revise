@@ -87,6 +87,13 @@ const HIDEABLE = {
   effects: { 'box-shadow': 'none', 'filter': 'none', 'backdrop-filter': 'none' },
 }
 
+// 解除尺寸限制时写回的初始值。CSS 里「没有限制」不是空字符串，
+// 而是 min 为 0、max 为 none——样式表里那条声明只能被盖掉，删不掉。
+const LIMIT_RESET = {
+  'min-width': '0', 'min-height': '0',
+  'max-width': 'none', 'max-height': 'none',
+}
+
 // 这两个属性决定了别的属性有没有意义：position 决定 X/Y/z-index 是否生效，
 // display 决定 flex 那一组是否生效。改了它们必须整块重画，
 // 否则刚变得可用的字段要等下次重新选中才看得见。
@@ -138,6 +145,8 @@ export class PropsPanel extends HTMLElement {
   #expandedSides = new Set()
   // 二级视图（目前只有网格设置）。有值时面板整体切过去，× 回到上级。
   #subview = null
+  // 上一次渲染针对的是哪个元素，用来判断该不该接着上次的滚动位置
+  #renderedFor = null
   // Typography 的「更多」是否展开（大小写、装饰线）
   #typoMore = false
   #unsubscribe = null
@@ -211,6 +220,9 @@ export class PropsPanel extends HTMLElement {
       ? [...new Set([...this.#targets, ...this.#sharedEls])]
       : this.#targets
   }
+
+  // 一个动作写多条属性时包一层，⌘Z 才会一次撤完而不是撤到一半
+  #batch(label, fn) { return ChangeStore.history.batch(label, fn) }
 
   #applyToAll(prop, value) {
     this.#scope().forEach(el => ChangeStore.applyProp(el, prop, value))
@@ -336,7 +348,12 @@ export class PropsPanel extends HTMLElement {
 
     // 整块重建会把滚动容器一起换掉，位置归零。用户在面板中段改一个值，
     // 视图「唰」地跳回顶部，还得再滚回来找刚才那一行——每改一次都跳一次。
-    const scrollTop = this.#shadow.querySelector('.scroll')?.scrollTop || 0
+    //
+    // 只在还是同一个元素时才接着滚：换了元素就该从头看起，
+    // 保持上一个元素的滚动位置反而莫名其妙。
+    const sameTarget = this.#renderedFor === this.target
+    const scrollTop = sameTarget ? (this.#shadow.querySelector('.scroll')?.scrollTop || 0) : 0
+    this.#renderedFor = this.target
 
     this.#dirtyProps = this.#dirtySet()
 
@@ -352,12 +369,23 @@ export class PropsPanel extends HTMLElement {
     this.#refreshDirty()
     this.#fillImageDims()
 
-    // 恢复滚动。内容变短时（比如收起了展开的四边）浏览器会自动夹住，
-    // 不用自己算上限。
-    if (scrollTop) {
+    this.#restoreScroll(scrollTop)
+  }
+
+  // 内容变短时（收起展开的四边、切到属性更少的排列方式）浏览器会自动夹住，
+  // 不用自己算上限。但反过来——面板里有异步才撑起来的部分（图片缩略图、
+  // 本地字体列表）——第一帧的 scrollHeight 可能还不够高，scrollTop 会被夹小。
+  // 下一帧再补一次。
+  #restoreScroll(top) {
+    if (!top) return
+
+    const write = () => {
       const scroller = this.#shadow.querySelector('.scroll')
-      if (scroller) scroller.scrollTop = scrollTop
+      if (scroller && scroller.scrollTop !== top) scroller.scrollTop = top
     }
+
+    write()
+    requestAnimationFrame(write)
   }
 
   #renderPanel() {
@@ -647,9 +675,11 @@ export class PropsPanel extends HTMLElement {
   #setGridShape(cols, rows) {
     if (!this.target) return
 
-    this.#applyToAll('grid-template-columns', serializeTracks(makeTracks(cols)))
-    // 行数留空表示交给隐式网格——那正是 Figma 里的 "N × 自动"
-    this.#applyToAll('grid-template-rows', rows ? serializeTracks(makeTracks(rows)) : '')
+    this.#batch(`网格 ${cols} × ${rows || '自动'}`, () => {
+      this.#applyToAll('grid-template-columns', serializeTracks(makeTracks(cols)))
+      // 行数留空表示交给隐式网格——那正是 Figma 里的 "N × 自动"
+      this.#applyToAll('grid-template-rows', rows ? serializeTracks(makeTracks(rows)) : '')
+    })
 
     this.#computed = readComputed(this.target)
     this.render()
@@ -1026,7 +1056,9 @@ export class PropsPanel extends HTMLElement {
     if (id === 'var') return this.#varMenu(axis)
 
     const patch = planResize(el, axis, id, this.#computed)
-    for (const [prop, value] of Object.entries(patch)) this.#applyToAll(prop, value ?? '')
+    this.#batch(`${A.label}：${MODES[id].label}`, () => {
+      for (const [prop, value] of Object.entries(patch)) this.#applyToAll(prop, value ?? '')
+    })
 
     this.#computed = readComputed(el)
     this.render()
@@ -1251,7 +1283,9 @@ export class PropsPanel extends HTMLElement {
     on('[data-flow]', 'click', e => {
       const flow = e.currentTarget.dataset.flow
       const patch = planFlow(flow, this.#computed)
-      for (const [prop, value] of Object.entries(patch)) this.#applyToAll(prop, value ?? '')
+      this.#batch(`排列：${FLOW_LABEL[flow]}`, () => {
+        for (const [prop, value] of Object.entries(patch)) this.#applyToAll(prop, value ?? '')
+      })
       this.render()
       this.#toast(`排列：${FLOW_LABEL[flow]}`)
     })
@@ -1266,7 +1300,9 @@ export class PropsPanel extends HTMLElement {
       const { col, row } = e.currentTarget.dataset
       const flow = flowOf(this.#computed)
       const patch = planAlignment(+col, +row, flow)
-      for (const [prop, value] of Object.entries(patch)) this.#applyToAll(prop, value ?? '')
+      this.#batch('对齐', () => {
+        for (const [prop, value] of Object.entries(patch)) this.#applyToAll(prop, value ?? '')
+      })
       this.render()
     })
 
@@ -1287,7 +1323,7 @@ export class PropsPanel extends HTMLElement {
       if (!props) return
 
       const value = coerceLength(e.currentTarget.value)
-      props.forEach(prop => this.#commit(prop, value))
+      this.#batch(SIDE_SETS[kind].label, () => props.forEach(prop => this.#commit(prop, value)))
       this.render()
     })
 
@@ -1345,11 +1381,26 @@ export class PropsPanel extends HTMLElement {
     on('.drop-limit', 'click', e => {
       e.stopPropagation()
       const prop = e.currentTarget.dataset.prop
+      const el = this.target
+      if (!el) return
+
       this.#limits.delete(prop)
-      // 清掉声明本身，而不只是把字段藏起来——留着一条看不见的 min-width
-      // 会在改动记录与提示词里冒出来，用户却找不到它在哪
-      this.#applyToAll(prop, '')
+
+      this.#batch(`移除 ${prop}`, () => {
+        // 先清掉 inline 声明：如果这条限制是用户自己加的，到这一步就干净了，
+        // 改动记录里也不会留下痕迹
+        this.#applyToAll(prop, '')
+
+        // 清完再看一眼。值还在，说明它来自样式表——那就不是「清掉声明」能
+        // 解除的，必须写一个初始值把它盖掉。不这么做的话，字段下一帧照旧
+        // 冒出来，用户看到的就是「点了 × 毫无反应」。
+        this.#computed = readComputed(el)
+        if (this.#hasLimit(prop)) this.#applyToAll(prop, LIMIT_RESET[prop])
+      })
+
+      this.#computed = readComputed(el)
       this.render()
+      this.#toast(`已移除${prop.startsWith('min') ? '最小' : '最大'}${prop.endsWith('width') ? '宽度' : '高度'}限制`)
     })
 
     on('.close', 'click', () => this.dispatchEvent(new CustomEvent('vr-close', { bubbles: true, composed: true })))
@@ -1473,10 +1524,12 @@ export class PropsPanel extends HTMLElement {
       const lock = shadow.querySelector(`.lock[data-lock="${base}"]`)
       if (!lock?.hasAttribute('data-on')) return
       const value = coerceLength(input.value)
-      ;['top', 'right', 'bottom', 'left'].forEach(side => {
-        const sib = shadow.querySelector(`input[data-prop="${base}-${side}"]`)
-        if (sib && sib !== input) sib.value = value
-        this.#commit(`${base}-${side}`, value)
+      this.#batch(base === 'padding' ? '内边距' : '外边距', () => {
+        ;['top', 'right', 'bottom', 'left'].forEach(side => {
+          const sib = shadow.querySelector(`input[data-prop="${base}-${side}"]`)
+          if (sib && sib !== input) sib.value = value
+          this.#commit(`${base}-${side}`, value)
+        })
       })
     })
 
