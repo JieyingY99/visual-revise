@@ -46,6 +46,13 @@ const applied = await page.evaluate(() =>
 ok(applied === '12px', `面板输入写入页面：border-radius = ${applied}`)
 
 // 数值上下键微调
+// 间距默认收成「水平 / 垂直」两项，四边独立字段要先展开才存在
+const expandPadding = async () => {
+  const btn = page.locator('visual-revise-panel .expand-sides[data-kind="padding"]')
+  if (await btn.count()) { await btn.click(); await page.waitForTimeout(300) }
+}
+await expandPadding()
+
 const padTop = page.locator('visual-revise-panel input[data-prop="padding-top"]')
 await padTop.focus()
 await padTop.press('ArrowUp')
@@ -137,6 +144,7 @@ const lineHeight = await nudge('line-height', 'ArrowUp')
 ok(lineHeight.applied !== '' && !/NaN|normal\d/.test(String(lineHeight.field)),
    `line-height 从 normal 回落到计算值再步进：字段=${lineHeight.field} 生效=${lineHeight.applied}`)
 
+await expandPadding()
 const padding = await nudge('padding-top', 'ArrowUp')
 ok(padding.applied.endsWith('px'),
    `长度类属性仍正常补 px：${padding.applied}`)

@@ -34,6 +34,9 @@ export const GROUPS = [
     props: [
       'display',
       'flex-direction', 'flex-wrap', 'justify-content', 'align-items',
+      // 「填满容器」在 flex 主轴上写的是它，不跟踪就不会进改动记录。
+      // 由 Resizing 控件写入，面板里不单独渲染字段。
+      'flex-grow',
       'gap', 'row-gap', 'column-gap',
       'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
       'margin-top', 'margin-right', 'margin-bottom', 'margin-left',

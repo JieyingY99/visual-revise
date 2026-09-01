@@ -16,7 +16,9 @@ const panel = sel => page.locator(`visual-revise-panel ${sel}`)
 ok(await panel('vr-select').count() > 0, `原生 select 已全部换成 vr-select（${await panel('vr-select').count()} 个）`)
 ok(await panel('select').count() === 0, '面板内不再有原生 select')
 
-const display = panel('vr-select[data-prop="display"]')
+// display 已改由 Layout 的 Flow 图标按钮承担，不再是下拉。
+// 这里测的是下拉控件本身，换一个仍然是下拉的属性即可。
+const display = panel('vr-select[data-prop="border-style"]')
 await display.click()
 await page.waitForTimeout(350)
 
@@ -36,19 +38,19 @@ const menu = await page.evaluate(() => {
 ok(!!menu, '点击展开下拉面板')
 ok(menu?.inBody, '面板挂在 body（不会被属性面板的 overflow 裁掉）')
 ok(menu?.isOwnUI, '面板标记为编辑器 UI，不会被自己选中')
-ok(menu?.selectedText === 'block', `当前值高亮显示：${menu?.selectedText}`)
+ok(menu?.selectedText === 'solid', `当前值高亮显示：${menu?.selectedText}`)
 ok(parseFloat(menu?.radius) >= 10, `圆角面板（${menu?.radius}）`)
 
 // 选中一项应写入页面（用真实点击，走完整事件序列）
 const flexIndex = await page.evaluate(() =>
   Array.from(document.getElementById('visual-revise-select-panel').children)
-    .findIndex(i => i.textContent === 'flex'))
+    .findIndex(i => i.textContent === 'dashed'))
 await page.locator('#visual-revise-select-panel > div').nth(flexIndex).click()
 await page.waitForTimeout(400)
-ok(await page.evaluate(() => document.querySelectorAll('.curve-card')[1].style.display) === 'flex',
+ok(await page.evaluate(() => document.querySelectorAll('.curve-card')[1].style.borderStyle) === 'dashed',
    '选择选项后写入页面')
 ok(await page.evaluate(() => !document.getElementById('visual-revise-select-panel')), '选完自动关闭')
-ok(await display.getAttribute('value') === 'flex', '触发器显示新值')
+ok(await display.getAttribute('value') === 'dashed', '触发器显示新值')
 
 // 点击别处关闭
 await display.click()

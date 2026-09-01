@@ -16,6 +16,10 @@ import {
   AXES, MODES, resizeMode, planResize, currentSize, isMainAxis, cssVariables,
 } from '../../core/resizing.js'
 import { openMenu } from '../controls/menu.js'
+import {
+  FLOWS, FLOW_LABEL, flowOf, planFlow, isFlexFlow,
+  alignmentOf, planAlignment, SIDE_SETS, pairValue, isMixed,
+} from '../../core/layout.js'
 import '../controls/select.element.js'
 import '../controls/color.element.js'
 import '../controls/fill.element.js'
@@ -35,6 +39,23 @@ const ICON = {
   link:     svg('<path d="M6.6 9.4a2.8 2.8 0 0 0 4 0l2-2a2.8 2.8 0 1 0-4-4l-.8.8"/><path d="M9.4 6.6a2.8 2.8 0 0 0-4 0l-2 2a2.8 2.8 0 1 0 4 4l.8-.8"/>', 13),
   download: svg('<path d="M8 2v8"/><path d="M4.5 7 8 10.5 11.5 7"/><path d="M2.5 13.5h11"/>', 13),
   swap:     svg('<path d="M2.5 5.5h11l-2.5-2.5"/><path d="M13.5 10.5h-11l2.5 2.5"/>', 13),
+  wrap:     svg('<path d="M2.5 4.5h9a2.5 2.5 0 0 1 0 5H4"/><path d="M6 7.5 4 9.5l2 2"/>', 13),
+  expand:   svg('<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M6 6h4v4H6z"/>', 13),
+  collapse2: svg('<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M4.5 8h7"/>', 13),
+}
+
+// Flow 的四个图标，对应 Figma 的 Freeform / Vertical / Horizontal / Grid
+const FLOW_ICON = {
+  free:       svg('<rect x="2" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="8.5" y="5.5" width="5" height="5" rx="1"/><rect x="3" y="9.5" width="3.5" height="3.5" rx="1"/>'),
+  vertical:   svg('<rect x="2.5" y="2.5" width="7" height="4" rx="1"/><rect x="2.5" y="8" width="7" height="4" rx="1"/><path d="M12.5 3v9m0 0-1.6-1.6M12.5 12l1.6-1.6"/>'),
+  horizontal: svg('<rect x="2.5" y="2.5" width="4" height="7" rx="1"/><rect x="8" y="2.5" width="4" height="7" rx="1"/><path d="M3 12.5h9m0 0-1.6-1.6M12 12.5l-1.6 1.6"/>'),
+  grid:       svg('<rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/>'),
+}
+
+// 间距的两段式图标：一个表示左右，一个表示上下
+const SIDE_ICON = {
+  horizontal: svg('<path d="M3 3.5v9M13 3.5v9"/><path d="M5.5 8h5"/>', 12),
+  vertical:   svg('<path d="M3.5 3h9M3.5 13h9"/><path d="M8 5.5v5"/>', 12),
 }
 
 // 对齐图标：一条基准线 + 一个贴住它的方块，和 Figma / Lucide 一致
@@ -108,6 +129,8 @@ export class PropsPanel extends HTMLElement {
   #autoExpandedFor = null
   // 用户主动「添加」出来的尺寸限制。本来就有值的不用记，靠读值判断。
   #limits = new Set()
+  // 哪些间距被展开成四边独立编辑。绑在元素上，换元素即收起。
+  #expandedSides = new Set()
   #unsubscribe = null
   #releaseScroll = null
   #dirtyProps = new Set()
@@ -157,6 +180,7 @@ export class PropsPanel extends HTMLElement {
     this.#ratio = null
     this.#hiddenSections.clear()
     this.#limits.clear()
+    this.#expandedSides.clear()
 
     // 选中文字元素时自动展开 Typography。只在目标真的换了才做一次：
     // 每次 render 都强制展开的话，用户手动折叠后会被下一帧原地弹开。
@@ -330,6 +354,156 @@ export class PropsPanel extends HTMLElement {
   }
 
   #renderGroup(group) {
+    // Layout 完全自定义渲染：它的控件是按 Flow 组织的，不是一条属性一行，
+    // 通用循环表达不了（见 #layoutRows）
+    const rows = group.id === 'layout' ? this.#layoutRows() : this.#defaultRows(group)
+
+    const body = rows.filter(Boolean)
+    if (!body.length) return ''
+
+    const folded = this.#folded.has(group.id) ? ' folded' : ''
+    const off = this.#hiddenSections.has(group.id)
+    const eye = HIDEABLE[group.id]
+      ? `<button class="icon-btn eye" data-eye="${group.id}"${off ? ' data-on' : ''}
+           title="${off ? '恢复本组' : '临时关闭本组'}">${off ? ICON.eyeOff : ICON.eye}</button>`
+      : ''
+
+    return `<section data-group="${group.id}"${folded}>
+      <h3>
+        <span class="title">${group.label}</span>
+        <span class="acts">
+          ${eye}
+          <button class="icon-btn undo" data-undo="${group.id}" title="重置本组改动">${ICON.undo}</button>
+        </span>
+        <i class="chev"></i>
+      </h3>
+      <div class="rows">${body.join('')}</div>
+    </section>`
+  }
+
+  // ── Layout：按 Flow 组织 ────────────────────────────────────
+  #layoutRows() {
+    const el = this.target
+    if (!el) return []
+
+    const flow = flowOf(this.#computed)
+    const rows = [this.#renderFlow(flow), this.#renderDims()]
+
+    // display:block 下 justify-content / align-items / gap 全都不生效，
+    // 留着这些控件只会让人以为改了有用
+    if (isFlexFlow(flow)) rows.push(this.#renderAlignGap(flow))
+    if (flow === 'grid') rows.push(this.#renderGridRow())
+
+    rows.push(this.#renderSidePair('padding'), this.#renderSidePair('margin'))
+    rows.push(this.#renderClip())
+
+    // order 属于「这个元素在父容器里排第几」，重排功能会写它
+    if (isRelevant('order', this.#computed, el)) rows.push(this.#renderField('order'))
+
+    return rows
+  }
+
+  #renderFlow(flow) {
+    const wrapped = !/^nowrap$/.test((this.#computed['flex-wrap'] || 'nowrap').trim())
+    const canWrap = isFlexFlow(flow)
+
+    return `<div class="field">
+      <label class="name">排列</label>
+      <div class="flow-row">
+        <div class="segment flow">
+          ${FLOWS.map(f => `<button data-flow="${f}"${f === flow ? ' data-on' : ''}
+            title="${FLOW_LABEL[f]}">${FLOW_ICON[f]}</button>`).join('')}
+        </div>
+        <button class="icon-btn wrap-toggle"${wrapped ? ' data-on' : ''}
+          ${canWrap ? '' : 'disabled'}
+          title="${canWrap ? '换行 (flex-wrap)' : '仅 flex 排列可换行'}">${ICON.wrap}</button>
+      </div>
+    </div>`
+  }
+
+  #renderAlignGap(flow) {
+    const { col, row } = alignmentOf(this.#computed, flow)
+
+    const cells = []
+    for (let r = 0; r < 3; r++)
+      for (let c = 0; c < 3; c++)
+        cells.push(`<button class="align-cell" data-col="${c}" data-row="${r}"
+          ${c === col && r === row ? 'data-on' : ''}
+          title="${['左', '中', '右'][c]}${['上', '中', '下'][r]}对齐"></button>`)
+
+    return `<div class="align-gap">
+      <div class="field">
+        <label class="name">对齐</label>
+        <div class="align-grid" data-flow="${flow}">${cells.join('')}</div>
+      </div>
+      <div class="field">
+        <label class="name" data-prop="gap" data-drag>间隔</label>
+        <div class="control">
+          <input type="text" data-prop="gap" data-num
+            value="${esc(displayValue('gap', this.#computed.gap ?? ''))}" title="gap">
+        </div>
+      </div>
+    </div>`
+  }
+
+  // Grid 的行列控件在批 3 实现，这里先给出 gap 的两个方向
+  #renderGridRow() {
+    return `<div class="field">
+      <label class="name" data-prop="row-gap,column-gap">网格间隔</label>
+      <div class="pair">
+        ${this.#renderField('column-gap')}${this.#renderField('row-gap')}
+      </div>
+    </div>`
+  }
+
+  // Figma 的间距默认只给「水平」「垂直」两个框，点一下才展开成四边独立。
+  // 四边常年占两整行，而多数时候左右相等、上下相等。
+  #renderSidePair(kind) {
+    const set = SIDE_SETS[kind]
+    const expanded = this.#expandedSides.has(kind)
+
+    if (expanded) {
+      const sideGroup = SIDE_GROUPS.find(sg => sg.props.join() === set.all.join())
+      return `<div class="field sides-expanded" data-kind="${kind}">
+        ${sideGroup ? this.#renderSides(sideGroup) : ''}
+        <button class="icon-btn collapse-sides" data-kind="${kind}"
+          title="合并成水平 / 垂直两项">${ICON.collapse2}</button>
+      </div>`
+    }
+
+    const cell = dir => {
+      const props = set[dir]
+      const mixed = isMixed(this.#computed, props)
+      const value = pairValue(this.#computed, props)
+
+      return `<div class="control">
+        <span class="prefix" data-drag data-pair="${kind}:${dir}">${SIDE_ICON[dir]}</span>
+        <input type="text" data-pair="${kind}:${dir}" data-num
+          value="${esc(mixed ? '' : displayValue(props[0], value))}"
+          placeholder="${mixed ? '混合' : ''}"
+          title="${props.join(' / ')}">
+      </div>`
+    }
+
+    return `<div class="field">
+      <label class="name" data-prop="${set.all.join(',')}">${set.label}</label>
+      <div class="side-pair">
+        ${cell('horizontal')}${cell('vertical')}
+        <button class="icon-btn expand-sides" data-kind="${kind}"
+          title="分别设置四边">${ICON.expand}</button>
+      </div>
+    </div>`
+  }
+
+  #renderClip() {
+    const on = /^(hidden|clip)$/.test((this.#computed.overflow || '').trim())
+    return `<label class="field checkbox-field">
+      <input type="checkbox" class="clip-toggle"${on ? ' checked' : ''}>
+      <span>裁剪内容<code>overflow: hidden</code></span>
+    </label>`
+  }
+
+  #defaultRows(group) {
     const rows = []
     const consumed = new Set()
 
@@ -389,27 +563,7 @@ export class PropsPanel extends HTMLElement {
       rows.push(this.#renderField(prop))
     }
 
-    const body = rows.filter(Boolean)
-    if (!body.length) return ''
-
-    const folded = this.#folded.has(group.id) ? ' folded' : ''
-    const off = this.#hiddenSections.has(group.id)
-    const eye = HIDEABLE[group.id]
-      ? `<button class="icon-btn eye" data-eye="${group.id}"${off ? ' data-on' : ''}
-           title="${off ? '恢复本组' : '临时关闭本组'}">${off ? ICON.eyeOff : ICON.eye}</button>`
-      : ''
-
-    return `<section data-group="${group.id}"${folded}>
-      <h3>
-        <span class="title">${group.label}</span>
-        <span class="acts">
-          ${eye}
-          <button class="icon-btn undo" data-undo="${group.id}" title="重置本组改动">${ICON.undo}</button>
-        </span>
-        <i class="chev"></i>
-      </h3>
-      <div class="rows">${body.join('')}</div>
-    </section>`
+    return rows
   }
 
   // 图片预览行：Figma 的图片填充那一行，左边就是图本身的缩略图。
@@ -838,6 +992,57 @@ export class PropsPanel extends HTMLElement {
 
     on('.mode', 'click', e => { e.stopPropagation(); this.#resizeMenu(e.currentTarget.dataset.axis) })
 
+    // ── Layout ──
+    on('[data-flow]', 'click', e => {
+      const flow = e.currentTarget.dataset.flow
+      const patch = planFlow(flow, this.#computed)
+      for (const [prop, value] of Object.entries(patch)) this.#applyToAll(prop, value ?? '')
+      this.render()
+      this.#toast(`排列：${FLOW_LABEL[flow]}`)
+    })
+
+    on('.wrap-toggle', 'click', e => {
+      const on = e.currentTarget.hasAttribute('data-on')
+      this.#applyToAll('flex-wrap', on ? 'nowrap' : 'wrap')
+      this.render()
+    })
+
+    on('.align-cell', 'click', e => {
+      const { col, row } = e.currentTarget.dataset
+      const flow = flowOf(this.#computed)
+      const patch = planAlignment(+col, +row, flow)
+      for (const [prop, value] of Object.entries(patch)) this.#applyToAll(prop, value ?? '')
+      this.render()
+    })
+
+    on('.expand-sides', 'click', e => {
+      this.#expandedSides.add(e.currentTarget.dataset.kind)
+      this.render()
+    })
+
+    on('.collapse-sides', 'click', e => {
+      this.#expandedSides.delete(e.currentTarget.dataset.kind)
+      this.render()
+    })
+
+    // 两段式间距：一个框写两条声明
+    on('input[data-pair]', 'change', e => {
+      const [kind, dir] = e.currentTarget.dataset.pair.split(':')
+      const props = SIDE_SETS[kind]?.[dir]
+      if (!props) return
+
+      const value = coerceLength(e.currentTarget.value)
+      props.forEach(prop => this.#commit(prop, value))
+      this.render()
+    })
+
+    on('.clip-toggle', 'change', e => {
+      // 取消勾选时清掉声明而不是写 visible：写死 visible 会盖掉样式表里
+      // 本来就有的 overflow，那不是用户的意思
+      this.#applyToAll('overflow', e.currentTarget.checked ? 'hidden' : '')
+      this.render()
+    })
+
     on('.drop-limit', 'click', e => {
       e.stopPropagation()
       const prop = e.currentTarget.dataset.prop
@@ -980,7 +1185,10 @@ export class PropsPanel extends HTMLElement {
     on('[data-drag]', 'pointerdown', e => {
       const handle = e.currentTarget
       const prop = handle.dataset.prop
-      const input = shadow.querySelector(`input[data-prop="${prop}"]`)
+      // 两段式间距的标签管的是一对属性，输入框按 data-pair 找
+      const input = prop
+        ? shadow.querySelector(`input[data-prop="${prop}"]`)
+        : shadow.querySelector(`input[data-pair="${handle.dataset.pair}"]`)
       if (!input) return
 
       e.preventDefault()

@@ -426,3 +426,93 @@ input::placeholder { color: var(--vr-mute); }
   cursor: pointer;
 }
 .limit-row .drop-limit:hover { background: #4a3030; color: var(--vr-text); }
+
+/* ── Layout：Flow ── */
+.flow-row { display: flex; gap: 6px; align-items: center; }
+
+.segment.flow { flex: 1; }
+.segment.flow button {
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.wrap-toggle:disabled { opacity: .3; cursor: not-allowed; }
+
+/* ── 对齐九宫格 ──
+   3×3 的点阵，选中格显示一条方向条：横向排列时是竖条，纵向排列时是横条，
+   和 Figma 一样用图形本身表达「子元素会怎么排」。 */
+.align-gap {
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  gap: 8px;
+  align-items: start;
+}
+
+.align-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  width: 74px;
+  height: 74px;
+  padding: 2px;
+  background: var(--vr-field);
+  border-radius: 5px;
+}
+
+.align-cell {
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
+}
+.align-cell::before {
+  content: '';
+  width: 3px; height: 3px;
+  border-radius: 50%;
+  background: var(--vr-mute);
+}
+.align-cell:hover { background: rgb(255 255 255 / .06); }
+
+.align-cell[data-on]::before {
+  border-radius: 1px;
+  background: var(--vr-accent);
+}
+/* 横向排列：竖条（子元素一列列并排）；纵向排列：横条 */
+.align-grid[data-flow="horizontal"] .align-cell[data-on]::before { width: 3px; height: 13px; }
+.align-grid[data-flow="vertical"]   .align-cell[data-on]::before { width: 13px; height: 3px; }
+
+/* ── 两段式间距 ── */
+.side-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.side-pair .prefix { display: grid; place-items: center; }
+
+.sides-expanded { position: relative; }
+.sides-expanded .collapse-sides {
+  position: absolute;
+  top: 0; right: 0;
+}
+
+/* ── 裁剪内容 ── */
+.checkbox-field {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--vr-text);
+}
+.checkbox-field input { width: 13px; height: 13px; accent-color: var(--vr-accent); cursor: pointer; }
+.checkbox-field code {
+  font: 400 10px/1 ui-monospace, Menlo, monospace;
+  color: var(--vr-mute);
+  margin-left: 4px;
+}
