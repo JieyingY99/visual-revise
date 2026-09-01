@@ -88,7 +88,6 @@ export const CONTROLS = {
   'letter-spacing': num('字距'),
   'text-align':     seg('对齐', [['left', '左'], ['center', '中'], ['right', '右'], ['justify', '两端']]),
   'text-transform': sel('大小写', ['none', 'uppercase', 'lowercase', 'capitalize']),
-  'color':          col('文字色'),
 
   // 外观
   'opacity':       plain('不透明度', { step: 0.05, min: 0, max: 1 }),
@@ -96,8 +95,16 @@ export const CONTROLS = {
   'overflow':      sel('溢出', ['visible', 'hidden', 'scroll', 'auto', 'clip']),
 
   // 填充
+  // color 归在这里而不是「文字」段：实测 Figma 里文本图层的 fills[0] 就是字色，
+  // Fill 是「这个图层被什么填充」的统一抽象，对文字/图片/形状分别是字色/图/背景色
+  'color':            col('文字色'),
   'background-color': col('背景色'),
   'background-image': txt('背景图'),
+  'background-size':     sel('背景尺寸', ['auto', 'cover', 'contain']),
+  'background-position': txt('背景位置'),
+  // 对应 Figma 图片填充的 scaleMode（Fill / Fit / Crop / Tile）
+  'object-fit':       sel('图片适配', ['fill', 'contain', 'cover', 'none', 'scale-down']),
+  'object-position':  txt('图片位置'),
 
   // 描边
   'border-width': num('粗细'),
@@ -258,7 +265,23 @@ export const alignPlan = (el, axis, where) => {
   return [{ prop: head, value: 'auto' }, { prop: tail, value: 'auto' }]
 }
 
+// object-fit 只对「替换元素」有意义——普通 div 没有自身内容可供适配，
+// 写上去是空转。background-size/position 同理，没有背景图时无从谈起。
+const REPLACED_ONLY = new Set(['object-fit', 'object-position'])
+const BG_IMAGE_ONLY = new Set(['background-size', 'background-position'])
+
+export const isReplacedElement = el =>
+  /^(img|video|canvas|svg|iframe|embed|object)$/i.test(el?.tagName || '')
+
+export const hasBackgroundImage = computed => {
+  const v = computed?.['background-image']
+  return !!v && v !== 'none'
+}
+
 export const isRelevant = (prop, computed, el) => {
+  if (REPLACED_ONLY.has(prop)) return isReplacedElement(el)
+  if (BG_IMAGE_ONLY.has(prop)) return hasBackgroundImage(computed)
+
   if (FLEX_CHILD_ONLY.has(prop)) {
     const parentDisplay = el?.parentElement && getComputedStyle(el.parentElement).display
     return /flex|grid/.test(parentDisplay || '')

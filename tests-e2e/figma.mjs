@@ -28,12 +28,17 @@ await page.waitForTimeout(500)
 
 // ── 分区顺序 ────────────────────────────────────────────────
 const ids = await panel('section').evaluateAll(els => els.map(el => el.dataset.group))
-const EXPECTED = ['position', 'layout', 'appearance', 'fill', 'stroke', 'effects', 'typography']
+// 实测 Figma Desktop：选中文本图层时 Typography 插在 Appearance 与 Fill 之间，
+// 不是排在最后。这里对所有元素都用同一顺序——顺序随选中跳动会毁掉肌肉记忆。
+const EXPECTED = ['position', 'layout', 'appearance', 'typography', 'fill', 'stroke', 'effects']
 ok(JSON.stringify(ids) === JSON.stringify(EXPECTED), `分区顺序：${ids.join(' → ')}`)
 
 const titles = await panel('section h3 .title').evaluateAll(els => els.map(el => el.textContent))
-ok(titles[0] === 'Position' && titles.at(-1) === 'Typography',
+ok(titles[0] === 'Position' && titles.at(-1) === 'Effects',
    `分区标题用 Figma 命名：${titles.join(' / ')}`)
+ok(titles.indexOf('Typography') === titles.indexOf('Appearance') + 1 &&
+   titles.indexOf('Typography') === titles.indexOf('Fill') - 1,
+   'Typography 夹在 Appearance 与 Fill 之间（Figma 的位置）')
 
 // ── Position 分区内容 ──────────────────────────────────────
 const posProps = await panel('section[data-group="position"] [data-prop]')

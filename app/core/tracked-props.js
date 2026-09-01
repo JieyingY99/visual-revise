@@ -1,5 +1,12 @@
 // 分区顺序与命名对齐 Figma 的属性面板：
-//   Position → Layout → Appearance → Fill → Stroke → Effects → Typography
+//   Position → Layout → Appearance → Typography → Fill → Stroke → Effects
+//
+// Typography 的位置是实测 Figma Desktop 得来的：选中文本图层时它插在
+// Appearance 与 Fill 之间，而不是排在最后。偏离 Figma 的一处：Figma 只在
+// TEXT 图层渲染这个分区，但 CSS 的字体属性会继承，在容器上设 font-size 是
+// 常见写法，隐藏它会让「给整张卡片调字号」无法表达。所以这里对所有元素
+// 都保留该分区，只在选中文字元素时自动展开（见 props-panel）。
+// 位置固定不随选中变动——顺序跳来跳去会毁掉肌肉记忆。
 //
 // Figma 的 Constraints 在 CSS 里没有对应物——那是画布坐标系里「贴住父框哪条边」
 // 的概念，CSS 用的是完全不同的一套机制。这里换成真正决定「元素往哪儿放、
@@ -41,13 +48,34 @@ export const GROUPS = [
     props: ['opacity', 'border-radius'],
   },
   {
+    id: 'typography',
+    label: 'Typography',
+    zh: '文字',
+    // color 不在这里——见下面 fill 分区的说明
+    props: [
+      'font-family', 'font-size', 'font-weight', 'line-height',
+      'letter-spacing', 'text-align', 'text-transform',
+    ],
+  },
+  {
     id: 'fill',
     label: 'Fill',
     zh: '填充',
-    // 填充控件同时管这两条：Figma 里「一个填充」是一件事，
-    // CSS 里是两件——background-image 画在 background-color 上面
+    // Figma 的 Fill 是「这个图层被什么填充」的多态槽位，实测：文本图层的
+    // fills[0] 是 SOLID（就是字色），图片图层的 fills[0] 是 IMAGE。CSS 把
+    // 这件事拆成了三条互不相干的属性，所以这里把它们收进同一个分区，由面板
+    // 按元素类型决定谁排在最前（见 props-panel 的 fillOrder）。
+    //
+    // 填充控件同时管 background-color / background-image：Figma 里「一个填充」
+    // 是一件事，CSS 里是两件——background-image 画在 background-color 上面。
     widgets: ['fill'],
-    props: ['background-color', 'background-image'],
+    props: [
+      'color',
+      'background-color', 'background-image',
+      'background-size', 'background-position',
+      // <img> / <video> 自身内容的适配方式，对应 Figma 图片填充的 scaleMode
+      'object-fit', 'object-position',
+    ],
   },
   {
     id: 'stroke',
@@ -60,15 +88,6 @@ export const GROUPS = [
     label: 'Effects',
     zh: '效果',
     props: ['box-shadow', 'filter', 'backdrop-filter'],
-  },
-  {
-    id: 'typography',
-    label: 'Typography',
-    zh: '文字',
-    props: [
-      'font-family', 'font-size', 'font-weight', 'line-height',
-      'letter-spacing', 'text-align', 'text-transform', 'color',
-    ],
   },
 ]
 
