@@ -334,6 +334,10 @@ export class PropsPanel extends HTMLElement {
     const root = this.#shadow.querySelector('#root')
     if (!root) return
 
+    // 整块重建会把滚动容器一起换掉，位置归零。用户在面板中段改一个值，
+    // 视图「唰」地跳回顶部，还得再滚回来找刚才那一行——每改一次都跳一次。
+    const scrollTop = this.#shadow.querySelector('.scroll')?.scrollTop || 0
+
     this.#dirtyProps = this.#dirtySet()
 
     root.innerHTML = this.#subview === 'grid' && this.target
@@ -347,6 +351,13 @@ export class PropsPanel extends HTMLElement {
     this.#bind()
     this.#refreshDirty()
     this.#fillImageDims()
+
+    // 恢复滚动。内容变短时（比如收起了展开的四边）浏览器会自动夹住，
+    // 不用自己算上限。
+    if (scrollTop) {
+      const scroller = this.#shadow.querySelector('.scroll')
+      if (scroller) scroller.scrollTop = scrollTop
+    }
   }
 
   #renderPanel() {
@@ -933,8 +944,11 @@ export class PropsPanel extends HTMLElement {
       return `<div class="control resize-cell" data-axis="${axis}">
         <span class="prefix" data-drag data-prop="${axis}">${AXES[axis].prefix}</span>
         <input type="text" data-prop="${axis}" data-num value="${esc(value)}" title="${axis}">
-        <button class="mode" data-axis="${axis}"
-          title="${MODES[mode].label}｜点击切换尺寸模式">${MODES[mode].label}</button>
+        <button class="mode" data-axis="${axis}" data-mode="${mode}"
+          title="${MODES[mode].label}｜点击切换尺寸模式">
+          <span class="mode-name">${MODES[mode].label}</span>
+          <i class="mode-caret"></i>
+        </button>
       </div>`
     }
 

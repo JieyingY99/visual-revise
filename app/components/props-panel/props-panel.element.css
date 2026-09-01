@@ -383,6 +383,9 @@ input::placeholder { color: var(--vr-mute); }
 
 .resize-cell .mode {
   flex: none;
+  display: grid;
+  place-items: center;
+  min-width: 22px;
   height: 22px;
   padding: 0 6px;
   margin-right: 2px;
@@ -396,6 +399,22 @@ input::placeholder { color: var(--vr-mute); }
 }
 .resize-cell .mode:hover { background: var(--vr-field-hi); color: var(--vr-text); }
 .resize-cell .mode[data-menu-open] { background: var(--vr-accent); color: #fff; }
+
+/* Figma 的规则：固定模式不写「固定」二字，只给一个下拉箭头——尺寸框里那个
+   数字本身就说明它是固定的；贴合 / 填满才需要标出来，因为框里的数字是量出来
+   的结果而非声明。hover 时一律换成箭头，提示这里可以点开。 */
+.mode-caret {
+  display: none;
+  width: 8px; height: 8px;
+  background: currentColor;
+  clip-path: polygon(15% 32%, 50% 68%, 85% 32%, 78% 25%, 50% 54%, 22% 25%);
+}
+.mode[data-mode="fixed"] .mode-name { display: none; }
+.mode[data-mode="fixed"] .mode-caret,
+.mode:hover .mode-caret,
+.mode[data-menu-open] .mode-caret { display: block; }
+.mode:hover .mode-name,
+.mode[data-menu-open] .mode-name { display: none; }
 
 /* 尺寸限制：按需出现的一行，左边一个窄标签，右边两列对齐 W/H */
 .limit-row {

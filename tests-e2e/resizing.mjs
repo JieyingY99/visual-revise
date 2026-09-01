@@ -31,7 +31,11 @@ const mode = (sel, axis) => page.evaluate(([s, a]) => {
 }, [sel, axis])
 
 const panel = sel => page.locator(`visual-revise-panel ${sel}`)
+// 先取消上一次选中：选中框的 handles 浮在页面之上，
+// 会挡住紧挨着的下一个目标，Playwright 的可点击性检查会一直重试到超时
 const select = async sel => {
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(150)
   await page.locator(sel).first().click({ position: { x: 2, y: 2 } })
   await page.waitForTimeout(400)
 }
@@ -51,7 +55,8 @@ ok(await mode('.rz-block', 'height') === 'hug',
 // 样式表里的声明也认（不只看 inline）
 await page.evaluate(() => {
   const st = document.createElement('style')
-  st.textContent = '.rz-sheet { width: 250px }'
+  // 给个高度，否则空 div 高度为 0，Playwright 认为它不可见、点不到
+  st.textContent = '.rz-sheet { width: 250px; height: 40px; margin: 16px }'
   document.head.appendChild(st)
   const d = document.createElement('div')
   d.className = 'rz-sheet'
@@ -103,6 +108,107 @@ await page.locator('#visual-revise-menu > div').filter({ hasText: '填满容器'
 await page.waitForTimeout(450)
 ok(await page.evaluate(() => document.querySelector('.rz-block').style.width) === '100%',
    '非 flex 场景下「填满」写 width:100%')
+
+// ── 填满：样式表里有 width 时也要真的撑开 ───────────────────
+// 这是个真实踩过的坑：只清掉 inline 的 width 不够，样式表里那条还在，
+// flex-basis 默认 auto 会拿它当伸缩基准，元素照旧按原宽度起算，
+// 看起来就是「选了填满却纹丝不动」。
+await page.evaluate(() => {
+  const st = document.createElement('style')
+  st.textContent = '.rz-sheet-w { width: 120px }'
+  document.head.appendChild(st)
+
+  const row = document.createElement('div')
+  row.className = 'rz-row2'
+  row.style.cssText = 'display:flex;width:600px;margin:20px;padding:8px'
+  row.innerHTML = '<div class="rz-sheet-w">A</div><div>B</div>'
+  document.body.appendChild(row)
+})
+
+await select('.rz-sheet-w')
+const beforeFill = await page.evaluate(() =>
+  Math.round(document.querySelector('.rz-sheet-w').getBoundingClientRect().width))
+ok(beforeFill === 120, `起始按样式表的 120px：${beforeFill}`)
+
+await panel('.mode[data-axis="width"]').click()
+await page.waitForTimeout(300)
+await page.locator('#visual-revise-menu > div').filter({ hasText: '填满容器' }).first().click()
+await page.waitForTimeout(500)
+
+const fillWrote = await page.evaluate(() => {
+  const s = document.querySelector('.rz-sheet-w').style
+  return { grow: s.flexGrow, basis: s.flexBasis, width: s.width }
+})
+ok(fillWrote.grow === '1' && /^0(px|%)?$/.test(fillWrote.basis),
+   `flex 主轴的填满写 flex: 1 1 0%，basis 不能省：${JSON.stringify(fillWrote)}`)
+
+const afterFill = await page.evaluate(() =>
+  Math.round(document.querySelector('.rz-sheet-w').getBoundingClientRect().width))
+ok(afterFill > beforeFill,
+   `元素真的撑开了（${beforeFill} → ${afterFill}），而不是停在样式表的宽度上`)
+
+ok(await mode('.rz-sheet-w', 'width') === 'fill',
+   '读回来仍是「填满」——不会被样式表里那条 width 骗回「固定」')
+
+// 切回贴合要清掉 fill 留下的痕迹，否则切回来毫无变化
+await panel('.mode[data-axis="width"]').click()
+await page.waitForTimeout(300)
+await page.locator('#visual-revise-menu > div').filter({ hasText: '贴合内容' }).first().click()
+await page.waitForTimeout(500)
+const afterHug = await page.evaluate(() => {
+  const s = document.querySelector('.rz-sheet-w').style
+  return { grow: s.flexGrow, basis: s.flexBasis, width: s.width }
+})
+ok(!afterHug.grow && !afterHug.basis && afterHug.width === 'fit-content',
+   `切回贴合时清掉 grow / basis：${JSON.stringify(afterHug)}`)
+
+// ── flex 交叉轴的填满走 align-self ──────────────────────────
+await page.evaluate(() => {
+  const col = document.createElement('div')
+  col.className = 'rz-col2'
+  col.style.cssText = 'display:flex;flex-direction:column;width:400px;margin:20px;padding:8px'
+  col.innerHTML = '<div class="rz-cross">A</div>'
+  document.body.appendChild(col)
+})
+await select('.rz-cross')
+await panel('.mode[data-axis="width"]').click()
+await page.waitForTimeout(300)
+await page.locator('#visual-revise-menu > div').filter({ hasText: '填满容器' }).first().click()
+await page.waitForTimeout(500)
+ok(await page.evaluate(() => document.querySelector('.rz-cross').style.alignSelf) === 'stretch',
+   '交叉轴的填满写 align-self:stretch——写 100% 会算错，交叉轴百分比参照的是内容框，遇到 padding 就溢出')
+
+// ── 模式按钮的显示规则 ──────────────────────────────────────
+// .rz-fixed 在前面的用例里已被切成别的模式了，改用没动过的 .rz-sheet
+await select('.rz-sheet')
+const modeBtn = panel('.mode[data-axis="width"]')
+ok(await modeBtn.getAttribute('data-mode') === 'fixed', '按钮带当前模式标记')
+ok(!(await modeBtn.locator('.mode-name').isVisible()),
+   '固定模式不写「固定」二字——框里那个数字本身就说明它是固定的')
+ok(await modeBtn.locator('.mode-caret').isVisible(), '固定模式显示下拉箭头')
+
+await select('.rz-hug')
+ok(await panel('.mode[data-axis="width"] .mode-name').isVisible(),
+   '贴合模式要标出来——框里的数字是量出来的结果而非声明')
+
+// ── 面板滚动位置 ────────────────────────────────────────────
+await select('.rz-block')
+await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+  sr.querySelectorAll('section').forEach(s => s.removeAttribute('folded'))
+  sr.querySelector('.scroll').scrollTop = 260
+})
+await page.waitForTimeout(300)
+const scrollBefore = await page.evaluate(() =>
+  document.querySelector('visual-revise-panel').shadowRoot.querySelector('.scroll').scrollTop)
+
+// 触发一次整块重绘（切模式会 render）
+await page.evaluate(() => document.querySelector('visual-revise-panel').render())
+await page.waitForTimeout(300)
+const scrollAfter = await page.evaluate(() =>
+  document.querySelector('visual-revise-panel').shadowRoot.querySelector('.scroll').scrollTop)
+ok(scrollBefore > 0 && scrollAfter === scrollBefore,
+   `重绘后滚动位置不跳回顶部（${scrollBefore} → ${scrollAfter}）`)
 
 // ── 尺寸限制按需出现 ────────────────────────────────────────
 ok(await panel('input[data-prop="min-width"]').count() === 0,

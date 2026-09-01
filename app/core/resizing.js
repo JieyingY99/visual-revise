@@ -96,6 +96,11 @@ export const declaredValue = (el, prop) => {
 
 // 父容器是 flex 且该轴就是主轴时，「填满」的正确写法是 flex-grow 而不是
 // width:100%——后者在有兄弟元素的 flex 行里会把它们挤出去。
+export const isFlexChild = el => {
+  const parent = el?.parentElement
+  return !!parent && /flex/.test(getComputedStyle(parent).display)
+}
+
 export const isMainAxis = (el, axis) => {
   const parent = el?.parentElement
   if (!parent) return false
@@ -109,6 +114,20 @@ export const isMainAxis = (el, axis) => {
 
 export const resizeMode = (el, axis = 'width', computed = null) => {
   if (!el?.isConnected) return 'fixed'
+
+  // flex 子项的伸缩优先于尺寸声明：flex-basis 盖过 width，align-self:stretch
+  // 盖过交叉轴尺寸。先认这些，否则刚设成「填满」的元素会因为样式表里还留着
+  // 一条 width 而被读回成「固定」。
+  if (isFlexChild(el)) {
+    const cs = getComputedStyle(el)
+    if (isMainAxis(el, axis)) {
+      const grow = parseFloat(cs.flexGrow) || 0
+      const basis = (cs.flexBasis || '').trim()
+      if (grow > 0 && /^0(px|%)?$/.test(basis)) return 'fill'
+    } else if (cs.alignSelf === 'stretch') {
+      return 'fill'
+    }
+  }
 
   const declared = declaredValue(el, axis)
 
@@ -139,14 +158,31 @@ export const planResize = (el, axis, mode, computed = null) => {
 
   if (mode === 'hug') {
     patch[axis] = 'fit-content'
-    if (isMainAxis(el, axis)) patch['flex-grow'] = null
+    // 上一次「填满」留下的 grow / basis / stretch 必须清掉，
+    // 否则它们会继续生效，切回来看起来毫无变化
+    if (isFlexChild(el)) {
+      patch['flex-grow'] = null
+      patch['flex-basis'] = null
+      patch['align-self'] = null
+    }
     return patch
   }
 
   if (mode === 'fill') {
     if (isMainAxis(el, axis)) {
-      // flex 主轴：flex-grow 撑开，尺寸声明要让路
+      // flex 主轴写 flex: 1 1 0%。
+      //
+      // flex-basis 不能省：它默认是 auto，也就是拿元素的 width 当伸缩基准。
+      // 只清掉 inline 的 width 是不够的——样式表里那条 width: 848px 还在，
+      // 元素照旧按 848 起算，看起来就是「选了填满却纹丝不动」。
+      // 把 basis 压到 0，剩余空间才会真正按 grow 分配。
       patch['flex-grow'] = '1'
+      patch['flex-basis'] = '0%'
+      patch[axis] = null
+    } else if (isFlexChild(el)) {
+      // flex 交叉轴：撑满是 align-self 的事，写 100% 会算错——
+      // 交叉轴的百分比参照的是容器内容框，遇到 padding 就会溢出
+      patch['align-self'] = 'stretch'
       patch[axis] = null
     } else {
       patch[axis] = '100%'
@@ -157,7 +193,11 @@ export const planResize = (el, axis, mode, computed = null) => {
   // fixed：写下当前实测像素，用户拿到的是一个可继续微调的确切数字
   const rect = withoutTransition(el, () => el.getBoundingClientRect())
   patch[axis] = `${Math.round(rect[axis] * 100) / 100}px`
-  if (isMainAxis(el, axis)) patch['flex-grow'] = null
+  if (isFlexChild(el)) {
+    patch['flex-grow'] = null
+    patch['flex-basis'] = null
+    patch['align-self'] = null
+  }
   return patch
 }
 
