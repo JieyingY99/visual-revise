@@ -46,6 +46,7 @@ const ICON = {
   wrap:     svg('<path d="M2.5 4.5h9a2.5 2.5 0 0 1 0 5H4"/><path d="M6 7.5 4 9.5l2 2"/>', 13),
   expand:   svg('<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M6 6h4v4H6z"/>', 13),
   collapse2: svg('<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M4.5 8h7"/>', 13),
+  more:     svg('<circle cx="5" cy="5" r="1.2" fill="currentColor" stroke="none"/><circle cx="11" cy="5" r="1.2" fill="currentColor" stroke="none"/><circle cx="5" cy="11" r="1.2" fill="currentColor" stroke="none"/><circle cx="11" cy="11" r="1.2" fill="currentColor" stroke="none"/>', 13),
 }
 
 // Flow 的四个图标，对应 Figma 的 Freeform / Vertical / Horizontal / Grid
@@ -137,6 +138,8 @@ export class PropsPanel extends HTMLElement {
   #expandedSides = new Set()
   // 二级视图（目前只有网格设置）。有值时面板整体切过去，× 回到上级。
   #subview = null
+  // Typography 的「更多」是否展开（大小写、装饰线）
+  #typoMore = false
   #unsubscribe = null
   #releaseScroll = null
   #dirtyProps = new Set()
@@ -366,7 +369,10 @@ export class PropsPanel extends HTMLElement {
   #renderGroup(group) {
     // Layout 完全自定义渲染：它的控件是按 Flow 组织的，不是一条属性一行，
     // 通用循环表达不了（见 #layoutRows）
-    const rows = group.id === 'layout' ? this.#layoutRows() : this.#defaultRows(group)
+    const rows =
+      group.id === 'layout'     ? this.#layoutRows()
+      : group.id === 'typography' ? this.#typographyRows()
+      : this.#defaultRows(group)
 
     const body = rows.filter(Boolean)
     if (!body.length) return ''
@@ -389,6 +395,74 @@ export class PropsPanel extends HTMLElement {
       </h3>
       <div class="rows">${body.join('')}</div>
     </section>`
+  }
+
+  // ── Typography：紧凑排布 ────────────────────────────────────
+  // Figma 的排版面板不给每个字段配一行标签：字体独占一行，字重与字号并排，
+  // 行高与字距才带小标签。省下的高度在一个十来行的面板里很关键。
+  #typographyRows() {
+    const el = this.target
+    if (!el) return []
+    if (!isRelevant('font-family', this.#computed, el)) return []
+
+    const rows = []
+
+    // 字体：占满一行，不加标签——一眼就知道那是字体
+    const fontsBtn = fontsSupported()
+      ? `<button class="icon-btn load-fonts" title="读取本地已安装字体">${ICON.download}</button>`
+      : ''
+    rows.push(`<div class="field">
+      <div class="with-action">
+        <div class="control">
+          <input type="text" data-prop="font-family"
+            value="${esc(displayValue('font-family', this.#computed['font-family'] ?? ''))}"
+            title="font-family">
+        </div>
+        ${fontsBtn}
+      </div>
+    </div>`)
+
+    // 字重 + 字号：Figma 把这两个放一行，也不加标签
+    rows.push(`<div class="field">
+      <div class="typo-pair">
+        <vr-select data-prop="font-weight"
+          value="${esc(displayValue('font-weight', this.#computed['font-weight'] ?? ''))}"
+          options='${JSON.stringify(CONTROLS['font-weight'].options)}'></vr-select>
+        <div class="control">
+          <span class="prefix" data-drag data-prop="font-size">Aa</span>
+          <input type="text" data-prop="font-size" data-num
+            value="${esc(displayValue('font-size', this.#computed['font-size'] ?? ''))}"
+            title="font-size">
+        </div>
+      </div>
+    </div>`)
+
+    // 行高 + 字距：这两个名字不带标签认不出来
+    rows.push(`<div class="pair">
+      ${this.#renderField('line-height')}${this.#renderField('letter-spacing')}
+    </div>`)
+
+    // 对齐 + 更多
+    const align = this.#computed['text-align'] || ''
+    rows.push(`<div class="field">
+      <label class="name" data-prop="text-align">对齐</label>
+      <div class="typo-align">
+        <div class="segment">
+          ${CONTROLS['text-align'].options.map(([val, label]) =>
+            `<button data-prop="text-align" data-value="${val}"${val === align ? ' data-on' : ''}>${label}</button>`
+          ).join('')}
+        </div>
+        <button class="icon-btn typo-more"${this.#typoMore ? ' data-on' : ''}
+          title="更多排版设置">${ICON.more}</button>
+      </div>
+    </div>`)
+
+    if (this.#typoMore)
+      rows.push(`<div class="pair">
+        ${this.#renderField('text-transform')}${this.#renderField('text-decoration-line')}
+      </div>`)
+
+    return rows
   }
 
   // ── Layout：按 Flow 组织 ────────────────────────────────────
@@ -1202,6 +1276,8 @@ export class PropsPanel extends HTMLElement {
     })
 
     // ── Grid ──
+    on('.typo-more', 'click', () => { this.#typoMore = !this.#typoMore; this.render() })
+
     on('.grid-shape', 'click', e => { e.stopPropagation(); this.#gridPicker() })
 
     on('.back', 'click', () => { this.#subview = null; this.render() })

@@ -58,8 +58,10 @@ export const GROUPS = [
     zh: '文字',
     // color 不在这里——见下面 fill 分区的说明
     props: [
-      'font-family', 'font-size', 'font-weight', 'line-height',
-      'letter-spacing', 'text-align', 'text-transform',
+      'font-family', 'font-weight', 'font-size', 'line-height',
+      'letter-spacing', 'text-align',
+      // 下面两条收在「更多」里：用得少，但 Figma 的排版面板有对应项
+      'text-transform', 'text-decoration-line',
     ],
   },
   {

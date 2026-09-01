@@ -576,3 +576,15 @@ input::placeholder { color: var(--vr-mute); }
   font: 400 10px/1 ui-monospace, Menlo, monospace;
   color: var(--vr-mute);
 }
+
+/* ── Typography 紧凑排布 ──
+   字体独占一行、字重与字号并排，都不带标签——它们的内容本身就说明了是什么。
+   只有行高与字距需要标签，光看数字认不出来。 */
+.typo-pair {
+  display: grid;
+  grid-template-columns: 1fr 96px;
+  gap: 6px;
+}
+
+.typo-align { display: flex; gap: 6px; align-items: center; }
+.typo-align .segment { flex: 1; min-width: 0; }

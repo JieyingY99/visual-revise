@@ -84,6 +84,35 @@ await page.locator('.card-body').first().click({ position: { x: 4, y: 4 } })
 await page.waitForTimeout(400)
 ok(!await isFolded('typography'), '换到另一个文字元素时重新自动展开')
 
+// ── 紧凑排布 ────────────────────────────────────────────────
+const typoField = sel => page.locator(`visual-revise-panel section[data-group="typography"] ${sel}`)
+
+ok(await typoField('.typo-pair').count() === 1,
+   '字重与字号并排一行——Figma 的排版面板不给这两个配标签，内容本身就说明了是什么')
+
+const labels = await typoField('label.name').evaluateAll(els => els.map(e => e.textContent.trim()))
+ok(!labels.includes('字体') && !labels.includes('字号') && !labels.includes('字重'),
+   `字体 / 字号 / 字重都不带标签：剩下的标签是 ${JSON.stringify(labels)}`)
+ok(labels.includes('行高') && labels.includes('字距'),
+   '行高与字距保留标签——光看数字认不出来是哪个')
+
+ok(await typoField('.segment button[data-prop="text-align"]').count() === 4,
+   '对齐是一排分段按钮，不是下拉')
+
+// ── 更多排版设置 ────────────────────────────────────────────
+ok(await typoField('[data-prop="text-transform"]').count() === 0,
+   '大小写默认收起（用得少）')
+await typoField('.typo-more').click()
+await page.waitForTimeout(350)
+ok(await typoField('vr-select[data-prop="text-transform"]').count() === 1, '展开「更多」后出现大小写')
+ok(await typoField('vr-select[data-prop="text-decoration-line"]').count() === 1,
+   '同时补上了装饰线——Figma 排版面板有这一项，此前项目里没有')
+
+// 只数顶层行：.pair 里嵌着两个 .field，一起数会重复计入
+const rowCount = await typoField('.rows > *').count()
+ok(rowCount === 5,
+   `整个分区连展开的「更多」在内共 ${rowCount} 行（改造前每属性一行，共 7 行且都带标签）`)
+
 // ── 顺序仍然正确 ────────────────────────────────────────────
 const ids = await page.locator('visual-revise-panel section')
   .evaluateAll(els => els.map(el => el.dataset.group))

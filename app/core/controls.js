@@ -88,6 +88,7 @@ export const CONTROLS = {
   'letter-spacing': num('字距'),
   'text-align':     seg('对齐', [['left', '左'], ['center', '中'], ['right', '右'], ['justify', '两端']]),
   'text-transform': sel('大小写', ['none', 'uppercase', 'lowercase', 'capitalize']),
+  'text-decoration-line': sel('装饰线', ['none', 'underline', 'line-through', 'overline']),
 
   // 外观
   'opacity':       plain('不透明度', { step: 0.05, min: 0, max: 1 }),
@@ -287,7 +288,7 @@ export const isTextlessElement = el =>
 // 排版属性 + 字色：都需要一个「文字」作为作用对象
 const NEEDS_TEXT = new Set([
   'font-family', 'font-size', 'font-weight', 'line-height',
-  'letter-spacing', 'text-align', 'text-transform', 'color',
+  'letter-spacing', 'text-align', 'text-transform', 'text-decoration-line', 'color',
 ])
 
 export const hasBackgroundImage = computed => {
