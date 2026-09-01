@@ -12,7 +12,7 @@
   left: 50%;
   transform: translateX(-50%);
   z-index: 2147483647;
-  font: 500 15px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font: 500 13px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   color: var(--bar-text);
   user-select: none;
   -webkit-font-smoothing: antialiased;
@@ -25,13 +25,13 @@
 .bar {
   display: flex;
   align-items: center;
-  height: 56px;
-  padding: 0 8px;
+  height: 40px;
+  padding: 0 6px;
   background: var(--bar-bg);
-  border-radius: 16px;
+  border-radius: 12px;
   box-shadow:
-    0 8px 28px rgb(0 0 0 / .32),
-    0 2px 6px rgb(0 0 0 / .22),
+    0 6px 20px rgb(0 0 0 / .30),
+    0 2px 5px rgb(0 0 0 / .20),
     inset 0 0 0 1px rgb(255 255 255 / .06);
   cursor: grab;
 }
@@ -40,8 +40,8 @@
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 14px 0 12px;
+  gap: 8px;
+  padding: 0 8px;
   white-space: nowrap;
 }
 .brand svg { flex: none; }
@@ -49,22 +49,22 @@
 .sep {
   flex: none;
   width: 1px;
-  height: 26px;
-  margin: 0 6px;
+  height: 18px;
+  margin: 0 4px;
   background: var(--bar-line);
 }
 
 button {
   display: flex;
   align-items: center;
-  gap: 9px;
-  height: 40px;
-  padding: 0 14px;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
   font: inherit;
   color: var(--bar-text);
   background: transparent;
   border: none;
-  border-radius: 10px;
+  border-radius: 8px;
   cursor: pointer;
   white-space: nowrap;
   transition: background .12s ease;
@@ -77,7 +77,7 @@ button svg { flex: none; }
 button[data-on] { background: var(--bar-active); }
 button[data-on] svg { color: var(--bar-accent); }
 
-button.icon-only { padding: 0; width: 40px; justify-content: center; }
+button.icon-only { padding: 0; width: 30px; justify-content: center; }
 
 /* 出口按钮：有改动时点亮，无改动时压暗但仍可点（点了给提示） */
 button.copy { color: var(--bar-dim); }
@@ -87,22 +87,25 @@ button.copy[data-ready] svg { color: var(--bar-accent); }
 .count {
   display: inline-grid;
   place-items: center;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  margin-left: 2px;
-  font-size: 12px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  margin-left: 1px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1;
   color: #fff;
   background: var(--bar-accent);
-  border-radius: 10px;
+  border-radius: 9px;
 }
 .count[data-empty] { background: rgb(255 255 255 / .16); color: var(--bar-dim); }
 
 /* 窄屏时收起文字，只留图标 */
 @media (max-width: 860px) {
-  .brand span, button:not(.copy) span:not(.count) { display: none; }
-  button { padding: 0; width: 40px; justify-content: center; }
-  .brand { padding: 0 10px; }
+  button:not(.copy) span:not(.count) { display: none; }
+  button { padding: 0; width: 30px; justify-content: center; }
+  .brand { padding: 0 6px; }
 }
+
+/* 撤销 / 重做：没得撤时灰掉，但仍占位——按钮忽隐忽现比灰着更难用 */
+.undo:disabled, .redo:disabled { opacity: .3; cursor: not-allowed; }

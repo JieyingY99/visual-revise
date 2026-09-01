@@ -18,7 +18,7 @@ const litMode = () => page.evaluate(() => {
 
 ok(await page.locator('visual-revise-toolbar').count() === 1, '工具条已挂载')
 ok(await bar('button[data-mode]').count() === 3, '三个模式按钮')
-ok(await bar('.sep').count() === 3, '分组竖线')
+ok(await bar('.sep').count() === 4, '分组竖线（撤销 / 重做自成一组）')
 
 // 初始态
 ok(await mode() === 'select', '初始为选择模式')
@@ -117,7 +117,7 @@ const iconCheck = await page.evaluate(() => {
     hasEmoji: /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(sr.textContent),
   }
 })
-ok(iconCheck.svgCount === 7, `全部图标为内联 SVG（${iconCheck.svgCount} 个）`)
+ok(iconCheck.svgCount === 9, `全部图标为内联 SVG（${iconCheck.svgCount} 个，含撤销 / 重做）`)
 ok(!iconCheck.hasEmoji, '界面文本中不含 emoji')
 
 // 关闭按钮

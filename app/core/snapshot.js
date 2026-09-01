@@ -12,7 +12,7 @@ export const elementId = el => {
 // 文案比对用归一化后的 textContent：源码里的换行和缩进不是用户的改动
 export const readText = el => (el.textContent || '').replace(/\s+/g, ' ').trim()
 
-const textNodesOf = el => {
+export const textNodesOf = el => {
   const out = []
   const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
   let node

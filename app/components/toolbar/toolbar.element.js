@@ -3,7 +3,7 @@ import { default as bar_css } from './toolbar.element.css'
 
 // 线性图标，24×24 视框、2px 描边、圆角端点——与 Lucide 同一套几何规范，
 // 保证并排时视觉重量一致。stroke 用 currentColor，由按钮状态驱动颜色。
-const icon = (paths, { size = 20, fill = '' } = {}) => `
+const icon = (paths, { size = 17, fill = '' } = {}) => `
   <svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none"
        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
        aria-hidden="true">${fill}${paths}</svg>`
@@ -33,6 +33,8 @@ const ICONS = {
     <path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>`),
 
   // 复制
+  undo: icon(`<path d="M3 10h11a5 5 0 0 1 0 10H9"/><path d="M7 6 3 10l4 4"/>`),
+  redo: icon(`<path d="M21 10H10a5 5 0 0 0 0 10h5"/><path d="M17 6l4 4-4 4"/>`),
   copy: icon(`
     <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
     <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>`),
@@ -64,7 +66,7 @@ export class ReviseToolbar extends HTMLElement {
     this.#shadow.innerHTML = `
       <style>${bar_css}</style>
       <div class="bar">
-        <div class="brand">${ICONS.brand}<span>Visual Revise</span></div>
+        <div class="brand" title="Visual Revise">${ICONS.brand}</div>
         <div class="sep"></div>
         ${MODES.map(m => `
           <button data-mode="${m.id}" title="${m.hint}">${m.icon}<span>${m.label}</span></button>
@@ -76,6 +78,9 @@ export class ReviseToolbar extends HTMLElement {
         <button class="copy" title="把全部改动整理成提示词复制到剪贴板">
           ${ICONS.copy}<span>复制提示词</span>
         </button>
+        <div class="sep"></div>
+        <button class="undo icon-only" title="撤销（⌘Z）" disabled>${ICONS.undo}</button>
+        <button class="redo icon-only" title="重做（⌘⇧Z）" disabled>${ICONS.redo}</button>
         <div class="sep"></div>
         <button class="close icon-only" title="关闭编辑器">${ICONS.close}</button>
       </div>
@@ -105,6 +110,19 @@ export class ReviseToolbar extends HTMLElement {
   #syncStats() {
     const { total } = ChangeStore.stats()
     const count = this.#shadow.querySelector('.count')
+    // 按钮上写清将要撤销的是什么：只画一个灰掉的箭头，用户没法判断
+    // 点下去会发生什么，也就不敢点
+    for (const [cls, can, label, key] of [
+      ['.undo', ChangeStore.canUndo, ChangeStore.history.undoLabel, '⌘Z'],
+      ['.redo', ChangeStore.canRedo, ChangeStore.history.redoLabel, '⌘⇧Z'],
+    ]) {
+      const btn = this.#shadow.querySelector(cls)
+      if (!btn) continue
+      btn.disabled = !can
+      const action = cls === '.undo' ? '撤销' : '重做'
+      btn.title = can ? `${action}：${label || '上一步'}（${key}）` : `没有可${action}的操作`
+    }
+
     const copy = this.#shadow.querySelector('.copy')
 
     count.textContent = total
@@ -180,6 +198,8 @@ export class ReviseToolbar extends HTMLElement {
     on('button[data-mode]', e =>
       this.#emit('vr-mode', { mode: e.currentTarget.dataset.mode }))
 
+    on('.undo', () => this.#emit('vr-undo'))
+    on('.redo', () => this.#emit('vr-redo'))
     on('.list', () => this.#emit('vr-open-list'))
     on('.copy', () => this.#emit('vr-copy'))
     on('.close', () => this.#emit('vr-close'))

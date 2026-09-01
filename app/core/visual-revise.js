@@ -96,7 +96,34 @@ export const mountVisualRevise = visbug => {
   const toggleInteractive = () => interactive ? exitInteractive() : enterInteractive()
 
   // capture 阶段拦截，抢在 hotkeys-js 的 document 监听之前
+  const doUndo = () => {
+    const entry = ChangeStore.undo()
+    toolbar.toast(entry ? `已撤销：${entry.label || '上一步'}` : '没有可撤销的操作',
+      entry ? 'info' : 'error')
+  }
+
+  const doRedo = () => {
+    const entry = ChangeStore.redo()
+    toolbar.toast(entry ? `已重做：${entry.label || '上一步'}` : '没有可重做的操作',
+      entry ? 'info' : 'error')
+  }
+
   const onKeydown = e => {
+    // ⌘Z / ⌘⇧Z（Windows 上 ⌘Y 也认）要在下面那道「带修饰键就放行」之前处理
+    if ((e.metaKey || e.ctrlKey) && !e.altKey) {
+      const key = e.key.toLowerCase()
+      if (key !== 'z' && key !== 'y') return
+
+      // 在输入框里打字时让路给浏览器自己的文本撤销：用户想退一个字符，
+      // 不该把整次改稿一起撤掉
+      if (isTypingTarget(e)) return
+
+      e.preventDefault()
+      e.stopPropagation()
+      ;(key === 'y' || e.shiftKey) ? doRedo() : doUndo()
+      return
+    }
+
     if (e.metaKey || e.ctrlKey || e.altKey) return
 
     if (isEditorUI(e)) return   // 面板内部按键归面板（Tab 切焦点、Esc 关弹窗）
@@ -129,14 +156,13 @@ export const mountVisualRevise = visbug => {
       e.preventDefault()
       e.stopPropagation()
 
-      ChangeStore.recordRemoval(targets)
-
-      // 删完选中一个邻居，保住上游那份「连续删」的手感
+      // 删完选中一个邻居，保住上游那份「连续删」的手感。
+      // 邻居必须在删除前取，删完就没有兄弟关系可言了。
       const anchor = targets[0]
       const next = anchor.nextElementSibling || anchor.previousElementSibling || anchor.parentElement
 
       engine.unselect_all()
-      targets.forEach(el => el.remove())
+      ChangeStore.removeElements(targets)
 
       if (next?.isConnected && next !== document.documentElement && !isEditorUI(next))
         engine.select(next)
@@ -218,11 +244,23 @@ export const mountVisualRevise = visbug => {
   // 改动直接落在 DOM 上，不经过 ChangeStore，所以这里补两件事：
   //   focusin 时确保原文已经进快照（要赶在第一个按键之前）
   //   input 时广播一次，让面板与改动列表跟上
+  // 一整段文字编辑算一次操作：逐字入栈的话，⌘Z 得按到手酸才退得回去
+  let textMark = null
+
   const onTextFocus = e => {
     const el = e.target
     if (!(el instanceof HTMLElement) || !el.isContentEditable) return
     if (isEditorUI(el)) return
+
     ChangeStore.markEdited(el)
+    textMark = ChangeStore.beginText(el)
+  }
+
+  const onTextBlur = e => {
+    const el = e.target
+    if (!textMark || el !== textMark.el) return
+    ChangeStore.endText(textMark)
+    textMark = null
   }
 
   let textTimer = null
@@ -237,6 +275,7 @@ export const mountVisualRevise = visbug => {
   }
 
   document.addEventListener('focusin', onTextFocus, true)
+  document.addEventListener('focusout', onTextBlur, true)
   document.addEventListener('input', onTextInput, true)
   document.addEventListener('click', onClickCapture, true)
   document.addEventListener('keydown', onKeydown, true)
@@ -277,6 +316,8 @@ export const mountVisualRevise = visbug => {
   list.addEventListener('vr-copy', doCopy)
   toolbar.addEventListener('vr-copy', doCopy)
 
+  toolbar.addEventListener('vr-undo', doUndo)
+  toolbar.addEventListener('vr-redo', doRedo)
   toolbar.addEventListener('vr-mode', e => setMode(e.detail.mode))
   toolbar.addEventListener('vr-close', () => visbug.remove())
   toolbar.addEventListener('vr-open-list', () => {
@@ -314,6 +355,8 @@ export const mountVisualRevise = visbug => {
     setMode,
     setCommentMode,
     setReorderMode,
+    undo: doUndo,
+    redo: doRedo,
     enterInteractive,
     exitInteractive,
     toggleInteractive,
@@ -321,6 +364,7 @@ export const mountVisualRevise = visbug => {
     destroy() {
       clearTimeout(textTimer)
       document.removeEventListener('focusin', onTextFocus, true)
+    document.removeEventListener('focusout', onTextBlur, true)
       document.removeEventListener('input', onTextInput, true)
       document.removeEventListener('keydown', onKeydown, true)
       document.removeEventListener('click', onClickCapture, true)
