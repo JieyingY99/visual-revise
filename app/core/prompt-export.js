@@ -255,6 +255,36 @@ const refSection = refs => {
   ].join('\n')
 }
 
+// 删除单独成段：它改的是源码结构，和调样式、换文案都不是一类操作。
+// 混进属性表 AI 会照着写成 display:none —— 那是藏起来，不是删掉。
+const removalSection = removals => {
+  if (!removals.length) return ''
+
+  const blocks = removals.map((r, i) => [
+    `### ${i + 1}. ${describeElement(r.anchors)}`,
+    '',
+    anchorBlock(r.anchors),
+    r.childCount ? `- 含 ${r.childCount} 个子元素，是整块一起删掉的` : '',
+    '',
+  ].filter(Boolean).join('\n'))
+
+  return [
+    '---',
+    '',
+    '## 删除的元素',
+    '',
+    '以下元素已从页面上移除：',
+    '',
+    blocks.join('\n'),
+    '> 请在源码里删掉这些元素本身，不要用 `display:none` 或 `visibility:hidden`',
+    '> 把它们藏起来——那样 DOM 里还在，读屏与 Tab 顺序仍会读到它们。',
+    '>',
+    '> 若该元素是由数据驱动渲染出来的（列表项、配置项、菜单项），',
+    '> 请改数据源或渲染条件，而不是把 JSX / 模板里的循环体删掉。',
+    '',
+  ].join('\n')
+}
+
 // 编辑器自身的 UI 不算页面结构的一部分
 const isOwnUI = el =>
   el.hasAttribute?.('data-visual-revise-ui') || /^(VIS-BUG|VISBUG-)/.test(el.tagName || '')
@@ -352,8 +382,8 @@ const FOOTER = `## 给 AI 的说明
 不要静默忽略。`
 
 export const buildPrompt = (state, meta = {}, refs = null) => {
-  const { edits = [], comments = [] } = state
-  if (!edits.length && !comments.length) return ''
+  const { edits = [], comments = [], removals = [] } = state
+  if (!edits.length && !comments.length && !removals.length) return ''
 
   const reorders = collectReorders(edits)
 
@@ -381,6 +411,7 @@ export const buildPrompt = (state, meta = {}, refs = null) => {
   if (textCount)  summary.push(`${textCount} 处文案`)
   if (imageCount) summary.push(`${imageCount} 处图片替换`)
   if (reorders.length)   summary.push(`${reorders.length} 处顺序调整`)
+  if (removals.length)   summary.push(`${removals.length} 处删除`)
   if (comments.length)   summary.push(`${comments.length} 条交互备注`)
   head.push(`改动：${summary.join('，')}`, '')
 
@@ -451,14 +482,14 @@ export const buildPrompt = (state, meta = {}, refs = null) => {
 
   // 结尾的分隔线和 FOOTER 要拼成一段：filter(Boolean) 会把中间那个空行滤掉，
   // 让 --- 和下一个标题贴在一起
-  return [head.join('\n'), ...sections, reorderBlock, commentSection, refSection(refs),
-    `---\n\n${FOOTER}\n`]
+  return [head.join('\n'), ...sections, reorderBlock, removalSection(removals),
+    commentSection, refSection(refs), `---\n\n${FOOTER}\n`]
     .filter(Boolean).join('\n')
 }
 
 export const copyPrompt = async (state, meta) => {
-  const { edits = [], comments = [] } = state || {}
-  if (!edits.length && !comments.length) return { ok: false, reason: 'empty' }
+  const { edits = [], comments = [], removals = [] } = state || {}
+  if (!edits.length && !comments.length && !removals.length) return { ok: false, reason: 'empty' }
 
   // 落盘要在生成提示词之前：正文里写的就是落盘后的绝对路径。
   // 落盘失败不阻断复制——提示词照出，只是把图标注成「请向用户索取」。

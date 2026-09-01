@@ -128,12 +128,13 @@ export class ChangeList extends HTMLElement {
     if (!this.#built) return
 
     const shadow = this.#shadow
-    const { edits, comments } = ChangeStore.read()
+    const { edits, comments, removals } = ChangeStore.read()
     const stats = ChangeStore.stats()
 
+    // 「配置」这一栏原本漏算了换图与删除，数字对不上列表里的条数
     const label = {
       all:     `全部 ${stats.total}`,
-      style:   `配置 ${stats.props + stats.texts}`,
+      style:   `配置 ${stats.props + stats.texts + stats.attrs + stats.removals}`,
       comment: `评论 ${stats.comments}`,
     }
     shadow.querySelectorAll('.tabs button').forEach(btn => {
@@ -150,6 +151,8 @@ export class ChangeList extends HTMLElement {
 
     const items = [
       ...(showStyles ? edits.map(e => this.#renderEdit(e)) : []),
+      // 删除是结构改动，归在「配置」这一栏
+      ...(showStyles ? removals.map(r => this.#renderRemoval(r)) : []),
       ...(showComments ? comments.map(c => this.#renderComment(c)) : []),
     ]
 
@@ -199,6 +202,26 @@ export class ChangeList extends HTMLElement {
     </div>`
   }
 
+  #renderRemoval(r) {
+    const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
+    // 父元素自己也被删掉（或页面重渲染换掉了整棵树）时，没有可插回的位置
+    const restorable = ChangeStore.canRestore(r)
+    const detail = [
+      r.text || `<${r.tag}>`,
+      r.childCount ? `${r.childCount} 个子元素` : '',
+    ].filter(Boolean).join(' · ')
+
+    return `<div class="item" data-id="${r.id}" data-kind="removal">
+      <div class="item-head">
+        <span class="sel" title="${esc(r.anchors.selector)}">${shortSelector(r.anchors)}</span>
+        <span class="badge" data-kind="removal">已删除</span>
+        <button class="icon-btn restore" data-id="${r.id}"${restorable ? '' : ' disabled'}
+          title="${restorable ? '放回原位' : '父元素已不在页面上，放不回去'}">↺</button>
+      </div>
+      <div class="comment-text">${esc(detail)}</div>
+    </div>`
+  }
+
   #renderComment(c) {
     const n = c.images?.length || 0
     const imageTag = n
@@ -217,10 +240,11 @@ export class ChangeList extends HTMLElement {
   }
 
   #elementOf(id, kind) {
-    const { edits, comments } = ChangeStore.read()
-    return kind === 'comment'
-      ? comments.find(c => c.id === id)?.el
-      : edits.find(e => e.id === id)?.el
+    const { edits, comments, removals } = ChangeStore.read()
+    if (kind === 'comment') return comments.find(c => c.id === id)?.el
+    // 已删除的元素不在 DOM 上，高亮与回跳都会因 isConnected 为假而自然跳过
+    if (kind === 'removal') return removals.find(r => r.id === id)?.el
+    return edits.find(e => e.id === id)?.el
   }
 
   // header / footer 的事件只绑一次，它们的节点不会被重建
@@ -248,6 +272,7 @@ export class ChangeList extends HTMLElement {
       const report = await pickAndImport()
       const message = report.ok
         ? `导入 ${report.matched.length} 处改动` +
+          (report.removals ? ` + ${report.removals} 处删除` : '') +
           (report.comments ? ` + ${report.comments} 条评论` : '') +
           (report.viaText ? `（${report.viaText} 处靠文本特征匹配）` : '') +
           (report.missing.length ? `，${report.missing.length} 处未找到对应元素` : '')
@@ -302,6 +327,15 @@ export class ChangeList extends HTMLElement {
     on('.undo-el', 'click', e => {
       e.stopPropagation()
       ChangeStore.undoElement(e.currentTarget.dataset.id)
+    })
+
+    on('.restore', 'click', e => {
+      e.stopPropagation()
+      const ok = ChangeStore.restoreRemoval(e.currentTarget.dataset.id)
+      if (!ok) this.dispatchEvent(new CustomEvent('vr-toast', {
+        bubbles: true, composed: true,
+        detail: { message: '父元素已不在页面上，这个元素放不回去了', kind: 'error' },
+      }))
     })
 
     on('.del-comment', 'click', e => {

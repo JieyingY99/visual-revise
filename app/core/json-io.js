@@ -10,7 +10,7 @@ export const SCHEMA_VERSION = 2
 const SUPPORTED = new Set([1, 2])
 
 export const exportJSON = (meta = {}) => {
-  const { edits, comments } = ChangeStore.read()
+  const { edits, comments, removals } = ChangeStore.read()
 
   return {
     schema:     SCHEMA_VERSION,
@@ -30,6 +30,14 @@ export const exportJSON = (meta = {}) => {
       anchors:  c.anchors,
       text:     c.text,
       images:   (c.images || []).map(i => i.id),
+    })),
+    // 删除只存定位信息：DOM 节点本身带不走，导入方要按锚点重新找到它再删
+    removals: removals.map(r => ({
+      seq:      r.seq,
+      selector: r.anchors.selector,
+      anchors:  r.anchors,
+      tag:      r.tag,
+      text:     r.text,
     })),
     // 图片只存一份，改动与评论都按 id 引用它
     assets: ChangeStore.allAssets(),
@@ -109,7 +117,7 @@ export const importJSON = (data, { apply = true } = {}) => {
 
   const report = {
     ok: true, matched: [], missing: [], failed: [],
-    comments: 0, viaText: 0, images: 0, attrs: 0,
+    comments: 0, viaText: 0, images: 0, attrs: 0, removals: 0,
   }
 
   // 资产要先入库：后面的换图记录与评论都按 id 引用它们
@@ -146,6 +154,23 @@ export const importJSON = (data, { apply = true } = {}) => {
         selector: record.selector, via,
         count: record.changes.length + (record.attrs?.length || 0),
       })
+    } catch (err) {
+      report.failed.push({ selector: record.selector, reason: err?.message || String(err) })
+    }
+  }
+
+  // 删除放在样式之后、评论之前：先把该改的改完，再动结构。
+  // 顺序反了的话，样式记录会去找一个已经被删掉的元素。
+  for (const record of data.removals || []) {
+    try {
+      const { el } = resolveElement(record)
+      if (!el) { report.missing.push(record.selector); continue }
+
+      if (apply) {
+        ChangeStore.recordRemoval([el])
+        el.remove()
+      }
+      report.removals++
     } catch (err) {
       report.failed.push({ selector: record.selector, reason: err?.message || String(err) })
     }

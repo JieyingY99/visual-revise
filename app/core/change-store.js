@@ -1,6 +1,6 @@
 import {
   takeSnapshot, diffSnapshot, diffText, diffAttrs,
-  revertProp, revertText, revertAttr, revertAll, elementId,
+  revertProp, revertText, revertAttr, revertAll, elementId, readText,
 } from './snapshot.js'
 import { collectAnchors } from './anchors.js'
 
@@ -12,7 +12,11 @@ const createStore = () => {
   // 要按 dataUrl 反查回资产本身去落盘，所以正查反查都留一份索引。
   const assets     = new Map()   // id      → asset
   const assetByUrl = new Map()   // dataUrl → asset
+  // 被删掉的元素。el 引用在移出 DOM 后仍在内存里，整棵子树都跟着，
+  // 所以「恢复」是把同一个节点插回去，而不是照着记录重建。
+  const removals   = new Map()   // id      → { el, parent, nextSibling, ... }
   let commentSeq  = 0
+  let removalSeq  = 0
 
   const notify = () => listeners.forEach(fn => fn(read()))
 
@@ -50,6 +54,66 @@ const createStore = () => {
     return entries.filter(entry => entry.changes.length > 0 || entry.text || entry.attrs.length > 0)
   }
 
+  // 删除由 VisBug 在按键事件的后续阶段执行，调用这里时元素还在 DOM 上——
+  // 我们要的正是此刻的父节点与位置，删完就取不到了。
+  const recordRemoval = els => {
+    const list = Array.from(els || []).filter(el => el?.nodeType === 1 && el.isConnected)
+    if (!list.length) return []
+
+    // 同时选中父与子时，删父会连带把子删掉。只记最外层那条：子元素跟着
+    // 父节点一起回来，单独记会在恢复时插出重复节点。
+    const outermost = list.filter(el => !list.some(o => o !== el && o.contains(el)))
+
+    const ids = []
+    for (const el of outermost) {
+      track(el)
+      const id = elementId(el)
+      removals.set(id, {
+        id,
+        seq:         ++removalSeq,
+        el,
+        parent:      el.parentElement,
+        nextSibling: el.nextElementSibling,
+        anchors:     collectAnchors(el),
+        tag:         el.tagName.toLowerCase(),
+        text:        readText(el).slice(0, 80),
+        childCount:  el.children.length,
+      })
+      ids.push(id)
+    }
+
+    // 此刻元素还没被删。立刻广播会让面板拿到一份「还没删掉」的状态，
+    // 等一帧，让 VisBug 先把删除做完。
+    requestAnimationFrame(notify)
+    return ids
+  }
+
+  // 已经被放回去的不再算删除
+  const removalList = () =>
+    Array.from(removals.values())
+      .filter(r => !r.el.isConnected)
+      .sort((a, b) => a.seq - b.seq)
+
+  const canRestore = rec => !!rec?.parent?.isConnected
+
+  const restoreRemoval = id => {
+    const rec = removals.get(id)
+    if (!rec) return false
+
+    // 父节点自己也被删了（或页面重渲染换掉了整棵树），没有可插回的位置
+    if (!canRestore(rec)) return false
+
+    const { el, parent, nextSibling } = rec
+    // 原来的后邻可能也被删了，或已经被挪到别处，那就退回追加到末尾
+    nextSibling?.isConnected && nextSibling.parentElement === parent
+      ? parent.insertBefore(el, nextSibling)
+      : parent.appendChild(el)
+
+    removals.delete(id)
+    notify()
+    return true
+  }
+
   const commentList = () =>
     Array.from(comments.values())
       .filter(c => c.el.isConnected)
@@ -58,6 +122,7 @@ const createStore = () => {
   const read = () => ({
     edits:    styleEdits(),
     comments: commentList(),
+    removals: removalList(),
   })
 
   const applyProp = (el, prop, value) => {
@@ -152,6 +217,14 @@ const createStore = () => {
   }
 
   const undoEverything = () => {
+    // 先把删掉的放回去再还原样式：元素得先在 DOM 上，样式才写得进去。
+    // 倒序恢复，让先删的后回——同一父节点下的相对顺序才对得上。
+    Array.from(removals.values())
+      .sort((a, b) => b.seq - a.seq)
+      .forEach(r => restoreRemoval(r.id))
+    removals.clear()
+    removalSeq = 0
+
     snapshots.forEach(revertAll)
     comments.clear()
     commentSeq = 0
@@ -170,12 +243,16 @@ const createStore = () => {
     comments.clear()
     assets.clear()
     assetByUrl.clear()
+    // 只丢记录，不把元素放回去——clear 的语义是「忘掉这些改动」，
+    // 不是「撤销它们」，那是 undoEverything 的事
+    removals.clear()
     commentSeq = 0
+    removalSeq = 0
     notify()
   }
 
   const stats = () => {
-    const { edits, comments: cs } = read()
+    const { edits, comments: cs, removals: rm } = read()
     const props = edits.reduce((n, e) => n + e.changes.length, 0)
     const texts = edits.filter(e => e.text).length
     const attrs  = edits.reduce((n, e) => n + (e.attrs?.length || 0), 0)
@@ -189,7 +266,8 @@ const createStore = () => {
       attrs,
       refImages,
       comments: cs.length,
-      total:    props + texts + attrs + cs.length,
+      removals: rm.length,
+      total:    props + texts + attrs + cs.length + rm.length,
     }
   }
 
@@ -197,6 +275,7 @@ const createStore = () => {
     track, markEdited, applyProp, applyAttr,
     addAsset, getAsset, assetForUrl, allAssets,
     addComment, updateComment, removeComment, setCommentImages,
+    recordRemoval, restoreRemoval, canRestore,
     undoProp, undoText, undoAttr, undoElement, undoEverything, clear,
     read, stats, touch,
     snapshots,

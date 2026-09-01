@@ -140,3 +140,7 @@ footer button {
 .ghost { flex: 0 0 auto; padding: 0 8px; background: var(--vr-bg-raised); color: var(--vr-text-dim); }
 .ghost:hover { background: var(--vr-bg-hover); color: var(--vr-text); }
 .ghost.danger:hover { color: var(--vr-danger); }
+
+/* 删除项：红色徽标，与样式改动、评论一眼区分开 */
+.badge[data-kind="removal"] { background: #4a2b2b; color: #ff8a8a; }
+.icon-btn.restore:disabled { opacity: .35; cursor: not-allowed; }

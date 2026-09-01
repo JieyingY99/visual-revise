@@ -110,6 +110,38 @@ export const mountVisualRevise = visbug => {
       return
     }
 
+    // 删除整个接管过来，不再放行给 VisBug 的 hotkeys。
+    //
+    // 原因是上游有个 bug：它注册的是 hotkeys('backspace,del,delete', …)，
+    // 而 del 与 delete 是同一个键的两个别名，回调因此跑两次——第一次删掉选中
+    // 元素并自动选中邻居，第二次把那个邻居也删了。按一次 Delete 少两个元素。
+    // 以前没有删除记录，这个 bug 看起来只像是「手抖多按了一下」。
+    //
+    // 记录与删除必须是一件事：元素一旦离开 DOM 就取不到父节点与后邻，
+    // 恢复也就无从谈起。
+    if ((e.key === 'Delete' || e.key === 'Backspace') && !interactive) {
+      const targets = engine.selection().filter(el => el?.isConnected && !isEditorUI(el))
+      if (!targets.length) return
+
+      e.preventDefault()
+      e.stopPropagation()
+
+      ChangeStore.recordRemoval(targets)
+
+      // 删完选中一个邻居，保住上游那份「连续删」的手感
+      const anchor = targets[0]
+      const next = anchor.nextElementSibling || anchor.previousElementSibling || anchor.parentElement
+
+      engine.unselect_all()
+      targets.forEach(el => el.remove())
+
+      if (next?.isConnected && next !== document.documentElement && !isEditorUI(next))
+        engine.select(next)
+
+      panel.toast(`已删除 ${targets.length} 个元素 · 可在记录里放回`)
+      return
+    }
+
     if (e.key === 'r' && !interactive) {
       e.preventDefault()
       e.stopPropagation()
