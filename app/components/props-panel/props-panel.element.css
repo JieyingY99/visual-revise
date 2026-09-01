@@ -316,3 +316,60 @@ input::placeholder { color: var(--vr-mute); }
 }
 .toast[data-show] { opacity: 1; }
 .toast[data-kind=error] { border-color: var(--vr-danger); color: var(--vr-danger); }
+
+/* ── 图片填充预览 ──
+   对应 Figma 里 Fill 的图片那一行：左边缩略图，右边文件名与天然尺寸。
+   缩略图铺 checker 底，透明 PNG 才看得出边界。 */
+.image-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 4px;
+  background: var(--vr-field);
+  border-radius: 5px;
+}
+
+.image-row .thumb {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 4px;
+  border: 1px solid var(--vr-border);
+  overflow: hidden;
+  background-color: #2a2a2a;
+  background-image:
+    linear-gradient(45deg, #3a3a3a 25%, transparent 25%, transparent 75%, #3a3a3a 75%),
+    linear-gradient(45deg, #3a3a3a 25%, transparent 25%, transparent 75%, #3a3a3a 75%);
+  background-size: 10px 10px;
+  background-position: 0 0, 5px 5px;
+}
+
+/* contain 而不是 cover：这是用来辨认「是哪张图」的，裁掉内容会让长图认不出来 */
+.image-row .thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+/* min-width:0 不能省——flex 子项默认按内容的固有宽度撑开，
+   长文件名会把整行顶出面板，省略号也就永远不生效 */
+.image-row .image-meta {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.image-row .image-name {
+  font-size: 11px;
+  color: var(--vr-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.image-row .image-dim {
+  font: 400 10px/1 ui-monospace, Menlo, monospace;
+  color: var(--vr-mute);
+}

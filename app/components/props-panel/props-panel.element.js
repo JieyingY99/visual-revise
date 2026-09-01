@@ -2,7 +2,7 @@ import { GROUPS, sameValue } from '../../core/tracked-props.js'
 import {
   CONTROLS, SIDE_GROUPS, FIELD_PAIRS, FIELD_PREFIX,
   isRelevant, coerceLength, stepValue, stepSize, displayValue,
-  alignSupported, alignPlan,
+  alignSupported, alignPlan, isReplacedElement,
 } from '../../core/controls.js'
 import { ChangeStore } from '../../core/change-store.js'
 import { readComputed, elementId } from '../../core/snapshot.js'
@@ -10,6 +10,7 @@ import { stableClasses } from '../../core/anchors.js'
 import { findSharedElements, describeShared } from '../../core/shared-elements.js'
 import { loadLocalFonts, isSupported as fontsSupported } from '../../core/local-fonts.js'
 import { containScroll, isTextElement } from '../../core/dom-utils.js'
+import { imageSourceOf, measureNatural, describeSize } from '../../core/image-source.js'
 import '../controls/select.element.js'
 import '../controls/color.element.js'
 import '../controls/fill.element.js'
@@ -294,6 +295,7 @@ export class PropsPanel extends HTMLElement {
 
     this.#bind()
     this.#refreshDirty()
+    this.#fillImageDims()
   }
 
   #renderPanel() {
@@ -316,6 +318,22 @@ export class PropsPanel extends HTMLElement {
   #renderGroup(group) {
     const rows = []
     const consumed = new Set()
+
+    // Fill 分区的第一行随元素类型变。Figma 里 Fill 的首行就是这个图层的主填充：
+    // 对图片图层是那张图，对文本图层是字色，对形状是背景色。CSS 把这三件事拆成
+    // 了互不相干的属性（src / color / background-*），所以这里按元素类型决定谁
+    // 排最前，而不是写死一个顺序。
+    if (group.id === 'fill') {
+      const preview = this.#renderImageFill()
+      if (preview) rows.push(preview)
+
+      // 文字元素的主填充是字色；替换元素（img/video）的主填充是上面那张图，
+      // 此时 color 没有意义，仍按默认序沉到末尾。
+      if (this.target && isTextElement(this.target) && !isReplacedElement(this.target)) {
+        rows.push(this.#renderField('color'))
+        consumed.add('color')
+      }
+    }
 
     for (const name of group.widgets || []) {
       const widget = this.#renderWidget(name)
@@ -378,6 +396,48 @@ export class PropsPanel extends HTMLElement {
       </h3>
       <div class="rows">${body.join('')}</div>
     </section>`
+  }
+
+  // 图片预览行：Figma 的图片填充那一行，左边就是图本身的缩略图。
+  // 这里显示的 URL 就是页面已经加载并渲染出来的那张图，CSP 的 img-src 既然
+  // 放行了它，再显示一次同样放行——不会出现「页面上看得见、面板里是裂图」。
+  #renderImageFill() {
+    const el = this.target
+    if (!el) return ''
+
+    const src = imageSourceOf(el, this.#computed)
+    if (!src) return ''
+
+    const KIND_LABEL = { src: '图片', poster: '封面图', background: '背景图' }
+    const dims = describeSize(src.natural)
+
+    return `<div class="field image-fill" data-image-kind="${src.kind}">
+      <label class="name">${KIND_LABEL[src.kind] || '图片'}</label>
+      <div class="image-row" title="${esc(src.url)}">
+        <span class="thumb"><img src="${esc(src.url)}" alt="" loading="lazy"></span>
+        <span class="image-meta">
+          <span class="image-name">${esc(src.label)}</span>
+          <span class="image-dim">${dims}</span>
+        </span>
+      </div>
+    </div>`
+  }
+
+  // 背景图的天然尺寸 CSS 不暴露，只能另加载一次来量。渲染完再异步补上，
+  // 避免为了一行尺寸把整个面板的渲染卡成异步。
+  #fillImageDims() {
+    const row = this.#shadow.querySelector('.image-fill[data-image-kind="background"] .image-dim')
+    if (!row || row.textContent) return
+
+    const src = imageSourceOf(this.target, this.#computed)
+    if (!src) return
+
+    measureNatural(src.url).then(natural => {
+      // 量完时用户可能已经选了别的元素，别把尺寸写到不相干的行上
+      if (!this.isConnected || imageSourceOf(this.target, this.#computed)?.url !== src.url) return
+      const still = this.#shadow.querySelector('.image-fill[data-image-kind="background"] .image-dim')
+      if (still) still.textContent = describeSize(natural)
+    })
   }
 
   #renderWidget(name) {

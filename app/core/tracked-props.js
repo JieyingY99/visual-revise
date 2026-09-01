@@ -69,12 +69,14 @@ export const GROUPS = [
     // 填充控件同时管 background-color / background-image：Figma 里「一个填充」
     // 是一件事，CSS 里是两件——background-image 画在 background-color 上面。
     widgets: ['fill'],
+    // 这里是默认序：背景是大多数元素的主填充。选中文字元素时面板会把 color
+    // 提到最前——那时字色才是主填充（见 props-panel 的 fill 分区特判）。
     props: [
-      'color',
       'background-color', 'background-image',
       'background-size', 'background-position',
       // <img> / <video> 自身内容的适配方式，对应 Figma 图片填充的 scaleMode
       'object-fit', 'object-position',
+      'color',
     ],
   },
   {
