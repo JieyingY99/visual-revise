@@ -84,6 +84,15 @@ export class VrSelect extends HTMLElement {
     try { return JSON.parse(this.getAttribute('options') || '[]') } catch { return [] }
   }
 
+  // options 给成 [值, 显示名] 时触发器显示后者。多数属性的值本身就是要显示的
+  // 内容（flex、dashed），但像网格轨道类型这种，值是 CSS 写法、显示要用中文。
+  #label() {
+    const v = this.value
+    for (const opt of this.options)
+      if (Array.isArray(opt) && opt[0] === v) return opt[1]
+    return v || '—'
+  }
+
   #render() {
     this.#shadow.innerHTML = `
       <style>
@@ -115,7 +124,7 @@ export class VrSelect extends HTMLElement {
           clip-path: polygon(15% 32%, 50% 68%, 85% 32%, 78% 25%, 50% 54%, 22% 25%); }
       </style>
       <div class="trigger">
-        <span class="label">${this.value || '—'}</span>
+        <span class="label">${this.#label()}</span>
         <span class="caret"></span>
       </div>`
   }

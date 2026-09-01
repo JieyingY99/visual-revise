@@ -516,3 +516,63 @@ input::placeholder { color: var(--vr-mute); }
   color: var(--vr-mute);
   margin-left: 4px;
 }
+
+/* ── Grid 形状入口 ── */
+.grid-shape {
+  width: 100%;
+  height: 56px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--vr-text);
+  background: var(--vr-field);
+  border: 1px solid var(--vr-border);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.grid-shape:hover { background: var(--vr-field-hi); }
+.grid-shape[data-menu-open] { border-color: var(--vr-accent); }
+
+/* ── 二级视图：网格轨道 ── */
+.track {
+  display: grid;
+  grid-template-columns: 16px 1fr 1fr 20px;
+  gap: 6px;
+  align-items: center;
+}
+.track + .track { margin-top: 6px; }
+
+.track-n { font: 400 10px/1 ui-monospace, Menlo, monospace; color: var(--vr-mute); text-align: center; }
+
+.track-v {
+  height: 30px;
+  min-width: 0;
+  padding: 0 8px;
+  font: 400 11px/1 ui-monospace, Menlo, monospace;
+  color: var(--vr-text);
+  background: var(--vr-field);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  outline: none;
+}
+.track-v:focus { border-color: var(--vr-accent); }
+.track-v:disabled { opacity: .45; }
+
+.del-track, .add-track {
+  display: grid; place-items: center;
+  width: 20px; height: 20px;
+  font: inherit; font-size: 13px;
+  color: var(--vr-mute);
+  background: transparent;
+  border: none; border-radius: 4px;
+  cursor: pointer;
+}
+.del-track:hover { background: #4a3030; color: var(--vr-text); }
+.add-track:hover { background: var(--vr-field-hi); color: var(--vr-text); }
+
+.empty-track { font-size: 11px; color: var(--vr-mute); padding: 4px 0; }
+
+/* 二级视图的副标题：不走 .sub，那个会被主面板的 dirty 刷新覆写 */
+.sub-target {
+  font: 400 10px/1 ui-monospace, Menlo, monospace;
+  color: var(--vr-mute);
+}

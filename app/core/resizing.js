@@ -14,7 +14,12 @@ export const MODES = {
 
 const HUG_KEYWORDS = /^(fit-content|max-content|min-content)$/i
 const LENGTH_RE = /^-?[\d.]+(px|r?em|vh|vw|vmin|vmax|ch|ex|cm|mm|in|pt|pc|q)?$/i
-const SIZE_PROPS = ['width', 'height', 'min-width', 'min-height', 'max-width', 'max-height']
+const SIZE_PROPS = [
+  'width', 'height', 'min-width', 'min-height', 'max-width', 'max-height',
+  // grid 轨道同样问不出声明值：computed 给的是算好的像素（"100px 100px"），
+  // repeat(2, 1fr) 到那里就没了
+  'grid-template-columns', 'grid-template-rows',
+]
 
 // VisBug 给选中元素挂了 transition: all .15s，改样式后立刻量会量到过渡中的
 // 中间值。量之前把过渡关掉，量完还原——起点终点相同，不会有可见动画。
@@ -70,7 +75,7 @@ const sizeRules = () => {
 
 export const invalidateRuleCache = () => { ruleCache = null; cacheKey = -1 }
 
-const declaredValue = (el, prop) => {
+export const declaredValue = (el, prop) => {
   const inline = el.style.getPropertyValue(prop).trim()
   if (inline) return inline
 

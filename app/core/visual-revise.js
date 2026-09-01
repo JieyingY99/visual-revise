@@ -12,6 +12,8 @@ import { fingerprint, findSharedElements } from './shared-elements.js'
 import { loadLocalFonts, isSupported as fontsSupported } from './local-fonts.js'
 import { clearHighlight } from '../components/change-list/change-list.element.js'
 import { resizeMode, planResize, currentSize, isMainAxis, cssVariables } from './resizing.js'
+import { parseTracks, serializeTracks, readTracks, gridShape } from './grid.js'
+import { flowOf, planFlow, alignmentOf, planAlignment } from './layout.js'
 
 const UI_TAGS = 'visbug-handles, visbug-label, visbug-hover, visbug-grip, visbug-metatip, visbug-ally, visbug-corners, visbug-gridlines'
 
@@ -344,6 +346,8 @@ export const mountVisualRevise = visbug => {
     loadLocalFonts, fontsSupported,
     isTextElement,
     resizeMode, planResize, currentSize, isMainAxis, cssVariables,
+    parseTracks, serializeTracks, readTracks, gridShape,
+    flowOf, planFlow, alignmentOf, planAlignment,
   }
   window.__visualRevise = api
   return api

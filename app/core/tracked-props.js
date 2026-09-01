@@ -42,6 +42,8 @@ export const GROUPS = [
       'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
       'width', 'height', 'min-width', 'min-height', 'max-width', 'max-height',
       'overflow', 'order',
+      // 由 Grid 控件写入，面板里不单独渲染字段
+      'grid-template-columns', 'grid-template-rows',
     ],
   },
   {

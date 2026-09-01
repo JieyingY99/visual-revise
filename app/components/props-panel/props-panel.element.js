@@ -15,7 +15,11 @@ import { pickImages, canRenderDataUrl } from '../../core/image-assets.js'
 import {
   AXES, MODES, resizeMode, planResize, currentSize, isMainAxis, cssVariables,
 } from '../../core/resizing.js'
-import { openMenu } from '../controls/menu.js'
+import { openMenu, openPopover, closeMenu } from '../controls/menu.js'
+import {
+  TRACK_TYPES, TRACK_LABEL, DEFAULT_VALUE,
+  readTracks, serializeTracks, trackProp, makeTracks, gridShape,
+} from '../../core/grid.js'
 import {
   FLOWS, FLOW_LABEL, flowOf, planFlow, isFlexFlow,
   alignmentOf, planAlignment, SIDE_SETS, pairValue, isMixed,
@@ -131,6 +135,8 @@ export class PropsPanel extends HTMLElement {
   #limits = new Set()
   // 哪些间距被展开成四边独立编辑。绑在元素上，换元素即收起。
   #expandedSides = new Set()
+  // 二级视图（目前只有网格设置）。有值时面板整体切过去，× 回到上级。
+  #subview = null
   #unsubscribe = null
   #releaseScroll = null
   #dirtyProps = new Set()
@@ -181,6 +187,8 @@ export class PropsPanel extends HTMLElement {
     this.#hiddenSections.clear()
     this.#limits.clear()
     this.#expandedSides.clear()
+    // 换了元素还停在上一个元素的网格设置里会很怪，退回主面板
+    this.#subview = null
 
     // 选中文字元素时自动展开 Typography。只在目标真的换了才做一次：
     // 每次 render 都强制展开的话，用户手动折叠后会被下一帧原地弹开。
@@ -325,7 +333,9 @@ export class PropsPanel extends HTMLElement {
 
     this.#dirtyProps = this.#dirtySet()
 
-    root.innerHTML = this.target
+    root.innerHTML = this.#subview === 'grid' && this.target
+      ? this.#renderGridSettings()
+      : this.target
       ? this.#renderPanel()
       : `<header><div class="target"><span class="tag">未选中元素</span></div>
            <button class="icon-btn close" title="关闭">${ICON.close}</button></header>
@@ -446,14 +456,169 @@ export class PropsPanel extends HTMLElement {
     </div>`
   }
 
-  // Grid 的行列控件在批 3 实现，这里先给出 gap 的两个方向
   #renderGridRow() {
-    return `<div class="field">
-      <label class="name" data-prop="row-gap,column-gap">网格间隔</label>
-      <div class="pair">
-        ${this.#renderField('column-gap')}${this.#renderField('row-gap')}
+    const shape = this.target ? gridShape(this.target) : { cols: 0, rows: 0, implicitRows: true }
+    const label = shape.cols
+      ? `${shape.cols} × ${shape.implicitRows ? '自动' : shape.rows}`
+      : '未设置'
+
+    return `<div class="align-gap">
+      <div class="field">
+        <label class="name">网格</label>
+        <button class="grid-shape" title="点击拖出行列">${label}</button>
+      </div>
+      <div class="field">
+        <label class="name" data-prop="column-gap,row-gap">间隔</label>
+        <div class="pair">
+          ${this.#renderField('column-gap')}${this.#renderField('row-gap')}
+        </div>
       </div>
     </div>`
+  }
+
+  // 拖出行列的点阵。和 Figma 一样：hover 高亮左上到当前格的矩形，
+  // 点击定下 N × M；底部进二级设置逐条调轨道类型。
+  #gridPicker() {
+    const el = this.target
+    const anchor = this.#shadow.querySelector('.grid-shape')
+    if (!el || !anchor) return
+
+    const MAX = 12
+    const shape = gridShape(el)
+
+    openPopover(anchor, (panel, close) => {
+      panel.innerHTML = `
+        <div class="gp">
+          <div class="gp-head">
+            <input class="gp-n" data-axis="columns" value="${shape.cols || 1}" inputmode="numeric">
+            <span class="gp-x">×</span>
+            <input class="gp-n" data-axis="rows" value="${shape.implicitRows ? '' : shape.rows}"
+              placeholder="自动" inputmode="numeric">
+          </div>
+          <div class="gp-dots"></div>
+          <div class="gp-hint"></div>
+          <button class="gp-settings">打开网格设置</button>
+        </div>`
+
+      const dots = panel.querySelector('.gp-dots')
+      const hint = panel.querySelector('.gp-hint')
+
+      for (let r = 1; r <= MAX; r++)
+        for (let c = 1; c <= MAX; c++) {
+          const b = document.createElement('button')
+          b.className = 'gp-dot'
+          b.dataset.c = c
+          b.dataset.r = r
+          if (c <= shape.cols && r <= (shape.implicitRows ? 0 : shape.rows)) b.dataset.on = ''
+          dots.appendChild(b)
+        }
+
+      const preview = (c, r) => {
+        for (const d of dots.children) {
+          const on = +d.dataset.c <= c && +d.dataset.r <= r
+          on ? d.setAttribute('data-hot', '') : d.removeAttribute('data-hot')
+        }
+        hint.textContent = c ? `${c} × ${r}` : ''
+      }
+
+      dots.addEventListener('pointerover', e => {
+        const d = e.target.closest('.gp-dot')
+        if (d) preview(+d.dataset.c, +d.dataset.r)
+      })
+      dots.addEventListener('pointerleave', () => preview(0, 0))
+
+      dots.addEventListener('click', e => {
+        const d = e.target.closest('.gp-dot')
+        if (!d) return
+        close()
+        this.#setGridShape(+d.dataset.c, +d.dataset.r)
+      })
+
+      // 改完列数往往还要接着改行数，所以 change 只应用不关闭；
+      // 关闭留给 Enter 与点击点阵。
+      const applyInputs = shouldClose => {
+        const cols = +panel.querySelector('.gp-n[data-axis="columns"]').value || 1
+        const rowsRaw = panel.querySelector('.gp-n[data-axis="rows"]').value.trim()
+        if (shouldClose) close()
+        this.#setGridShape(cols, rowsRaw ? +rowsRaw : 0)
+      }
+
+      panel.querySelectorAll('.gp-n').forEach(input => {
+        input.addEventListener('change', () => applyInputs(false))
+        input.addEventListener('keydown', e => {
+          if (e.key === 'Enter') { e.preventDefault(); applyInputs(true) }
+          if (e.key === 'Escape') { e.preventDefault(); close() }
+        })
+      })
+
+      panel.querySelector('.gp-settings').addEventListener('click', () => {
+        close()
+        this.#subview = 'grid'
+        this.render()
+      })
+    }, { align: 'left', width: 260 })
+  }
+
+  #setGridShape(cols, rows) {
+    if (!this.target) return
+
+    this.#applyToAll('grid-template-columns', serializeTracks(makeTracks(cols)))
+    // 行数留空表示交给隐式网格——那正是 Figma 里的 "N × 自动"
+    this.#applyToAll('grid-template-rows', rows ? serializeTracks(makeTracks(rows)) : '')
+
+    this.#computed = readComputed(this.target)
+    this.render()
+    this.#toast(`网格：${cols} × ${rows || '自动'}`)
+  }
+
+  // ── 二级视图：网格设置 ──────────────────────────────────────
+  #renderGridSettings() {
+    const el = this.target
+    if (!el) return ''
+
+    const axisSection = (axis, title) => {
+      const tracks = readTracks(el, axis)
+
+      const rows = tracks.map((t, i) => `
+        <div class="track" data-axis="${axis}" data-i="${i}">
+          <span class="track-n">${i + 1}</span>
+          <vr-select data-track="${axis}:${i}" value="${t.type}"
+            options='${JSON.stringify(TRACK_TYPES.map(k => [k, TRACK_LABEL[k]]))}'></vr-select>
+          <input class="track-v" data-axis="${axis}" data-i="${i}"
+            value="${esc(t.value)}"${t.type === 'hug' ? ' disabled' : ''}>
+          <button class="del-track" data-axis="${axis}" data-i="${i}" title="删除这条">−</button>
+        </div>`).join('')
+
+      return `<section data-group="grid-${axis}">
+        <h3>
+          <span class="title">${title}</span>
+          <span class="acts">
+            <button class="icon-btn add-track" data-axis="${axis}" title="添加一条">＋</button>
+          </span>
+        </h3>
+        <div class="rows">${rows || `<div class="empty-track">还没有${title}</div>`}</div>
+      </section>`
+    }
+
+    return `
+      <header>
+        <div class="target">
+          <span class="tag">网格设置</span>
+          <span class="sub-target">${describeTarget(el)}</span>
+        </div>
+        <button class="icon-btn back" title="返回属性面板">${ICON.close}</button>
+      </header>
+      <div class="scroll">
+        ${axisSection('columns', '列')}
+        ${axisSection('rows', '行')}
+      </div>
+      <div class="toast"></div>`
+  }
+
+  #writeTracks(axis, tracks) {
+    this.#applyToAll(trackProp(axis), tracks.length ? serializeTracks(tracks) : '')
+    this.#computed = readComputed(this.target)
+    this.render()
   }
 
   // Figma 的间距默认只给「水平」「垂直」两个框，点一下才展开成四边独立。
@@ -1034,6 +1199,48 @@ export class PropsPanel extends HTMLElement {
       const value = coerceLength(e.currentTarget.value)
       props.forEach(prop => this.#commit(prop, value))
       this.render()
+    })
+
+    // ── Grid ──
+    on('.grid-shape', 'click', e => { e.stopPropagation(); this.#gridPicker() })
+
+    on('.back', 'click', () => { this.#subview = null; this.render() })
+
+    on('.add-track', 'click', e => {
+      const axis = e.currentTarget.dataset.axis
+      const tracks = readTracks(this.target, axis)
+      tracks.push({ type: 'fill', value: DEFAULT_VALUE.fill })
+      this.#writeTracks(axis, tracks)
+    })
+
+    on('.del-track', 'click', e => {
+      const { axis, i } = e.currentTarget.dataset
+      const tracks = readTracks(this.target, axis)
+      tracks.splice(+i, 1)
+      this.#writeTracks(axis, tracks)
+    })
+
+    on('vr-select[data-track]', 'vr-select', e => {
+      const [axis, i] = e.currentTarget.dataset.track.split(':')
+      const tracks = readTracks(this.target, axis)
+      const track = tracks[+i]
+      if (!track) return
+
+      track.type = e.detail.value
+      // 换类型就把值换成该类型的默认写法：把 1fr 留在「固定」上没有意义
+      track.value = DEFAULT_VALUE[track.type]
+      this.#writeTracks(axis, tracks)
+    })
+
+    on('.track-v', 'change', e => {
+      const { axis, i } = e.currentTarget.dataset
+      const tracks = readTracks(this.target, axis)
+      const track = tracks[+i]
+      if (!track) return
+
+      const raw = e.currentTarget.value.trim()
+      track.value = /^-?[\d.]+$/.test(raw) ? `${raw}px` : raw
+      this.#writeTracks(axis, tracks)
     })
 
     on('.clip-toggle', 'change', e => {

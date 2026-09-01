@@ -67,6 +67,35 @@ addEventListener('resize', () => closeMenu())
 const CHECK = `<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor"
   stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5 6.5 12 13 4.5"/></svg>`
 
+// 弹层挂在 body 上，用不到属性面板 shadow 里的样式，自带的内容要自己带样式
+const POPOVER_CSS = `
+  .gp { display: grid; gap: 8px }
+  .gp-head { display: flex; align-items: center; gap: 6px }
+  .gp-n {
+    flex: 1; min-width: 0; height: 28px; padding: 0 8px;
+    font: 400 12px/1 ui-monospace, Menlo, monospace; color: #fff;
+    background: #383838; border: 1px solid transparent; border-radius: 5px; outline: none;
+  }
+  .gp-n:focus { border-color: #0d99ff }
+  .gp-n::placeholder { color: #6f6f6f }
+  .gp-x { flex: none; color: #8c8c8c }
+  .gp-dots {
+    display: grid; grid-template-columns: repeat(12, 1fr); gap: 2px;
+  }
+  .gp-dot {
+    aspect-ratio: 1; padding: 0; cursor: pointer;
+    background: #333; border: none; border-radius: 2px;
+  }
+  .gp-dot[data-on] { background: #3d4b57 }
+  .gp-dot[data-hot] { background: #0d99ff }
+  .gp-hint { height: 14px; font: 400 11px/1 ui-monospace, Menlo, monospace; color: #8c8c8c; text-align: center }
+  .gp-settings {
+    height: 30px; font: inherit; font-size: 12px; color: #fff;
+    background: #383838; border: none; border-radius: 6px; cursor: pointer;
+  }
+  .gp-settings:hover { background: #454545 }
+`
+
 // items: [{ id, label, icon?, checked?, disabled?, hint? } | { separator: true }]
 export const openMenu = (anchor, items, onPick, { align = 'left' } = {}) => {
   // 点同一个触发器就是关掉它
@@ -146,7 +175,14 @@ export const openPopover = (anchor, buildContent, { align = 'left', width } = {}
   panel.setAttribute('data-visual-revise-ui', '')
   panel.style.cssText = PANEL_CSS + (width ? `;width:${width}px` : '')
 
+  // 样式要在 buildContent 之后插：调用方多半用 innerHTML 铺内容，
+  // 先插会被整块冲掉
   buildContent(panel, closeMenu)
+
+  const style = document.createElement('style')
+  style.textContent = POPOVER_CSS
+  panel.appendChild(style)
+
   document.body.appendChild(panel)
 
   const rect = anchor.getBoundingClientRect()
