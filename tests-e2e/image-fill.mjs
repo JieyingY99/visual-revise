@@ -32,6 +32,18 @@ await page.evaluate(async () => {
   plain.style.cssText = 'width:120px;height:60px;margin:20px;border:1px solid #ccc'
   document.body.appendChild(plain)
 
+  // 内联 SVG：里面能放 <text>，且确实继承 font-*，不该被当成「无文字元素」
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('class', 'test-svg')
+  svg.setAttribute('width', '120')
+  svg.setAttribute('height', '60')
+  svg.style.cssText = 'margin:20px;display:block'
+  const t = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+  t.setAttribute('x', '10'); t.setAttribute('y', '30')
+  t.textContent = 'label'
+  svg.appendChild(t)
+  document.body.appendChild(svg)
+
   const bg = document.createElement('div')
   bg.className = 'test-bg'
   bg.style.cssText =
@@ -74,8 +86,39 @@ ok(name.includes('内嵌图片'), `data URI 显示类型而不是整段 base64�
 
 const imgProps = await fillProps()
 ok(imgProps.includes('object-fit'), 'img 上出现 object-fit（对应 Figma 的 scaleMode）')
-ok(imgProps.indexOf('color') === imgProps.length - 1,
-   'color 沉到最后——图片元素的主填充是那张图，不是字色')
+
+// ── 图片元素隐藏排版类属性 ──────────────────────────────────
+const sections = () => page.locator('visual-revise-panel section')
+  .evaluateAll(els => els.map(el => el.dataset.group))
+const allProps = () => page.locator('visual-revise-panel [data-prop]')
+  .evaluateAll(els => [...new Set(els.map(el => el.dataset.prop))].filter(p => !p.includes(',')))
+
+const imgSections = await sections()
+ok(!imgSections.includes('typography'),
+   `选中 <img> 时整个 Typography 分区消失：${imgSections.join(' → ')}`)
+
+const imgAll = await allProps()
+ok(!imgAll.includes('font-size') && !imgAll.includes('text-align'),
+   '排版属性一个都不显示——图片没有文字作为作用对象')
+ok(!imgAll.includes('color'), 'color 也不显示（图片没有文字可上色）')
+ok(!imgAll.includes('overflow'),
+   'overflow 不显示——替换元素的内容不会溢出盒子，裁切由 object-fit 管')
+ok(imgAll.includes('border-radius') && imgAll.includes('opacity'),
+   '真正对图片有效的属性照常显示（圆角、不透明度）')
+
+// ── 内联 SVG 不被误伤 ───────────────────────────────────────
+await select('.test-svg')
+const svgSections = await sections()
+ok(svgSections.includes('typography'),
+   `内联 <svg> 仍有 Typography——它里面能放 <text> 且继承 font-*：${svgSections.join(' → ')}`)
+const svgProps = await allProps()
+ok(svgProps.includes('object-fit'),
+   'svg 同时仍是替换元素，object-fit 照常出现')
+
+await select('.test-img')
+const imgProps2 = await fillProps()
+ok(!imgProps2.includes('color'),
+   'color 从图片元素的 Fill 里移除（此前是沉底，现在直接不显示）')
 
 // ── 背景图元素 ──────────────────────────────────────────────
 await select('.test-bg')

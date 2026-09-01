@@ -59,9 +59,16 @@ Position → Layout → Appearance → Typography → Fill → Stroke → Effect
 `Typography` 的位置是实测 Figma Desktop 得来的——选中文本图层时它插在
 `Appearance` 与 `Fill` 之间，而不是排在最后。它默认折叠，**选中文字元素时自动展开**。
 
-有一处刻意偏离 Figma：Figma 只在文本图层渲染 `Typography`，但 CSS 的字体属性会继承，
-在容器上设 `font-size` 是常见写法，隐藏它会让「给整张卡片调字号」无法表达。
-所以这里对所有元素都保留该分区，且位置固定不随选中变动——顺序跳来跳去会毁掉肌肉记忆。
+**什么时候不显示它**：`<img>` / `<video>` / `<canvas>` / `<iframe>` 这类内容由外部资源
+决定、自身不承载文字的元素，整个 `Typography` 分区连同 `color`、`overflow` 一起隐藏——
+它们没有作用对象，留着只占位置。这一点与 Figma 一致（图片图层不渲染 Typography）。
+
+内联 `<svg>` 刻意不在此列：它里面可以放 `<text>`，而且确实继承 `font-*`。
+
+**什么时候保留**：普通容器仍然显示，哪怕它自己没有直接文字。这是与 Figma 的一处
+刻意偏离——Figma 没有继承，而 CSS 里在容器上设 `font-size` 让子元素继承是常见写法，
+隐藏它会让「给整张卡片调字号」无法表达。分区位置也固定不随选中变动，顺序跳来跳去
+会毁掉肌肉记忆。
 
 ### Fill 随元素类型变形
 

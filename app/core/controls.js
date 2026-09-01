@@ -273,6 +273,23 @@ const BG_IMAGE_ONLY = new Set(['background-size', 'background-position'])
 export const isReplacedElement = el =>
   /^(img|video|canvas|svg|iframe|embed|object)$/i.test(el?.tagName || '')
 
+// 内容由外部资源决定、自身不承载任何文字的元素。排版属性对它们没有作用对象，
+// 显示出来只会占位置——Figma 里图片图层同样不渲染 Typography 分区。
+//
+// 内联 <svg> 刻意不在此列：它里面可以有 <text>，而且确实会继承 font-* 属性，
+// 隐藏就错了。这也是它与 isReplacedElement 的唯一差别。
+//
+// 已知取舍：<img> 加载失败时，浏览器用这些排版属性渲染 alt 文字。隐藏之后
+// 就调不了那个状态的字体。改稿场景里图片基本正常加载，这个取舍值得。
+export const isTextlessElement = el =>
+  /^(img|video|canvas|iframe|embed|object)$/i.test(el?.tagName || '')
+
+// 排版属性 + 字色：都需要一个「文字」作为作用对象
+const NEEDS_TEXT = new Set([
+  'font-family', 'font-size', 'font-weight', 'line-height',
+  'letter-spacing', 'text-align', 'text-transform', 'color',
+])
+
 export const hasBackgroundImage = computed => {
   const v = computed?.['background-image']
   return !!v && v !== 'none'
@@ -281,6 +298,11 @@ export const hasBackgroundImage = computed => {
 export const isRelevant = (prop, computed, el) => {
   if (REPLACED_ONLY.has(prop)) return isReplacedElement(el)
   if (BG_IMAGE_ONLY.has(prop)) return hasBackgroundImage(computed)
+
+  if (NEEDS_TEXT.has(prop)) return !isTextlessElement(el)
+
+  // 替换元素的内容不会溢出盒子，裁切由 object-fit 管——overflow 对 <img> 无效
+  if (prop === 'overflow') return !isTextlessElement(el)
 
   if (FLEX_CHILD_ONLY.has(prop)) {
     const parentDisplay = el?.parentElement && getComputedStyle(el.parentElement).display
