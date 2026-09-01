@@ -130,5 +130,99 @@ ok(prompt.includes('## 交互备注'), '提示词含交互备注段落')
 ok(prompt.includes('上浮 4px') && prompt.includes('字重加粗'), '两条评论都进入提示词')
 ok(prompt.includes('CSS 无法表达的行为需求'), '提示词向 AI 说明了备注的性质')
 
+
+// ── 边界检测 ────────────────────────────────────────────────
+// 气泡宽 288px，此前只按「锚点 + 12」定位，贴着视口右缘的元素会把它整个
+// 推出屏幕；pin 同理。跑到屏幕外的气泡既看不见也点不到。
+
+const boxOf = sel => page.evaluate(s => {
+  const root = document.querySelector('visual-revise-comment-layer')?.shadowRoot
+  const el = s === ':last-pin'
+    ? [...root.querySelectorAll('.pin')].pop()
+    : root?.querySelector(s)
+  if (!el) return null
+  const r = el.getBoundingClientRect()
+  return {
+    left: r.left, top: r.top, right: r.right, bottom: r.bottom,
+    vw: document.documentElement.clientWidth,
+    vh: document.documentElement.clientHeight,
+  }
+}, sel)
+
+// 不能只判「在视口内」：溢出到视口下方时，focus() 会把整页往下拽，
+// 气泡因此又「回到」视口里，宽松的断言会被这个副作用蒙混过去。
+// 所以按夹取后应有的 8px 留白判，半像素容差留给小数布局值。
+const EDGE = 8
+const inside = b => !!b && b.left >= EDGE - 0.5 && b.top >= EDGE - 0.5
+  && b.right <= b.vw - EDGE + 0.5 && b.bottom <= b.vh - EDGE + 0.5
+
+const edgeProbe = (id, css) => page.evaluate(([id, css]) => {
+  const d = document.createElement('div')
+  d.id = id
+  d.style.cssText = `position:fixed;width:120px;height:40px;background:#eee;${css}`
+  document.body.appendChild(d)
+}, [id, css])
+
+const draftOn = async id => {
+  await page.keyboard.press('c')
+  await page.waitForTimeout(150)
+  await page.locator(`#${id}`).click()
+  await page.waitForTimeout(250)
+}
+
+// 右缘：应当翻到锚点左侧
+await edgeProbe('vr-edge-r', 'top:300px;right:0')
+await draftOn('vr-edge-r')
+const atRight = await boxOf('.bubble')
+ok(inside(atRight),
+   `贴右缘的元素：气泡仍在视口内（right=${Math.round(atRight.right)} ≤ vw=${atRight.vw}）`)
+ok(atRight.right < atRight.vw - 50, '气泡翻到了锚点左侧，而不是硬贴右缘')
+await page.keyboard.press('Escape')
+await page.waitForTimeout(150)
+
+// 下缘：只夹不翻，纵向仍要留在视口里
+await edgeProbe('vr-edge-b', 'bottom:0;left:60px')
+await draftOn('vr-edge-b')
+const atBottom = await boxOf('.bubble')
+ok(inside(atBottom),
+   `贴下缘的元素：气泡未被推到视口下方（bottom=${Math.round(atBottom.bottom)} ≤ vh=${atBottom.vh}）`)
+// 气泡若溢出到视口外，focus() 会把整页拽下去——页面在用户脚下自己跑了
+ok(await page.evaluate(() => scrollY) === 0, '气泡没有把页面拽着滚动')
+await page.keyboard.press('Escape')
+await page.waitForTimeout(150)
+
+// 右下角：两个方向同时越界
+await edgeProbe('vr-edge-rb', 'bottom:0;right:0')
+await draftOn('vr-edge-rb')
+ok(inside(await boxOf('.bubble')), '右下角的元素：两个方向同时被约束住')
+await page.keyboard.press('Escape')
+await page.waitForTimeout(150)
+
+// pin 同样要夹住——它飞出视口，这条评论就再也点不开了
+await draftOn('vr-edge-r')
+await page.locator('visual-revise-comment-layer textarea').fill('边界检测')
+await page.locator('visual-revise-comment-layer .save').click()
+await page.waitForTimeout(250)
+const pinAtRight = await boxOf(':last-pin')
+ok(inside(pinAtRight),
+   `贴右缘元素的 pin 完整可见（right=${Math.round(pinAtRight.right)} ≤ vw=${pinAtRight.vw}）`)
+
+// 但元素整个移出视口时不该夹：那样只会在边上堆一排认不出主人的编号
+await page.evaluate(() => {
+  const el = document.querySelector('#vr-edge-r')
+  el.style.right = 'auto'
+  el.style.left = `${document.documentElement.clientWidth + 600}px`
+  dispatchEvent(new Event('resize'))
+})
+await page.waitForTimeout(250)
+const pinGone = await boxOf(':last-pin')
+ok(pinGone.left > pinGone.vw,
+   `元素移出视口后 pin 跟着离场，没被夹回边缘（left=${Math.round(pinGone.left)} > vw=${pinGone.vw}）`)
+
+await page.evaluate(() => {
+  for (const id of ['vr-edge-r', 'vr-edge-b', 'vr-edge-rb'])
+    document.querySelector(`#${id}`)?.remove()
+})
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

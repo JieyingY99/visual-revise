@@ -10,6 +10,24 @@ const esc = v => String(v ?? '')
 const extOf = img =>
   (img.mime || '').split('/')[1]?.replace('+xml', '').toUpperCase() || 'IMG'
 
+// 视口边界留白，以及气泡 / pin 与锚点之间的呼吸位
+const EDGE = 8
+const GAP = 12
+const PIN_GAP = 10
+const PIN_R = 10   // pin 是 20×20 且 translate(-50%,-50%)，所以坐标就是圆心
+
+// 用 clientWidth 而不是 innerWidth：后者含滚动条宽度，按它算会把东西
+// 推到滚动条底下去，视觉上仍是「跑到边界外」
+const vw = () => document.documentElement.clientWidth || innerWidth
+const vh = () => document.documentElement.clientHeight || innerHeight
+
+const onScreen = r =>
+  r.bottom > 0 && r.top < vh() && r.right > 0 && r.left < vw()
+
+// 可用空间比要摆的东西还小时（窄窗口）退回下界，而不是算出一个比下界
+// 还小的上界，把元素推到视口左上角之外
+const fit = (v, lo, hi) => Math.min(Math.max(v, lo), Math.max(lo, hi))
+
 export class CommentLayer extends HTMLElement {
   #shadow
   #active = false
@@ -149,9 +167,21 @@ export class CommentLayer extends HTMLElement {
     const pins = comments.map(c => {
       const r = c.el.getBoundingClientRect()
       if (!r.width && !r.height) return ''
-      // 往元素外侧挪开，避免和选中框右上角的手柄重叠
-      const x = r.right + scrollX + 10
-      const y = r.top + scrollY - 2
+
+      // 默认挪到元素外侧，避开选中框右上角的手柄；右边塞不下就收进元素
+      // 内侧的右上角。宁可贴着元素，也不要直接飞到视口边缘——那样就看不出
+      // 它在标注谁了。
+      const roomOutside = r.right + PIN_GAP + PIN_R <= vw() - EDGE
+      let x = r.right + (roomOutside ? PIN_GAP : -PIN_GAP) + scrollX
+      let y = r.top - 2 + scrollY
+
+      // 元素整个滚出视口时不夹：pin 本就该跟着一起离场，夹住只会让一排
+      // 无主的编号堆在边上，点开还得先猜它标的是谁
+      if (onScreen(r)) {
+        x = fit(x, scrollX + EDGE + PIN_R, scrollX + vw() - EDGE - PIN_R)
+        y = fit(y, scrollY + EDGE + PIN_R, scrollY + vh() - EDGE - PIN_R)
+      }
+
       const active = this.#draft?.editingId === c.id ? ' data-active' : ''
       const withImages = c.images?.length ? ' data-has-images' : ''
       return `<div class="pin" data-id="${c.id}" style="left:${x}px;top:${y}px"
@@ -164,7 +194,33 @@ export class CommentLayer extends HTMLElement {
 
     root.innerHTML = pins + bubble
     this.#bind()
+    this.#placeBubble()
     restore()
+  }
+
+  // 气泡宽度是 CSS 定值，高度却随参考图数量变化（加一张就长一截），
+  // 所以位置只能在渲染之后按实测尺寸算。同步做完、不等下一帧，
+  // 用户看不到它先画错再跳回来。
+  #placeBubble() {
+    const bubble = this.#shadow.querySelector('.bubble')
+    if (!bubble || !this.#draft) return
+
+    const { x, y } = this.#draft
+    const { width: w, height: h } = bubble.getBoundingClientRect()
+
+    // 气泡是 absolute，而宿主贴在文档原点，所以这里一律用文档坐标
+    const minX = scrollX + EDGE
+    const maxX = scrollX + vw() - EDGE - w
+    const minY = scrollY + EDGE
+    const maxY = scrollY + vh() - EDGE - h
+
+    // 右边放不下就翻到锚点左侧。翻边比硬贴右缘好：贴住边缘往往正好盖住
+    // 被标注的元素本身，而那正是用户此刻要看的东西。
+    const left = x + GAP > maxX ? x - GAP - w : x + GAP
+
+    // 纵向只夹不翻——上下翻会让气泡离开锚点所在的那一行，认不出在标注谁
+    bubble.style.left = `${fit(left, minX, maxX)}px`
+    bubble.style.top = `${fit(y, minY, maxY)}px`
   }
 
   #renderRefs() {
