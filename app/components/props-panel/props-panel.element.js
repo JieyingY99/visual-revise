@@ -11,6 +11,7 @@ import { findSharedElements, describeShared } from '../../core/shared-elements.j
 import { loadLocalFonts, isSupported as fontsSupported } from '../../core/local-fonts.js'
 import { containScroll, isTextElement } from '../../core/dom-utils.js'
 import { imageSourceOf, measureNatural, describeSize } from '../../core/image-source.js'
+import { pickImages, canRenderDataUrl } from '../../core/image-assets.js'
 import '../controls/select.element.js'
 import '../controls/color.element.js'
 import '../controls/fill.element.js'
@@ -29,6 +30,7 @@ const ICON = {
   eyeOff:   svg('<path d="M2.5 2.5 13.5 13.5"/><path d="M6.6 6.7a2 2 0 0 0 2.8 2.7"/><path d="M4.4 4.7C2.4 5.9 1 8 1 8s2.6 4.5 7 4.5c1.2 0 2.2-.2 3.1-.7"/><path d="M6.9 3.7A7 7 0 0 1 8 3.5c4.4 0 7 4.5 7 4.5a13 13 0 0 1-2.1 2.6"/>', 13),
   link:     svg('<path d="M6.6 9.4a2.8 2.8 0 0 0 4 0l2-2a2.8 2.8 0 1 0-4-4l-.8.8"/><path d="M9.4 6.6a2.8 2.8 0 0 0-4 0l-2 2a2.8 2.8 0 1 0 4 4l.8-.8"/>', 13),
   download: svg('<path d="M8 2v8"/><path d="M4.5 7 8 10.5 11.5 7"/><path d="M2.5 13.5h11"/>', 13),
+  swap:     svg('<path d="M2.5 5.5h11l-2.5-2.5"/><path d="M13.5 10.5h-11l2.5 2.5"/>', 13),
 }
 
 // 对齐图标：一条基准线 + 一个贴住它的方块，和 Figma / Lucide 一致
@@ -419,8 +421,45 @@ export class PropsPanel extends HTMLElement {
           <span class="image-name">${esc(src.label)}</span>
           <span class="image-dim">${dims}</span>
         </span>
+        <button class="icon-btn swap-image" title="换成本地图片">${ICON.swap}</button>
       </div>
     </div>`
+  }
+
+  // 换图：把用户挑的本地图写进元素。存的是 dataUrl 而不是 blob URL——后者
+  // 绑在文档生命周期上，页面一刷新就失效，而改动记录要能导出成 JSON 交给别人。
+  // 真正交给 AI 的是落盘后的绝对路径，那一步在导出提示词时才做。
+  async #swapImage() {
+    const el = this.target
+    if (!el) return
+
+    const { assets, errors } = await pickImages()
+    if (errors.length) this.toast(errors[0], 'error')
+
+    const asset = assets[0]
+    if (!asset) return
+
+    ChangeStore.addAsset(asset)
+
+    const src = imageSourceOf(el, this.#computed)
+    if (src?.kind === 'background') {
+      ChangeStore.applyProp(el, 'background-image', `url("${asset.dataUrl}")`)
+    } else {
+      // srcset 的优先级高于 src：不清掉它，换上去的图根本不会被显示出来
+      if (el.hasAttribute('srcset')) ChangeStore.applyAttr(el, 'srcset', '')
+      ChangeStore.applyAttr(el, src?.kind === 'poster' ? 'poster' : 'src', asset.dataUrl)
+    }
+
+    this.#computed = readComputed(el)
+    this.render()
+
+    // 页面若禁了 img-src data:，换上去的图会静默变成空白。这不是坏了，
+    // 改动记录和提示词照常——但不说一声，用户只会以为功能失灵。
+    const renderable = await canRenderDataUrl()
+    this.toast(renderable
+      ? `已换图：${asset.name}`
+      : `已记录换图，但本页 CSP 禁止内嵌图片，画面上不会更新（提示词不受影响）`,
+      renderable ? 'info' : 'error')
   }
 
   // 背景图的天然尺寸 CSS 不暴露，只能另加载一次来量。渲染完再异步补上，
@@ -670,6 +709,7 @@ export class PropsPanel extends HTMLElement {
     on('[data-eye]', 'click', e => this.#toggleSection(e.currentTarget.dataset.eye))
     on('[data-undo]', 'click', e => this.#resetGroup(e.currentTarget.dataset.undo))
     on('[data-align]', 'click', e => this.#align(e.currentTarget.dataset.align))
+    on('.swap-image', 'click', e => { e.stopPropagation(); this.#swapImage() })
 
     on('.close', 'click', () => this.dispatchEvent(new CustomEvent('vr-close', { bubbles: true, composed: true })))
     on('.fold', 'click', () => this.toggleAttribute('collapsed'))

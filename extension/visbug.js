@@ -122,3 +122,74 @@ platform.runtime.onInstalled.addListener(() => {
 })
 
 gimmeToggle(toggleIn)
+
+// ── 参考图落盘 ──────────────────────────────────────────────
+// 提示词里要写图片的**绝对路径**，AI 才能自己去读图。但页面拿不到这个路径：
+// 浏览器从不告诉网页它把下载文件放在了哪里。downloads API 只在扩展上下文
+// 可用，所以这一步必须绕到 background 来做。
+//
+// 若 downloads 因任何原因不接受（权限被撤、data: URL 被策略拦、磁盘写失败），
+// 这里如实返回失败，content script 会退回页面下载通道，并在提示词里把路径
+// 标注成「推测」——绝不能让 AI 拿着一个看似确切、实则不存在的路径去读图。
+
+const settleDownload = id => new Promise(resolve => {
+  const deadline = Date.now() + 15000
+  const poll = () => {
+    platform.downloads.search({ id }, ([item]) => {
+      void platform.runtime.lastError
+      if (item && item.state !== 'in_progress') return resolve(item)
+      if (Date.now() > deadline) return resolve(item || null)
+      setTimeout(poll, 120)
+    })
+  }
+  poll()
+})
+
+const downloadOne = ({ dataUrl, name }, dir) => new Promise(resolve => {
+  try {
+    platform.downloads.download({
+      url: dataUrl,
+      filename: `${dir}/${name}`,
+      conflictAction: 'uniquify',
+      saveAs: false,
+    }, async id => {
+      // 参数被拒时 id 是 undefined，原因只在 lastError 里
+      const err = platform.runtime.lastError
+      if (err || id == null) return resolve({ path: null, error: err?.message || '下载未开始' })
+
+      const item = await settleDownload(id)
+      resolve(item?.state === 'complete' && item.filename
+        ? { path: item.filename }
+        : { path: null, error: item?.error || item?.state || '未完成' })
+    })
+  } catch (err) {
+    resolve({ path: null, error: err?.message || String(err) })
+  }
+})
+
+const saveRefs = async ({ dir, files = [] }) => {
+  const out = []
+  // 串行：并发触发多个下载时 Chrome 会把它们判成「多文件下载」而弹权限提示
+  for (const f of files) {
+    const { path, error } = await downloadOne(f, dir)
+    out.push({ id: f.id, name: f.name, path: path || null, error })
+  }
+
+  return {
+    ok:    out.some(f => f.path),
+    exact: out.length > 0 && out.every(f => f.path),
+    dir,
+    files: out,
+  }
+}
+
+platform.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== 'vr-save-refs') return
+
+  saveRefs(msg)
+    .then(sendResponse)
+    .catch(err => sendResponse({ ok: false, error: err?.message || String(err) }))
+
+  // 同步返回 true 才能保住消息通道等异步结果
+  return true
+})

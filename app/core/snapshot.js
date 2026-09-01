@@ -36,6 +36,7 @@ export const takeSnapshot = el => {
     computed:    readComputed(el),
     text:        readText(el),
     textNodes:   textNodesOf(el).map(n => n.nodeValue),
+    attrs:       readAttrs(el),
     // 只有真正进过编辑态的元素才比对文案，见 diffText
     edited:      false,
     html:        html.length <= HTML_LIMIT ? html : null,
@@ -72,6 +73,44 @@ export const readInline = el => {
     if (val) acc[prop] = val.trim()
     return acc
   }, {})
+}
+
+// <img> 的 src 不是 CSS 属性，上面那套快照/diff 只覆盖 CSS，换图要改的正是它。
+// 所以单独记一份。只记真正会被换掉的那几个——不做全属性快照，那既没意义，
+// 也会把 class 这类被框架频繁改写的属性卷进改动记录里。
+export const TRACKED_ATTRS = ['src', 'srcset', 'poster']
+
+export const readAttrs = el => TRACKED_ATTRS.reduce((acc, name) => {
+  if (el.hasAttribute?.(name)) acc[name] = el.getAttribute(name)
+  return acc
+}, {})
+
+export const diffAttrs = snapshot => {
+  const { el, attrs: original = {} } = snapshot
+  if (!el?.isConnected) return []
+
+  const current = readAttrs(el)
+  const names = new Set([...Object.keys(original), ...Object.keys(current)])
+
+  const out = []
+  for (const name of names) {
+    const from = original[name] ?? ''
+    const to   = current[name] ?? ''
+    if (from !== to) out.push({ attr: name, from, to })
+  }
+  return out
+}
+
+export const revertAttr = (snapshot, attr) => {
+  const { el, attrs: original = {} } = snapshot
+  if (!el?.isConnected) return
+  original[attr] !== undefined
+    ? el.setAttribute(attr, original[attr])
+    : el.removeAttribute(attr)
+}
+
+const revertAllAttrs = snapshot => {
+  for (const { attr } of diffAttrs(snapshot)) revertAttr(snapshot, attr)
 }
 
 // 基准必须是快照时的 inline 声明，不能是计算值：页面作者写的
@@ -164,6 +203,7 @@ export const revertProp = (snapshot, prop) => {
 // 全部重置：恢复原始 inline style 与原始文案
 export const revertAll = snapshot => {
   revertText(snapshot)
+  revertAllAttrs(snapshot)
 
   const { el, inlineStyle } = snapshot
   inlineStyle === null

@@ -1,5 +1,6 @@
 import {
-  takeSnapshot, diffSnapshot, diffText, revertProp, revertText, revertAll, elementId,
+  takeSnapshot, diffSnapshot, diffText, diffAttrs,
+  revertProp, revertText, revertAttr, revertAll, elementId,
 } from './snapshot.js'
 import { collectAnchors } from './anchors.js'
 
@@ -7,6 +8,10 @@ const createStore = () => {
   const snapshots = new Map()
   const comments  = new Map()
   const listeners = new Set()
+  // 用户带进来的图（换图、评论参考图）。改动记录里只留 dataUrl，导出提示词时
+  // 要按 dataUrl 反查回资产本身去落盘，所以正查反查都留一份索引。
+  const assets     = new Map()   // id      → asset
+  const assetByUrl = new Map()   // dataUrl → asset
   let commentSeq  = 0
 
   const notify = () => listeners.forEach(fn => fn(read()))
@@ -32,6 +37,7 @@ const createStore = () => {
       anchors: snap.anchors,
       changes: diffSnapshot(snap),
       text:    diffText(snap),
+      attrs:   diffAttrs(snap),
     }))
 
     // 改一句话会让它所有祖先的 textContent 都跟着变。祖先和后代都报文案改动时
@@ -41,7 +47,7 @@ const createStore = () => {
       if (texted.some(other => other !== entry && entry.el.contains(other.el)))
         entry.text = null
 
-    return entries.filter(entry => entry.changes.length > 0 || entry.text)
+    return entries.filter(entry => entry.changes.length > 0 || entry.text || entry.attrs.length > 0)
   }
 
   const commentList = () =>
@@ -61,6 +67,26 @@ const createStore = () => {
       : el.style.setProperty(prop, value)
     notify()
   }
+
+  // src/poster 这类 HTML 属性不经过 CSS 通道，单独走这里
+  const applyAttr = (el, attr, value) => {
+    track(el)
+    value === '' || value == null
+      ? el.removeAttribute(attr)
+      : el.setAttribute(attr, value)
+    notify()
+  }
+
+  const addAsset = asset => {
+    if (!asset?.id) return asset
+    assets.set(asset.id, asset)
+    if (asset.dataUrl) assetByUrl.set(asset.dataUrl, asset)
+    return asset
+  }
+
+  const getAsset    = id  => assets.get(id) || null
+  const assetForUrl = url => (url ? assetByUrl.get(url) || null : null)
+  const allAssets   = ()  => Array.from(assets.values())
 
   const addComment = (el, text) => {
     track(el)
@@ -90,6 +116,13 @@ const createStore = () => {
     notify()
   }
 
+  const undoAttr = (id, attr) => {
+    const snap = snapshots.get(id)
+    if (!snap) return
+    revertAttr(snap, attr)
+    notify()
+  }
+
   const undoProp = (id, prop) => {
     const snap = snapshots.get(id)
     if (!snap) return
@@ -108,6 +141,9 @@ const createStore = () => {
     snapshots.forEach(revertAll)
     comments.clear()
     commentSeq = 0
+    // 资产跟着改动一起作废：改动都撤了，那些图也没有任何记录引用得到
+    assets.clear()
+    assetByUrl.clear()
     notify()
   }
 
@@ -118,6 +154,8 @@ const createStore = () => {
   const clear = () => {
     snapshots.clear()
     comments.clear()
+    assets.clear()
+    assetByUrl.clear()
     commentSeq = 0
     notify()
   }
@@ -126,20 +164,23 @@ const createStore = () => {
     const { edits, comments: cs } = read()
     const props = edits.reduce((n, e) => n + e.changes.length, 0)
     const texts = edits.filter(e => e.text).length
+    const attrs = edits.reduce((n, e) => n + (e.attrs?.length || 0), 0)
 
     return {
       elements: edits.length,
       props,
       texts,
+      attrs,
       comments: cs.length,
-      total:    props + texts + cs.length,
+      total:    props + texts + attrs + cs.length,
     }
   }
 
   return {
-    track, markEdited, applyProp,
+    track, markEdited, applyProp, applyAttr,
+    addAsset, getAsset, assetForUrl, allAssets,
     addComment, updateComment, removeComment,
-    undoProp, undoText, undoElement, undoEverything, clear,
+    undoProp, undoText, undoAttr, undoElement, undoEverything, clear,
     read, stats, touch,
     snapshots,
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn) },

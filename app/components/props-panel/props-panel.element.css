@@ -373,3 +373,5 @@ input::placeholder { color: var(--vr-mute); }
   font: 400 10px/1 ui-monospace, Menlo, monospace;
   color: var(--vr-mute);
 }
+
+.image-row .swap-image { flex: none; }

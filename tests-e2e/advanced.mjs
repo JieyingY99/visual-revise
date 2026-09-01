@@ -115,7 +115,9 @@ const exported = await page.evaluate(() => {
   return exportJSON({ url: 'http://example.test', viewport: '1440 × 900' })
 })
 
-ok(exported.schema === 1, 'JSON 含 schema 版本')
+ok(exported.schema === 2, `JSON 含 schema 版本：${exported.schema}`)
+ok(Array.isArray(exported.assets),
+   'v2 带 assets 字段（图片 base64 内嵌，导入方才拿得到换图用的那张图）')
 ok(exported.edits.length === 1 && exported.edits[0].changes.length === 2, 'JSON 含改动记录')
 ok(exported.comments.length === 1, 'JSON 含评论')
 ok(!!exported.edits[0].anchors.text?.length, 'JSON 含文本锚点（供跨环境匹配）')
@@ -161,6 +163,7 @@ const tolerant = await page.evaluate(() => {
   const { importJSON } = window.__visualRevise.lib
   window.__visualRevise.store.undoEverything()
 
+  // 故意用 v1 载荷：老版本导出的文件必须还能导入（v1 没有 attrs/assets 字段）
   const payload = {
     schema: 1,
     edits: [

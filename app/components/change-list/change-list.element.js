@@ -1,6 +1,7 @@
 import { ChangeStore } from '../../core/change-store.js'
 import { downloadJSON, pickAndImport } from '../../core/json-io.js'
 import { containScroll } from '../../core/dom-utils.js'
+import { fileNameOf, parseCssUrl } from '../../core/image-source.js'
 import { default as list_css } from './change-list.element.css'
 
 const OVERLAY_ID = 'visual-revise-locate-overlay'
@@ -37,6 +38,18 @@ const highlight = el => {
 const clearHighlight = () => {
   const overlay = document.getElementById(OVERLAY_ID)
   if (overlay) overlay.style.display = 'none'
+}
+
+// dataUrl 有几十万字符，原样塞进列表会把面板撑爆；长 URL 只留文件名，
+// 那才是用户认得出的部分
+const shortValue = v => {
+  const raw = String(v ?? '').trim()
+  if (!raw) return '（空）'
+
+  const url = parseCssUrl(raw) || raw
+  if (/^data:/i.test(url)) return '新图片'
+  if (/^(https?:|blob:|\/)/i.test(url) || url.includes('/')) return fileNameOf(url)
+  return raw.length > 40 ? raw.slice(0, 37) + '…' : raw
 }
 
 const shortSelector = anchors => {
@@ -149,7 +162,7 @@ export class ChangeList extends HTMLElement {
   }
 
   #renderEdit(entry) {
-    const esc = v => String(v ?? '').replace(/</g, '&lt;')
+    const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
 
     const textRow = entry.text ? `
       <div class="change" data-text>
@@ -159,17 +172,27 @@ export class ChangeList extends HTMLElement {
         <button class="undo-text" data-id="${entry.id}" title="撤销文案改动">×</button>
       </div>` : ''
 
+    const attrRows = (entry.attrs || []).map(a => `
+      <div class="change" data-attr>
+        <span><code>${a.attr === 'src' || a.attr === 'poster' ? '换图' : esc(a.attr)}</code>
+          <span class="from">${esc(shortValue(a.from))}</span> →
+          <span class="to">${esc(shortValue(a.to))}</span></span>
+        <button class="undo-attr" data-id="${entry.id}" data-attr="${esc(a.attr)}"
+          title="撤销这一项">×</button>
+      </div>`).join('')
+
     return `<div class="item" data-id="${entry.id}" data-kind="style">
       <div class="item-head">
         <span class="sel" title="${entry.anchors.selector}">${shortSelector(entry.anchors)}</span>
-        <span class="badge">${entry.changes.length + (entry.text ? 1 : 0)}</span>
+        <span class="badge">${entry.changes.length + (entry.text ? 1 : 0) + (entry.attrs?.length || 0)}</span>
         <button class="icon-btn undo-el" data-id="${entry.id}" title="撤销此元素全部改动">↺</button>
       </div>
       <div class="changes">
         ${textRow}
+        ${attrRows}
         ${entry.changes.map(c => `
           <div class="change">
-            <span><code>${c.prop}</code> <span class="from">${c.from || '—'}</span> → <span class="to">${c.to}</span></span>
+            <span><code>${c.prop}</code> <span class="from">${esc(shortValue(c.from))}</span> → <span class="to">${esc(shortValue(c.to))}</span></span>
             <button class="undo-prop" data-id="${entry.id}" data-prop="${c.prop}" title="撤销这一项">×</button>
           </div>`).join('')}
       </div>
@@ -263,6 +286,11 @@ export class ChangeList extends HTMLElement {
     on('.undo-text', 'click', e => {
       e.stopPropagation()
       ChangeStore.undoText(e.currentTarget.dataset.id)
+    })
+
+    on('.undo-attr', 'click', e => {
+      e.stopPropagation()
+      ChangeStore.undoAttr(e.currentTarget.dataset.id, e.currentTarget.dataset.attr)
     })
 
     on('.undo-el', 'click', e => {

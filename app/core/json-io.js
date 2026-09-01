@@ -1,7 +1,13 @@
 import { ChangeStore } from './change-store.js'
 import { textLandmarks } from './anchors.js'
 
-export const SCHEMA_VERSION = 1
+// v2 起带上图片：换图的属性改动与图片资产本身（base64 内嵌）。
+// 内嵌而不是只存文件名，是因为这份 JSON 的用途就是交给别人导入——
+// 图丢了，换图那条记录也就没意义了。
+export const SCHEMA_VERSION = 2
+
+// v1 没有 attrs / assets 字段，缺了也能正常导入，所以照收
+const SUPPORTED = new Set([1, 2])
 
 export const exportJSON = (meta = {}) => {
   const { edits, comments } = ChangeStore.read()
@@ -16,13 +22,25 @@ export const exportJSON = (meta = {}) => {
       selector: e.anchors.selector,
       anchors:  e.anchors,
       changes:  e.changes,
+      attrs:    e.attrs || [],
     })),
     comments: comments.map(c => ({
       seq:      c.seq,
       selector: c.anchors.selector,
       anchors:  c.anchors,
       text:     c.text,
+      images:   (c.images || []).map(i => i.id),
     })),
+    // 图片只存一份，改动与评论都按 id 引用它
+    assets: ChangeStore.allAssets(),
+  }
+}
+
+export const estimateBytes = data => {
+  try {
+    return new Blob([JSON.stringify(data)]).size
+  } catch {
+    return JSON.stringify(data).length
   }
 }
 
@@ -86,10 +104,22 @@ const resolveElement = record => {
 }
 
 export const importJSON = (data, { apply = true } = {}) => {
-  if (!data || data.schema !== SCHEMA_VERSION)
+  if (!data || !SUPPORTED.has(data.schema))
     return { ok: false, reason: `不支持的文件格式（schema=${data?.schema}）` }
 
-  const report = { ok: true, matched: [], missing: [], failed: [], comments: 0, viaText: 0 }
+  const report = {
+    ok: true, matched: [], missing: [], failed: [],
+    comments: 0, viaText: 0, images: 0, attrs: 0,
+  }
+
+  // 资产要先入库：后面的换图记录与评论都按 id 引用它们
+  const assetById = new Map()
+  for (const asset of data.assets || []) {
+    if (!asset?.id) continue
+    ChangeStore.addAsset(asset)
+    assetById.set(asset.id, asset)
+    report.images++
+  }
 
   // 单条记录出问题不应连累其余：逐条隔离，失败的计入 failed 并继续
   report.failed = []
@@ -102,10 +132,20 @@ export const importJSON = (data, { apply = true } = {}) => {
       if (via === 'text') report.viaText++
 
       ChangeStore.track(el)
-      if (apply)
+      if (apply) {
         record.changes.forEach(c => ChangeStore.applyProp(el, c.prop, c.to))
+        // 属性改动要在样式之后应用：换图会连带清 srcset，
+        // 顺序颠倒的话清空动作会被原值覆盖回去
+        ;(record.attrs || []).forEach(a => {
+          ChangeStore.applyAttr(el, a.attr, a.to)
+          report.attrs++
+        })
+      }
 
-      report.matched.push({ selector: record.selector, via, count: record.changes.length })
+      report.matched.push({
+        selector: record.selector, via,
+        count: record.changes.length + (record.attrs?.length || 0),
+      })
     } catch (err) {
       report.failed.push({ selector: record.selector, reason: err?.message || String(err) })
     }
@@ -115,7 +155,14 @@ export const importJSON = (data, { apply = true } = {}) => {
     try {
       const { el } = resolveElement(record)
       if (!el) { report.missing.push(record.selector); continue }
-      ChangeStore.addComment(el, record.text)
+
+      const id = ChangeStore.addComment(el, record.text)
+      // 图按 id 引用；找不到的（导出方漏带 assets）就跳过，不让整条评论失败
+      const images = (record.images || [])
+        .map(imgId => assetById.get(imgId))
+        .filter(Boolean)
+      if (images.length) ChangeStore.setCommentImages?.(id, images)
+
       report.comments++
     } catch (err) {
       report.failed.push({ selector: record.selector, reason: err?.message || String(err) })

@@ -10,7 +10,8 @@
     "activeTab",
     "contextMenus",
     "scripting",
-    "storage"
+    "storage",
+    "downloads"
   ],
   "background": {
     "service_worker": "visbug.js",
