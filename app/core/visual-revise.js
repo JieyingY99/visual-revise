@@ -208,9 +208,33 @@ export const mountVisualRevise = visbug => {
 
   const doCopy = async () => {
     const result = await copyPrompt(ChangeStore.read())
-    result.ok
-      ? toolbar.toast(`已复制 ${ChangeStore.stats().total} 项改动到剪贴板`)
-      : toolbar.toast(result.reason === 'empty' ? '还没有任何改动' : '复制失败，请检查剪贴板权限', 'error')
+
+    if (!result.ok) {
+      toolbar.toast(result.reason === 'empty' ? '还没有任何改动' : '复制失败，请检查剪贴板权限', 'error')
+      return result
+    }
+
+    const n = ChangeStore.stats().total
+    const files = result.refs?.files || []
+
+    if (!files.length) {
+      toolbar.toast(`已复制 ${n} 项改动到剪贴板`)
+      return result
+    }
+
+    // 图片落盘走两条路（扩展下载 / 页面下载），只有前者拿得到确切路径。
+    // 这个差别直接决定 AI 能不能读到图，所以必须让用户看见，
+    // 而不是让他粘贴之后才发现 AI 说「路径不存在」。
+    const saved  = files.filter(f => f.path).length
+    const failed = files.length - saved
+
+    toolbar.toast(
+      failed   ? `已复制 ${n} 项改动；${saved} 张图已存，${failed} 张落盘失败`
+      : result.refs.exact
+                 ? `已复制 ${n} 项改动，${saved} 张图已存入下载目录（提示词含绝对路径）`
+                 : `已复制 ${n} 项改动，${saved} 张图已下载；提示词里的路径为推测`,
+      failed ? 'error' : 'info')
+
     return result
   }
 
