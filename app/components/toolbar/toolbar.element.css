@@ -87,29 +87,32 @@ button.copy { color: var(--bar-dim); }
 button.copy[data-ready] { color: var(--bar-text); }
 button.copy[data-ready] svg { color: var(--bar-accent); }
 
-/* 改动条数是数据不是标签，藏掉就看不出有没有改动了。挪到图标右上角，
-   既不占横向空间，也一眼能看见；没有改动时整个收掉。 */
+/* 出口那两个留着文字：它们是主要动作，只给图标会找不到 */
+button.labeled {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+/* 条数跟在文字后面。没有改动时压暗成 0 而不是收掉——工具条上的元素
+   位移比多一个字符更扰人，收掉会让旁边的「复制提示词」跟着跳。 */
 .count {
-  position: absolute;
-  top: -1px;
-  right: -1px;
-  /* 压在相邻按钮的 hover 背景之上，否则右边缘会被盖掉一角 */
-  z-index: 1;
   display: grid;
   place-items: center;
-  min-width: 15px;
-  height: 15px;
-  padding: 0 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
   font-size: 10px;
   font-weight: 500;
   line-height: 1;
   color: #fff;
   background: var(--bar-accent);
   border-radius: 8px;
-  /* 描边取工具条底色，压在图标上才切得干净 */
-  box-shadow: 0 0 0 2px var(--bar-bg);
 }
-.count[data-empty] { display: none; }
+.count[data-empty] { background: rgb(255 255 255 / .16); color: var(--bar-dim); }
 
 /* 撤销 / 重做：没得撤时灰掉，但仍占位——按钮忽隐忽现比灰着更难用 */
 .undo:disabled, .redo:disabled { opacity: .3; cursor: not-allowed; }

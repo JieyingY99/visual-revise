@@ -86,13 +86,16 @@ export class ReviseToolbar extends HTMLElement {
           <button data-mode="${m.id}" data-tip="mode:${m.id}">${m.icon}</button>
         `).join('')}
         <div class="sep"></div>
-        <button class="list" data-tip="list">
-          ${ICONS.list}<span class="count" data-empty>0</span>
-        </button>
-        <button class="copy" data-tip="copy">${ICONS.copy}</button>
-        <div class="sep"></div>
         <button class="undo" data-tip="undo" disabled>${ICONS.undo}</button>
         <button class="redo" data-tip="redo" disabled>${ICONS.redo}</button>
+        <div class="sep"></div>
+        <!-- 这两个是出口，留着文字：图标认不出来时，主要动作就找不到了 -->
+        <button class="list labeled" data-tip="list">
+          ${ICONS.list}<span class="label">记录</span><span class="count" data-empty>0</span>
+        </button>
+        <button class="copy labeled" data-tip="copy">
+          ${ICONS.copy}<span class="label">复制提示词</span>
+        </button>
         <div class="sep"></div>
         <button class="close" data-tip="close">${ICONS.close}</button>
       </div>

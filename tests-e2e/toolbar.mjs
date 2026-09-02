@@ -128,8 +128,18 @@ const barSR = () => page.evaluate(() => {
   const sr = document.querySelector('visual-revise-toolbar').shadowRoot
   return [...sr.querySelectorAll('.bar button')].map(b => b.textContent.trim())
 })
-ok((await barSR()).every(t => t === '' || /^\d+$/.test(t)),
-   '按钮上只剩图标，文字标签已隐藏（数字角标除外）')
+// 三个模式与撤销 / 重做只留图标；记录与复制提示词是出口，保留文字
+ok((await barSR()).filter(t => t !== '' && !/^记录\s*\d+$/.test(t)
+      && t !== '复制提示词').length === 0,
+   `除出口两个外只剩图标：${JSON.stringify(await barSR())}`)
+
+const order = await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-toolbar').shadowRoot
+  return [...sr.querySelectorAll('.bar button')].map(b =>
+    b.dataset.mode || b.className.split(' ')[0])
+})
+ok(order.join(',') === 'select,comment,reorder,undo,redo,list,copy,close',
+   `撤销 / 重做排在出口那组前面：${order.join(' · ')}`)
 
 const tipOf = async sel => {
   await page.locator(`visual-revise-toolbar ${sel}`).hover()
