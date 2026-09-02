@@ -183,7 +183,7 @@ export const diffText = (snapshot, { detached = false } = {}) => {
 // 只有结构真的变了（删掉整个 <strong>、回车分段）才退回 innerHTML。
 export const revertText = snapshot => {
   const { el, text, textNodes, html, edited } = snapshot
-  if (!edited || text === undefined || !el.isConnected) return false
+  if (!edited || text === undefined) return false
   if (readText(el) === text) return false          // 没改过就别动 DOM
 
   const now = textNodesOf(el)

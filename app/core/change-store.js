@@ -59,12 +59,27 @@ const createStore = () => {
     removalSeq,
     // 被删掉的元素此刻不在 DOM 上，恢复时要按记录插回去
     detached:   Array.from(removals.values()).filter(r => !r.el.isConnected).map(r => r.id),
+    // 失联记录不在 styles 里（那里只收还连着的），单独存一份，
+    // 否则撤销重置时它们回不来
+    frozen:     Array.from(snapshots.values()).filter(s => s.frozen)
+                  .map(s => ({ id: s.id, frozen: s.frozen, orphaned: s.orphaned })),
   })
 
   const restoreAll = state => {
     for (const { el, cssText, attrs } of state.styles) {
       cssText === null ? el.removeAttribute('style') : el.setAttribute('style', cssText)
       for (const name of TRACKED_ATTRS) writeAttr(el, name, attrs[name] ?? '')
+    }
+
+    for (const snap of snapshots.values()) {
+      snap.frozen = null
+      snap.orphaned = false
+    }
+    for (const { id, frozen, orphaned } of state.frozen || []) {
+      const snap = snapshots.get(id)
+      if (!snap) continue
+      snap.frozen = frozen
+      snap.orphaned = orphaned
     }
 
     comments.clear()
@@ -622,6 +637,7 @@ const createStore = () => {
 
     if (before.join('\u0000') !== after.join('\u0000'))
       history.push({ kind: 'text', el: snap.el, before, after }, '还原文案')
+    refreeze(snap)
     notify()
   }
 
@@ -635,7 +651,20 @@ const createStore = () => {
 
     if (before !== after)
       history.push({ kind: 'attr', el: snap.el, attr, before, after }, '还原图片')
+    refreeze(snap)
     notify()
+  }
+
+  // 失联记录展示的是 frozen 里的快照，不是实时 diff。任何「还原」动作之后
+  // 都得重算一次，否则页面已经还原了，列表里那一行还杵着。
+  const refreeze = snap => {
+    if (!snap.orphaned) return
+    const next = freezeEdits(snap)
+    snap.frozen = next
+    if (!next.changes.length && !next.text && !next.attrs.length) {
+      snap.frozen = null
+      snap.orphaned = false
+    }
   }
 
   const undoProp = (id, prop) => {
@@ -648,6 +677,7 @@ const createStore = () => {
 
     if (before !== after)
       history.push({ kind: 'prop', el: snap.el, prop, before, after }, `还原 ${prop}`)
+    refreeze(snap)
     notify()
   }
 
@@ -658,6 +688,7 @@ const createStore = () => {
     const before = captureElement(snap.el)
     revertAll(snap)
     history.push({ kind: 'element', el: snap.el, before, after: captureElement(snap.el) }, '还原元素')
+    refreeze(snap)
     notify()
   }
 
@@ -674,6 +705,14 @@ const createStore = () => {
     removalSeq = 0
 
     snapshots.forEach(revertAll)
+
+    // 失联记录的改动是「冻结」在 frozen 里的，不跟着 DOM 走。不显式清掉的话，
+    // 页面已经还原了，列表里那一堆「元素已消失」却还杵着——点了重置等于没重置。
+    for (const snap of snapshots.values()) {
+      snap.frozen = null
+      snap.orphaned = false
+    }
+
     comments.clear()
     commentSeq = 0
     // 资产不跟着清：⌘Z 撤回这次重置时，换过的图还得能找回来

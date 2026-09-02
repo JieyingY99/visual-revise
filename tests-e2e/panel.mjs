@@ -240,5 +240,21 @@ await page.evaluate(() => {
   scrollTo(0, 0)
 })
 
+
+// ── 面板的 × ────────────────────────────────────────────────
+// 它只收起面板。退出整个编辑器是工具条上那个 × 的事——两个 × 干同一件事
+// 的话，想收起面板继续看页面就没有办法了。
+await page.locator('.curve-card').first().click()
+await page.waitForTimeout(300)
+ok(!(await page.locator('visual-revise-panel').isHidden()), '选中元素后面板出现')
+
+await page.locator('visual-revise-panel .close').click()
+await page.waitForTimeout(300)
+ok(await page.locator('visual-revise-panel').isHidden(), '× 收起面板')
+ok(await page.locator('vis-bug').count() === 1, '编辑器仍在，没有被一并关掉')
+ok(await page.locator('visual-revise-toolbar').count() === 1, '工具条也还在')
+ok(await page.evaluate(() => document.querySelectorAll('[data-selected]').length) === 0,
+   '同时取消了选中——只藏不取消的话，下次选中面板又冒出来，× 看着像没生效')
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

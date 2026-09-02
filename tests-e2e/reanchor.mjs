@@ -135,5 +135,38 @@ ok(!cascade.includes('删我') && cascade.includes('别删我'),
 
 await page.evaluate(() => document.querySelector('#vr-rows')?.remove())
 
+
+// ── 重置要连失联记录一起清 ──────────────────────────────────
+// 失联记录的改动冻结在 frozen 里、不跟着 DOM 走，页面还原了它们也不会消失。
+// 点了重置却还剩一屏「元素已消失」，等于没重置。
+const beforeReset = await stats()
+ok(beforeReset.total > 0, `重置前还有 ${beforeReset.total} 条记录（含失联的）`)
+
+await page.evaluate(() => window.__visualRevise.store.undoEverything())
+await settle()
+const afterReset = await stats()
+ok(afterReset.total === 0, `重置后一条不剩（实得 ${afterReset.total}）`)
+
+// 撤销这次重置，失联的那些也要回来——否则重置就成了不可逆操作
+await page.evaluate(() => window.__visualRevise.store.undo())
+await settle()
+const restored = await stats()
+ok(restored.total === beforeReset.total,
+   `⌘Z 撤销重置后连失联记录一起回来（${restored.total} / ${beforeReset.total}）`)
+
+// 单条「还原」同样要能消掉失联的那一行：它展示的是冻结快照而不是实时 diff，
+// 不重算的话页面已经还原了、列表里那行还杵着
+const one = await page.evaluate(() => {
+  const store = window.__visualRevise.store
+  const target = store.read().edits.find(e => e.orphaned)
+  if (!target) return null
+  store.undoElement(target.id)
+  return {
+    id: target.id,
+    stillListed: store.read().edits.some(e => e.id === target.id),
+  }
+})
+ok(one && !one.stillListed, '点单条「还原」，失联的那一行也会消失')
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

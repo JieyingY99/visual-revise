@@ -39,7 +39,8 @@ const editorState = () => page.evaluate(() => {
 })
 
 const startDraft = async (target = '.curve-card') => {
-  await page.keyboard.press('c')
+  // 模式常驻之后按 c 是「切换」，已经在评论模式时会把它关掉
+  await page.evaluate(() => window.__visualRevise.setMode('comment'))
   await page.waitForTimeout(250)
   await page.locator(target).first().click({ position: { x: 4, y: 4 } })
   await page.waitForTimeout(350)

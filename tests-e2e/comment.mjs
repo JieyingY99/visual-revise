@@ -22,8 +22,8 @@ ok(activeMode === 'comment', `工具条高亮当前模式：${activeMode}`)
 await page.locator('.curve-card').nth(1).click({ position: { x: 4, y: 4 } })
 await page.waitForTimeout(300)
 ok(await page.locator('visual-revise-comment-layer .bubble').count() === 1, '点击元素弹出评论输入框')
-ok(!(await page.evaluate(() => window.__visualRevise.comments.active)),
-   '非 Shift 点击后自动退出评论模式')
+ok(await page.evaluate(() => window.__visualRevise.comments.active),
+   '点击元素后仍留在评论模式——模式是用户选的，不该被一次点击切走')
 
 // 点击不应该选中元素
 ok(await page.evaluate(() => document.querySelectorAll('[data-selected]').length) === 0,
@@ -39,13 +39,11 @@ ok(stats.comments === 1, `评论已保存（${stats.comments} 条）`)
 ok(await page.locator('visual-revise-comment-layer .pin').count() === 1, '页面显示评论标记 pin')
 ok((await page.locator('visual-revise-comment-layer .pin').textContent()) === '1', 'pin 显示编号 1')
 
-// Shift 连续添加
-await page.keyboard.press('c')
-await page.waitForTimeout(200)
-await page.locator('.hero-title').click({ modifiers: ['Shift'] })
+// 连续标注：不需要按住 Shift，模式一直在
+await page.locator('.hero-title').click()
 await page.waitForTimeout(300)
 ok(await page.evaluate(() => window.__visualRevise.comments.active),
-   'Shift 点击后保持评论模式（可连续添加）')
+   '连着标注第二个元素，模式仍然保持')
 await page.locator('visual-revise-comment-layer .editor').fill('标题字号再大一点，字重加粗')
 await page.locator('visual-revise-comment-layer .save').click()
 await page.waitForTimeout(300)
@@ -164,7 +162,9 @@ const edgeProbe = (id, css) => page.evaluate(([id, css]) => {
 }, [id, css])
 
 const draftOn = async id => {
-  await page.keyboard.press('c')
+  // 模式常驻之后按 c 是「切换」——已经在评论模式时会把它关掉。
+  // 测试要的是「确保处于评论模式」，所以直接设值。
+  await page.evaluate(() => window.__visualRevise.setMode('comment'))
   await page.waitForTimeout(150)
   await page.locator(`#${id}`).click()
   await page.waitForTimeout(250)

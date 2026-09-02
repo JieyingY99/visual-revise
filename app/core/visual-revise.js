@@ -219,7 +219,7 @@ export const mountVisualRevise = visbug => {
   let mode = 'select'
 
   const MODE_HINTS = {
-    comment: '点击任意元素写下需求 · 按住 Shift 连续添加 · Esc 退出',
+    comment: '点击任意元素写下需求 · 可连续标注 · Esc 退出',
     reorder: '拖动 flex / grid 容器里的子元素调整顺序 · Esc 退出',
   }
 
@@ -257,8 +257,9 @@ export const mountVisualRevise = visbug => {
     e.preventDefault()
     e.stopPropagation()
 
+    // 模式保持不变：它是用户明确选的，一次点击就把它切走，
+    // 连着标注两个元素都得重新按一次 C
     comments.startDraft(target, e.clientX, e.clientY)
-    if (!e.shiftKey) setCommentMode(false)
   }
 
   // ── 文字编辑 ──────────────────────────────────────────────
@@ -344,9 +345,13 @@ export const mountVisualRevise = visbug => {
   toolbar.addEventListener('vr-close', () => visbug.remove())
   toolbar.addEventListener('vr-open-list', toggleList)
 
-  // 面板的 × 等同关闭整个编辑器：只藏面板会让用户以为关不掉，
-  // 而页面上其实还挂着选择引擎在拦截点击。
-  panel.addEventListener('vr-close', () => visbug.remove())
+  // 面板的 × 只收起面板，不动整个编辑器：工具条上有自己的 ×，
+  // 那才是退出的地方。取消选中即可——面板本来就是跟着选中出现的，
+  // 只藏不取消的话，下次选中它又冒出来，× 看着像没生效。
+  panel.addEventListener('vr-close', () => {
+    engine.unselect_all()
+    panel.hidden = true
+  })
   panel.addEventListener('vr-comment-toggle', () => setCommentMode(!comments.active))
   panel.addEventListener('vr-reorder-toggle', () => setReorderMode(!layoutDrag.active))
   list.addEventListener('vr-toast', e => toolbar.toast(e.detail.message, e.detail.kind))

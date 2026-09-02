@@ -127,6 +127,11 @@ export class CommentLayer extends HTMLElement {
   get hasDraft() { return !!this.#draft }
 
   startDraft(el, clientX, clientY) {
+    // 模式常驻之后，点下一个元素时上一条可能还没保存。有内容就先存下来：
+    // 静默丢掉用户刚打的字，是所有选项里最糟的一个。#commitDraft 自己会
+    // 判断空草稿，空的直接丢掉，不会冒出一条空备注。
+    if (this.#draft) this.#commitDraft()
+
     this.#draftKey++
     this.#draft = {
       el, x: clientX + scrollX, y: clientY + scrollY,
