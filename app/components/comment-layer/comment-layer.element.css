@@ -2,6 +2,7 @@
   --vr-pin:    #ff5c8a;
   --vr-bg:     #2c2c2c;
   --vr-raised: #383838;
+  --vr-sunken: #232323;
   --vr-border: #444;
   --vr-text:   #fff;
   --vr-mute:   #8c8c8c;
@@ -34,71 +35,169 @@
 .pin:hover { transform: translate(-50%, -50%) scale(1.15); }
 .pin[data-active] { background: var(--vr-accent); }
 
+/* 带参考图的 pin 加一圈标记，不用点开就知道里面有图 */
+.pin[data-has-images] { box-shadow: 0 2px 6px rgb(0 0 0 / .35), 0 0 0 2px var(--vr-accent); }
+
+/* ── 气泡 ──
+   竖向 flex：视口不够高时只让说明区收缩，输入框与按钮该多高还是多高，
+   否则一屏放不下时最先被压扁的会是正在打字的地方。 */
 .bubble {
   position: absolute;
-  width: 288px;
-  padding: 8px;
+  width: 360px;
+  max-height: calc(100vh - 24px);
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
   background: var(--vr-bg);
   border: 1px solid var(--vr-border);
-  border-radius: 6px;
-  box-shadow: 0 8px 24px rgb(0 0 0 / .4);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / .45);
   pointer-events: auto;
   color: var(--vr-text);
 }
+.bubble[data-drop] { outline: 2px dashed var(--vr-accent); outline-offset: 2px; }
 
-.bubble .sel {
+.bubble > * { flex: none; }
+
+.sel {
   display: block;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   font-family: ui-monospace, Menlo, monospace;
   font-size: 10px;
   color: var(--vr-accent);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-.bubble textarea {
-  width: 100%;
-  min-height: 60px;
-  padding: 6px;
-  font: inherit;
-  color: var(--vr-text);
+/* ── 输入区 ──
+   contenteditable 而不是 textarea：后者只能装纯文本，放不下行内的图片 chip。 */
+.editor-wrap {
   background: var(--vr-raised);
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: 8px;
+  padding: 8px 8px 4px;
+}
+.editor-wrap:focus-within { border-color: var(--vr-accent); }
+
+.editor {
+  min-height: 96px;
+  max-height: 220px;
+  overflow-y: auto;
   outline: none;
-  resize: vertical;
+  /* pre-wrap 才能让还原出来的换行照原样显示 */
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* chip 有实际高度，行距太挤会互相压住 */
+  line-height: 1.9;
+  font-size: 12px;
 }
-.bubble textarea:focus { border-color: var(--vr-accent); }
-.bubble textarea::placeholder { color: var(--vr-mute); }
-
-.bubble .actions { display: flex; gap: 6px; margin-top: 6px; }
-.bubble button {
-  flex: 1; height: 24px;
-  font: inherit; font-size: 11px;
-  border: none; border-radius: 4px; cursor: pointer;
+/* :empty 靠不住——里面只剩一个 <br> 时它就不成立了，改由脚本打标记 */
+.editor.is-empty::before {
+  content: attr(data-placeholder);
+  color: var(--vr-mute);
+  pointer-events: none;
 }
-.bubble .save { background: var(--vr-accent); color: #fff; }
-.bubble .cancel { background: var(--vr-raised); color: var(--vr-mute); }
-.bubble .cancel:hover { color: var(--vr-text); }
-.bubble .hint { margin-top: 6px; font-size: 10px; color: var(--vr-mute); text-align: center; }
 
-/* ── 参考图 ── */
-.bubble[data-drop] { outline: 2px dashed var(--vr-accent); outline-offset: 2px; }
+.editor-bar { display: flex; align-items: center; margin-top: 4px; }
 
-.refs { display: grid; gap: 4px; margin-top: 6px; }
+.add-image {
+  width: 26px; height: 26px;
+  display: grid; place-items: center;
+  font: 400 18px/1 -apple-system, system-ui, sans-serif;
+  color: var(--vr-mute);
+  background: transparent;
+  border: none; border-radius: 6px;
+  cursor: pointer;
+}
+.add-image:hover { background: #4a4a4a; color: var(--vr-text); }
+
+/* ── 行内图片 chip ──
+   contenteditable=false 让它成为一个整体：Backspace 一次删掉整块，
+   而不是把文件名一个字一个字啃掉。 */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 170px;
+  padding: 2px 8px 2px 3px;
+  margin: 0 1px;
+  vertical-align: -5px;
+  background: var(--vr-sunken);
+  border: 1px solid var(--vr-border);
+  border-radius: 6px;
+  cursor: default;
+  user-select: none;
+}
+.chip img,
+.chip-noimg {
+  flex: none;
+  width: 16px; height: 16px;
+  border-radius: 3px;
+  background: #111;
+  display: block;
+}
+.chip img { object-fit: cover; }
+.chip-noimg {
+  display: grid; place-items: center;
+  font: 500 7px/1 ui-monospace, Menlo, monospace;
+  color: var(--vr-mute);
+}
+.chip-name {
+  font-size: 11px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ── hover 大图 ── */
+.preview {
+  position: absolute;
+  /* 不放大小图，但也不能让一张 16px 的图标缩成一个看不见的点 */
+  min-width: 56px;
+  min-height: 40px;
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  background: var(--vr-bg);
+  border: 1px solid var(--vr-border);
+  border-radius: 8px;
+  box-shadow: 0 14px 36px rgb(0 0 0 / .55);
+  pointer-events: none;
+}
+.preview[hidden] { display: none; }
+.preview img { display: block; border-radius: 4px; background: #111; }
+
+/* ── 图片说明区 ──
+   五行以内跟着内容长，再多就自己滚，别把整个气泡撑出屏幕。
+   flex-shrink 留着，视口太矮时先压缩这里。 */
+.refs {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  max-height: 384px;
+  overflow-y: auto;
+  flex: 0 1 auto;
+  min-height: 0;
+}
+.refs[hidden] { display: none; }
 
 .ref {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  min-width: 0;
-  padding: 4px;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
   background: var(--vr-raised);
-  border-radius: 4px;
+  border-radius: 6px;
+}
+
+/* min-width:0 不能省：flex 子项默认按内容固有宽度撑开，
+   长文件名会把整行顶出气泡，省略号也就永远不生效 */
+.ref-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .ref-thumb {
   flex: none;
-  width: 30px; height: 30px;
+  width: 24px; height: 24px;
   border-radius: 3px;
   border: 1px solid var(--vr-border);
   overflow: hidden;
@@ -113,29 +212,20 @@
   color: var(--vr-mute);
 }
 
-/* min-width:0 不能省：flex 子项默认按内容固有宽度撑开，
-   长文件名会把整行顶出气泡，省略号也就永远不生效 */
-.ref-body { display: grid; gap: 2px; min-width: 0; flex: 1; }
+/* 与句子里的 [图N] 对上号，不然看不出哪个 chip 对应哪条说明 */
+.ref-no {
+  flex: none;
+  font: 500 10px/1 ui-monospace, Menlo, monospace;
+  color: var(--vr-accent);
+}
 
 .ref-name {
-  font-size: 10px;
-  color: var(--vr-mute);
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--vr-text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-
-.ref-note {
-  width: 100%;
-  height: 20px;
-  padding: 0 4px;
-  font: inherit; font-size: 11px;
-  color: var(--vr-text);
-  background: var(--vr-bg);
-  border: 1px solid transparent;
-  border-radius: 3px;
-  outline: none;
-}
-.ref-note:focus { border-color: var(--vr-accent); }
-.ref-note::placeholder { color: var(--vr-mute); }
 
 .ref-size {
   flex: none;
@@ -155,20 +245,30 @@
 }
 .ref-del:hover { background: #4a3030; color: var(--vr-text); }
 
-.ref-add { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
-
-.add-image {
-  flex: none;
-  height: 22px; padding: 0 8px;
+.ref-note {
+  width: 100%;
+  height: 34px;
+  padding: 5px 6px;
   font: inherit; font-size: 11px;
   color: var(--vr-text);
-  background: var(--vr-raised);
-  border: none; border-radius: 4px;
-  cursor: pointer;
+  background: var(--vr-sunken);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  outline: none;
+  resize: none;
 }
-.add-image:hover { background: #454545; }
+.ref-note:focus { border-color: var(--vr-accent); }
+.ref-note::placeholder { color: var(--vr-mute); }
 
-.ref-hint { font-size: 10px; color: var(--vr-mute); }
+/* ── 底部动作 ── */
+.actions { display: flex; gap: 6px; margin-top: 8px; }
+.actions button {
+  flex: 1; height: 28px;
+  font: inherit; font-size: 12px;
+  border: none; border-radius: 6px; cursor: pointer;
+}
+.save { background: var(--vr-accent); color: #fff; }
+.cancel { background: var(--vr-raised); color: var(--vr-mute); }
+.cancel:hover { color: var(--vr-text); }
 
-/* 带参考图的 pin 加一圈标记，不用点开就知道里面有图 */
-.pin[data-has-images] { box-shadow: 0 2px 6px rgb(0 0 0 / .35), 0 0 0 2px var(--vr-accent); }
+.hint { margin-top: 6px; font-size: 10px; color: var(--vr-mute); text-align: center; }

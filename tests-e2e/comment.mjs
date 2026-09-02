@@ -30,7 +30,7 @@ ok(await page.evaluate(() => document.querySelectorAll('[data-selected]').length
    '评论模式下点击不选中元素')
 
 // 输入并保存
-await page.locator('visual-revise-comment-layer textarea').fill('鼠标移入时增加悬浮效果，并让卡片变亮')
+await page.locator('visual-revise-comment-layer .editor').fill('鼠标移入时增加悬浮效果，并让卡片变亮')
 await page.locator('visual-revise-comment-layer .save').click()
 await page.waitForTimeout(300)
 
@@ -46,7 +46,7 @@ await page.locator('.hero-title').click({ modifiers: ['Shift'] })
 await page.waitForTimeout(300)
 ok(await page.evaluate(() => window.__visualRevise.comments.active),
    'Shift 点击后保持评论模式（可连续添加）')
-await page.locator('visual-revise-comment-layer textarea').fill('标题字号再大一点，字重加粗')
+await page.locator('visual-revise-comment-layer .editor').fill('标题字号再大一点，字重加粗')
 await page.locator('visual-revise-comment-layer .save').click()
 await page.waitForTimeout(300)
 ok(await page.locator('visual-revise-comment-layer .pin').count() === 2, '第二条评论 pin 出现')
@@ -54,9 +54,9 @@ ok(await page.locator('visual-revise-comment-layer .pin').count() === 2, '第二
 // 点击 pin 编辑
 await page.locator('visual-revise-comment-layer .pin').first().click()
 await page.waitForTimeout(300)
-const draftText = await page.locator('visual-revise-comment-layer textarea').inputValue()
+const draftText = await page.locator('visual-revise-comment-layer .editor').textContent()
 ok(draftText.includes('悬浮效果'), '点击 pin 可编辑原评论')
-await page.locator('visual-revise-comment-layer textarea').fill('鼠标移入时上浮 4px 并加阴影')
+await page.locator('visual-revise-comment-layer .editor').fill('鼠标移入时上浮 4px 并加阴影')
 await page.locator('visual-revise-comment-layer .save').click()
 await page.waitForTimeout(300)
 const updated = await page.evaluate(() => window.__visualRevise.store.read().comments[0].text)
@@ -200,7 +200,7 @@ await page.waitForTimeout(150)
 
 // pin 同样要夹住——它飞出视口，这条评论就再也点不开了
 await draftOn('vr-edge-r')
-await page.locator('visual-revise-comment-layer textarea').fill('边界检测')
+await page.locator('visual-revise-comment-layer .editor').fill('边界检测')
 await page.locator('visual-revise-comment-layer .save').click()
 await page.waitForTimeout(250)
 const pinAtRight = await boxOf(':last-pin')

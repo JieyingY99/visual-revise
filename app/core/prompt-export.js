@@ -463,20 +463,25 @@ export const buildPrompt = (state, meta = {}, refs = null) => {
       ]
       if (c.text) lines.push(`  - 需求：${c.text}`)
 
-      for (const img of c.images || []) {
+      // 编号必须和需求文本里的 [图N] 一致：用户是把图插在句子的具体位置上的，
+      // 只列一堆路径的话，那层「这句话说的是这张图」的信息就丢了
+      ;(c.images || []).forEach((img, i) => {
         const file = refs?.files?.find(f => f.id === img.id)
         const note = img.note ? ` —— ${img.note}` : ''
+        const tag = `[图${i + 1}]`
 
         lines.push(file?.path
-          ? `  - 参考图：\`${file.path}\`${refs?.exact === false ? '（路径为推测）' : ''}${note}`
-          : `  - 参考图：${img.name}${note}（落盘失败，请向用户索取此文件）`)
-      }
+          ? `  - ${tag} \`${file.path}\`${refs?.exact === false ? '（路径为推测）' : ''}${note}`
+          : `  - ${tag} ${img.name}${note}（落盘失败，请向用户索取此文件）`)
+      })
 
       return lines.join('\n')
     }),
     '',
     ...(hasRefImages
-      ? ['> 参考图是用户想要的目标效果，请先用读图工具打开看过再动手，', '']
+      ? ['> 参考图是用户想要的目标效果，请先用读图工具打开看过再动手。',
+         '> 需求文本里的 `[图1]`、`[图2]` 指的就是紧随其后列出的同号参考图——',
+         '> 用户把图插在句子的哪个位置，说的就是那一处。', '']
       : []),
   ].join('\n') : ''
 
