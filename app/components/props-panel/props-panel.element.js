@@ -5,6 +5,7 @@ import {
   alignSupported, alignPlan, isReplacedElement,
 } from '../../core/controls.js'
 import { ChangeStore } from '../../core/change-store.js'
+import { pinPlacement } from '../../core/placement.js'
 import { readComputed, elementId } from '../../core/snapshot.js'
 import { stableClasses } from '../../core/anchors.js'
 import { findSharedElements, describeShared } from '../../core/shared-elements.js'
@@ -1597,6 +1598,8 @@ export class PropsPanel extends HTMLElement {
       const offY = e.clientY - rect.top
 
       const move = ev => {
+        // 拖过一次就别再自动摆位了：这是用户明确的意图
+        pinPlacement(this)
         this.style.left = `${ev.clientX - offX}px`
         this.style.top = `${ev.clientY - offY}px`
         this.style.right = 'auto'

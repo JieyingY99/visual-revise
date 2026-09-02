@@ -12,6 +12,7 @@ import { exportJSON, importJSON, downloadJSON, pickAndImport } from './json-io.j
 import { fingerprint, findSharedElements } from './shared-elements.js'
 import { loadLocalFonts, isSupported as fontsSupported } from './local-fonts.js'
 import { clearHighlight } from './highlight.js'
+import { placeBeside, unpinPlacement } from './placement.js'
 import { resizeMode, planResize, currentSize, isMainAxis, cssVariables } from './resizing.js'
 import { parseTracks, serializeTracks, readTracks, gridShape } from './grid.js'
 import { flowOf, planFlow, alignmentOf, planAlignment } from './layout.js'
@@ -62,6 +63,22 @@ export const mountVisualRevise = visbug => {
   let mode = 'select'
   let suspended = []
   let listWasOpen = false
+  // Tab 的「完全让开」：连工具条一起藏。浏览模式只让开页面，工具条留着，
+  // 否则进去就出不来了
+  let stealth = false
+  let modeBeforeStealth = 'select'
+
+  // 工具条浮在顶部中间，面板撞上它就得让开
+  const toolbarBox = () => toolbar.hidden ? null : toolbar.getBoundingClientRect()
+
+  // 只在换了元素时重新摆位，不跟随滚动：面板是 fixed 的，
+  // 滚一下就重算会让它一路乱跳，比偶尔挡住元素更难受
+  let placedFor = null
+  const placeFor = (el, panelEl) => {
+    if (!el?.isConnected || el === placedFor) return
+    placedFor = el
+    placeBeside(panelEl, el, { avoid: [toolbarBox()] })
+  }
 
   const onSelected = els => {
     if (interactive) return
@@ -69,6 +86,7 @@ export const mountVisualRevise = visbug => {
     // 重排模式下选中元素要看的是它在结构里的位置，不是它的属性
     if (mode === 'reorder') {
       tree.setTarget(els?.[0] || null)
+      placeFor(els?.[0], tree)
       return
     }
 
@@ -77,12 +95,15 @@ export const mountVisualRevise = visbug => {
     // 工具条是入口，属性面板只在真正选中元素后出现，
     // 否则一打开就有两块 UI 抢注意力
     panel.hidden = !(els && els.length)
+    placeFor(els?.[0], panel)
   }
 
   engine.onSelectedUpdate(onSelected)
 
   // 交互态：让页面恢复自己的 hover / click 行为，供用户验证真实交互。
   // 选中集在退出时原样恢复，改动记录不受影响（它活在 ChangeStore 里）。
+  // 让开页面：暂停选择引擎、收掉所有覆盖层。工具条藏不藏由 stealth 决定，
+  // 这是浏览模式和 Tab「完全让开」唯一的区别。
   const enterInteractive = () => {
     if (interactive) return
     interactive = true
@@ -91,11 +112,11 @@ export const mountVisualRevise = visbug => {
     engine.pause()
     document.querySelectorAll(UI_TAGS).forEach(el => { el.style.display = 'none' })
     panel.hidden = true
+    tree.hidden = true
     listWasOpen = !list.hidden
     list.hidden = true
+    // pin 有 pointer-events，留着会挡住页面上那个位置的点击
     comments.hidden = true
-    toolbar.hidden = true
-    setMode('select')
     clearHighlight()
   }
 
@@ -106,12 +127,22 @@ export const mountVisualRevise = visbug => {
     document.querySelectorAll(UI_TAGS).forEach(el => { el.style.display = '' })
     list.hidden = !listWasOpen
     comments.hidden = false
-    toolbar.hidden = false
     suspended.filter(el => el.isConnected).forEach(el => engine.select(el))
-    panel.setTargets(engine.selection())
   }
 
-  const toggleInteractive = () => interactive ? exitInteractive() : enterInteractive()
+  // Tab：在当前编辑模式和「完全让开」之间来回。让开时连工具条一起藏，
+  // 所以只能靠再按一次 Tab 回来——这正是它和浏览模式的分工。
+  const toggleInteractive = () => {
+    if (stealth) {
+      stealth = false
+      setMode(modeBeforeStealth)
+      return
+    }
+    modeBeforeStealth = mode
+    stealth = true
+    setMode('browse')
+    toolbar.hidden = true
+  }
 
   // capture 阶段拦截，抢在 hotkeys-js 的 document 监听之前
   const doUndo = () => {
@@ -200,7 +231,7 @@ export const mountVisualRevise = visbug => {
     if (!interactive) {
       const key = e.key.toLowerCase()
 
-      const MODE_KEYS = { v: 'select', c: 'comment', r: 'reorder' }
+      const MODE_KEYS = { b: 'browse', v: 'select', c: 'comment', r: 'reorder' }
       if (MODE_KEYS[key]) {
         e.preventDefault()
         e.stopPropagation()
@@ -226,6 +257,9 @@ export const mountVisualRevise = visbug => {
     }
 
     if (e.key === 'Escape') {
+      // 浏览模式下我们只留 Tab 和 Esc，其余按键一律放行给页面——
+      // 用户此刻是在「用」这个网站，占着单字母会把它自己的快捷键打坏
+      if (interactive) { e.preventDefault(); e.stopPropagation(); setMode('select'); return }
       if (comments.hasDraft) { e.preventDefault(); e.stopPropagation(); comments.cancelDraft(); return }
       if (mode !== 'select') { e.preventDefault(); e.stopPropagation(); setMode('select') }
     }
@@ -236,6 +270,7 @@ export const mountVisualRevise = visbug => {
   // 状态与工具条高亮不会分叉。
 
   const MODE_HINTS = {
+    browse: '页面已交还给你，正常点击即可 · Esc 或再点一次回到编辑',
     comment: '点击任意元素写下需求 · 可连续标注 · Esc 退出',
     reorder: '拖动 flex / grid 容器里的子元素调整顺序 · Esc 退出',
   }
@@ -243,6 +278,11 @@ export const mountVisualRevise = visbug => {
   const setMode = next => {
     const changed = mode !== next
     mode = next
+
+    // 浏览模式就是「让开页面」，只是工具条留着
+    next === 'browse' ? enterInteractive() : exitInteractive()
+    if (next !== 'browse') stealth = false
+    toolbar.hidden = stealth
 
     comments.setActive(next === 'comment')
     layoutDrag.setActive(next === 'reorder')
@@ -379,16 +419,17 @@ export const mountVisualRevise = visbug => {
   tree.addEventListener('vr-tree-reorder', e =>
     toolbar.toast(`已重排 ${e.detail?.ordered?.length ?? 0} 个元素`))
 
-  // 树上的 × 退出重排模式，而不是只把树藏起来——树是这个模式的界面，
-  // 只藏界面会留下一个看不出自己还开着的模式
-  tree.addEventListener('vr-tree-close', () => setMode('select'))
+  tree.addEventListener('vr-tree-close', () => setMode('browse'))
 
-  // 面板的 × 只收起面板，不动整个编辑器：工具条上有自己的 ×，
-  // 那才是退出的地方。取消选中即可——面板本来就是跟着选中出现的，
-  // 只藏不取消的话，下次选中它又冒出来，× 看着像没生效。
+  // 两个面板的 × 都是「我不改了，把页面还给我」——去浏览模式。
+  // 只藏面板的话，选择引擎还在拦点击，页面看着能用其实点不动。
+  // 退出整个编辑器是工具条上那个 × 的事。
   panel.addEventListener('vr-close', () => {
-    engine.unselect_all()
-    panel.hidden = true
+    // 收起面板等于这一轮结束，把手动拖的位置也一并作废，
+    // 下次选中重新按元素摆
+    unpinPlacement(panel)
+    placedFor = null
+    setMode('browse')
   })
   panel.addEventListener('vr-comment-toggle', () => setCommentMode(!comments.active))
   panel.addEventListener('vr-reorder-toggle', () => setReorderMode(!layoutDrag.active))

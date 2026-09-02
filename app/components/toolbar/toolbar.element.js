@@ -15,6 +15,13 @@ const ICONS = {
     `<rect x="3" y="3" width="18" height="18" rx="4"/>`,
     { fill: `<rect x="7.5" y="7.5" width="9" height="9" rx="1.5" fill="currentColor" stroke="none" opacity=".92"/>` }),
 
+  // 浏览：一只手。这个模式下插件完全让开，页面照常点
+  browse: icon(`
+    <path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/>
+    <path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/>
+    <path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/>
+    <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>`),
+
   // 选择元素：框 + 指针（Lucide square-mouse-pointer）
   select: icon(`
     <path d="M21 11V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6"/>
@@ -46,6 +53,7 @@ const ICONS = {
 // 标签藏起来之后，功能名只剩 tooltip 承载，所以名称与快捷键必须成对定义，
 // 免得两处各写一份、改了一处忘另一处。
 const MODES = [
+  { id: 'browse',  label: '浏览页面', key: 'B', icon: ICONS.browse },
   { id: 'select',  label: '选择元素', key: 'V', icon: ICONS.select },
   { id: 'comment', label: '评论',     key: 'C', icon: ICONS.comment },
   { id: 'reorder', label: '重排',     key: 'R', icon: ICONS.reorder },

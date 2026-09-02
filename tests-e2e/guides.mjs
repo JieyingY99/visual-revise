@@ -9,10 +9,12 @@ await injectVisBug(page, origin)
 
 console.log('  当前工具:', await page.evaluate(() => document.querySelector('vis-bug').activeTool))
 
-// 选中一个元素，再 hover 另一个 —— VisBug guides 的测距交互
+// 选中一个元素，再 hover 另一个 —— VisBug guides 的测距交互。
+// hover 左边那张而不是右边：属性面板会摆到选中元素的右侧，右邻正好被它盖住。
+// 这是「面板贴着选中元素」这个设计固有的代价，不是 bug。
 await page.locator('.curve-card').nth(1).click({ position: { x: 4, y: 4 } })
 await page.waitForTimeout(300)
-await page.locator('.curve-card').nth(2).hover({ position: { x: 4, y: 4 } })
+await page.locator('.curve-card').nth(0).hover({ position: { x: 4, y: 4 } })
 await page.waitForTimeout(500)
 
 const measure = await page.evaluate(() => ({

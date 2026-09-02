@@ -241,6 +241,78 @@ await page.evaluate(() => {
 })
 
 
+// ── 摆位 ────────────────────────────────────────────────────
+// 面板写死在右上角的话，选到页面右侧的元素时正好把它盖住——
+// 而改属性的全部意义就是看着它变。
+
+await page.evaluate(() => {
+  for (const [id, css] of [['vr-left', 'left:20px'], ['vr-right', 'right:20px']]) {
+    const d = document.createElement('div')
+    d.id = id
+    d.textContent = id
+    d.style.cssText = `position:fixed;top:300px;width:160px;height:80px;background:#ddd;z-index:1;${css}`
+    document.body.append(d)
+  }
+})
+
+const placement = async sel => {
+  await page.locator(sel).click()
+  await page.waitForTimeout(400)
+  return page.evaluate(s => {
+    const hit = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+    const p = document.querySelector('visual-revise-panel').getBoundingClientRect()
+    const t = document.querySelector(s).getBoundingClientRect()
+    const bar = document.querySelector('visual-revise-toolbar').getBoundingClientRect()
+    return {
+      onRightOfTarget: p.left >= t.right,
+      onLeftOfTarget: p.right <= t.left,
+      inside: p.left >= -0.5 && p.top >= -0.5
+        && p.right <= document.documentElement.clientWidth + 0.5
+        && p.bottom <= document.documentElement.clientHeight + 0.5,
+      overlapsTarget: hit(p, t),
+      overlapsToolbar: hit(p, bar),
+      left: Math.round(p.left),
+    }
+  }, sel)
+}
+
+const left = await placement('#vr-left')
+ok(left.onRightOfTarget, `贴左的元素：面板出现在它右边（left=${left.left}）`)
+ok(left.inside && !left.overlapsTarget, '完整落在视口内，且没盖住选中的元素')
+ok(!left.overlapsToolbar, '也没被工具条压住')
+
+const right = await placement('#vr-right')
+ok(right.onLeftOfTarget, `贴右的元素：面板翻到它左边（left=${right.left}）`)
+ok(right.inside && !right.overlapsTarget, '同样完整在视口内、不盖住元素')
+
+// 手动拖过之后不再自动摆位：那是用户明确的意图
+const dragged = await page.evaluate(async () => {
+  const panel = document.querySelector('visual-revise-panel')
+  const header = panel.shadowRoot.querySelector('header')
+  const r = header.getBoundingClientRect()
+  const opts = { bubbles: true, composed: true, pointerId: 1, button: 0 }
+  header.dispatchEvent(new PointerEvent('pointerdown', { ...opts, clientX: r.left + 40, clientY: r.top + 10 }))
+  header.dispatchEvent(new PointerEvent('pointermove', { ...opts, clientX: 300, clientY: 500 }))
+  header.dispatchEvent(new PointerEvent('pointerup', { ...opts, clientX: 300, clientY: 500 }))
+  await new Promise(r => setTimeout(r, 100))
+  return { pinned: panel.hasAttribute('data-user-placed'), left: Math.round(panel.getBoundingClientRect().left) }
+})
+ok(dragged.pinned, '拖动后面板被钉住')
+
+await page.locator('#vr-left').click()
+await page.waitForTimeout(400)
+const afterPin = await page.evaluate(() =>
+  Math.round(document.querySelector('visual-revise-panel').getBoundingClientRect().left))
+ok(afterPin === dragged.left,
+   `钉住之后选别的元素也不再自动移动（${dragged.left} → ${afterPin}）`)
+
+await page.evaluate(() => {
+  document.querySelector('#vr-left')?.remove()
+  document.querySelector('#vr-right')?.remove()
+  const p = document.querySelector('visual-revise-panel')
+  p.removeAttribute('data-user-placed')
+})
+
 // ── 面板的 × ────────────────────────────────────────────────
 // 它只收起面板。退出整个编辑器是工具条上那个 × 的事——两个 × 干同一件事
 // 的话，想收起面板继续看页面就没有办法了。

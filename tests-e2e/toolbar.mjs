@@ -17,7 +17,7 @@ const litMode = () => page.evaluate(() => {
 })
 
 ok(await page.locator('visual-revise-toolbar').count() === 1, '工具条已挂载')
-ok(await bar('button[data-mode]').count() === 3, '三个模式按钮')
+ok(await bar('button[data-mode]').count() === 4, '四个模式按钮（浏览 / 选择 / 评论 / 重排）')
 ok(await bar('.sep').count() === 4, '分组竖线（撤销 / 重做自成一组）')
 
 // 初始态
@@ -117,7 +117,7 @@ const iconCheck = await page.evaluate(() => {
     hasEmoji: /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(sr.textContent),
   }
 })
-ok(iconCheck.svgCount === 9, `全部图标为内联 SVG（${iconCheck.svgCount} 个，含撤销 / 重做）`)
+ok(iconCheck.svgCount === 10, `全部图标为内联 SVG（${iconCheck.svgCount} 个，含撤销 / 重做）`)
 ok(!iconCheck.hasEmoji, '界面文本中不含 emoji')
 
 // ── 纯图标 + hover 气泡 ─────────────────────────────────────
@@ -138,7 +138,7 @@ const order = await page.evaluate(() => {
   return [...sr.querySelectorAll('.bar button')].map(b =>
     b.dataset.mode || b.className.split(' ')[0])
 })
-ok(order.join(',') === 'select,comment,reorder,undo,redo,list,copy,close',
+ok(order.join(',') === 'browse,select,comment,reorder,undo,redo,list,copy,close',
    `撤销 / 重做排在出口那组前面：${order.join(' · ')}`)
 
 const tipOf = async sel => {
@@ -158,6 +158,7 @@ const tipOf = async sel => {
 }
 
 for (const [sel, label, key] of [
+  ['[data-mode="browse"]',  '浏览页面', 'B'],
   ['[data-mode="select"]',  '选择元素', 'V'],
   ['[data-mode="comment"]', '评论',     'C'],
   ['[data-mode="reorder"]', '重排',     'R'],
@@ -220,6 +221,69 @@ ok(await page.inputValue('#vr-key-probe') === 'vlp',
    '在页面输入框里打 v / l / p 会正常输入，不触发快捷键')
 ok(await curMode() === 'select', '输入过程中模式未被误切')
 await page.evaluate(() => document.querySelector('#vr-key-probe')?.remove())
+
+// ── 浏览模式 ────────────────────────────────────────────────
+// 这个模式把页面完全还给用户：选择引擎暂停、覆盖层收起、评论 pin 也藏起来
+// （它们有 pointer-events，留着会挡住页面上那个位置的点击）。
+// 工具条留着——不然进去就出不来了。
+
+const vrState = () => page.evaluate(() => ({
+  mode: window.__visualRevise.mode,
+  interactive: window.__visualRevise.interactive,
+  toolbar: !document.querySelector('visual-revise-toolbar').hidden,
+  comments: !document.querySelector('visual-revise-comment-layer').hidden,
+  panel: !document.querySelector('visual-revise-panel').hidden,
+}))
+
+await page.keyboard.press('Escape')
+await page.keyboard.press('b')
+await page.waitForTimeout(300)
+const browsing = await vrState()
+ok(browsing.mode === 'browse' && browsing.interactive, 'B 进入浏览模式')
+ok(browsing.toolbar, '工具条留着——藏了就回不来了')
+ok(!browsing.comments, '评论 pin 隐藏，不挡住页面上那个位置的点击')
+
+await page.locator('.curve-card').first().click()
+await page.waitForTimeout(250)
+ok(await page.evaluate(() => document.querySelectorAll('[data-selected]').length) === 0,
+   '浏览模式下点击页面不会选中元素，页面照常工作')
+
+// 用户此刻在「用」这个网站，占着单字母会把它自己的快捷键打坏
+await page.keyboard.press('v')
+await page.keyboard.press('c')
+await page.keyboard.press('r')
+await page.waitForTimeout(250)
+ok((await vrState()).mode === 'browse', '浏览模式下单字母按键放行给页面，不切模式')
+
+await page.keyboard.press('Escape')
+await page.waitForTimeout(300)
+ok((await vrState()).mode === 'select', 'Esc 回到选择元素')
+
+// Tab 是另一件事：连工具条一起藏，完全让开
+await page.keyboard.press('Tab')
+await page.waitForTimeout(300)
+const stealth = await vrState()
+ok(stealth.interactive && !stealth.toolbar, 'Tab 连工具条一起藏（完全让开）')
+await page.keyboard.press('Tab')
+await page.waitForTimeout(300)
+ok((await vrState()).mode === 'select', '再按 Tab 回到原来的模式')
+
+// 两个面板的 × 都是「我不改了，把页面还给我」
+await page.locator('.curve-card').first().click()
+await page.waitForTimeout(300)
+ok((await vrState()).panel, '选中元素后属性面板出现')
+await page.locator('visual-revise-panel .close').click()
+await page.waitForTimeout(300)
+ok((await vrState()).mode === 'browse', '属性面板的 × 去到浏览模式')
+
+await page.evaluate(() => window.__visualRevise.setMode('reorder'))
+await page.waitForTimeout(300)
+await page.locator('visual-revise-tree .close').click()
+await page.waitForTimeout(300)
+ok((await vrState()).mode === 'browse', '结构树的 × 同样去到浏览模式')
+
+await page.evaluate(() => window.__visualRevise.setMode('select'))
+await page.waitForTimeout(200)
 
 // 关闭按钮
 await bar('.close').click()
