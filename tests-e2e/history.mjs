@@ -163,8 +163,18 @@ ok((await hist()).depth === depthBefore,
 // ── 工具条按钮 ──────────────────────────────────────────────
 await page.keyboard.press('Escape')
 ok(!(await bar('.undo').isDisabled()), '有历史时撤销按钮可用')
-const tip = await bar('.undo').getAttribute('title')
-ok(tip.includes('撤销：'), `按钮写明将撤销什么：${tip}`)
+await bar('.undo').hover()
+await page.waitForTimeout(200)
+const tip = await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-toolbar').shadowRoot
+  const box = sr.querySelector('.tip')
+  return box?.hidden ? null : {
+    label: box.querySelector('.tip-label').textContent,
+    key: box.querySelector('.tip-key').textContent,
+  }
+})
+ok(tip?.label.includes('撤销：'), `hover 气泡写明将撤销什么：${tip?.label}`)
+ok(tip?.key === '⌘Z', `气泡里带着快捷键：${tip?.key}`)
 
 await page.evaluate(() => window.__visualRevise.store.history.clear())
 await page.waitForTimeout(300)

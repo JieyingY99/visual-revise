@@ -1,11 +1,12 @@
 import { ChangeStore } from '../../core/change-store.js'
 import { default as bar_css } from './toolbar.element.css'
 
-// 线性图标，24×24 视框、2px 描边、圆角端点——与 Lucide 同一套几何规范，
-// 保证并排时视觉重量一致。stroke 用 currentColor，由按钮状态驱动颜色。
-const icon = (paths, { size = 17, fill = '' } = {}) => `
+// 线性图标，24×24 视框、圆角端点——与 Lucide 同一套几何规范，保证并排时
+// 视觉重量一致。描边 1.5 而不是 2：并排一整排时 2px 会糊成一团黑，
+// 细一档、尺寸再放大一点，观感才清爽。stroke 用 currentColor，由按钮状态驱动。
+const icon = (paths, { size = 18, fill = '' } = {}) => `
   <svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none"
-       stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+       stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
        aria-hidden="true">${fill}${paths}</svg>`
 
 const ICONS = {
@@ -42,11 +43,24 @@ const ICONS = {
   close: icon(`<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`),
 }
 
+// 标签藏起来之后，功能名只剩 tooltip 承载，所以名称与快捷键必须成对定义，
+// 免得两处各写一份、改了一处忘另一处。
 const MODES = [
-  { id: 'select',  label: '选择元素', icon: ICONS.select,  hint: '点击页面元素，在右侧面板调整样式' },
-  { id: 'comment', label: '评论',     icon: ICONS.comment, hint: '在元素上写交互需求（C）' },
-  { id: 'reorder', label: '重排',     icon: ICONS.reorder, hint: '拖动子元素调整顺序（R）' },
+  { id: 'select',  label: '选择元素', key: 'V', icon: ICONS.select },
+  { id: 'comment', label: '评论',     key: 'C', icon: ICONS.comment },
+  { id: 'reorder', label: '重排',     key: 'R', icon: ICONS.reorder },
 ]
+
+// 关闭没有自定义快捷键：⌥⇧D 是浏览器命令，按一下就把编辑器收起来，
+// 本来就是唤起用的那个键
+const TIPS = {
+  brand: ['Visual Revise', ''],
+  list:  ['改动记录', 'L'],
+  copy:  ['复制提示词', 'P'],
+  undo:  ['撤销', '⌘Z'],
+  redo:  ['重做', '⌘⇧Z'],
+  close: ['关闭编辑器', '⌥⇧D'],
+}
 
 export class ReviseToolbar extends HTMLElement {
   #shadow
@@ -66,24 +80,23 @@ export class ReviseToolbar extends HTMLElement {
     this.#shadow.innerHTML = `
       <style>${bar_css}</style>
       <div class="bar">
-        <div class="brand" title="Visual Revise">${ICONS.brand}</div>
+        <div class="brand" data-tip="brand">${ICONS.brand}</div>
         <div class="sep"></div>
         ${MODES.map(m => `
-          <button data-mode="${m.id}" title="${m.hint}">${m.icon}<span>${m.label}</span></button>
+          <button data-mode="${m.id}" data-tip="mode:${m.id}">${m.icon}</button>
         `).join('')}
         <div class="sep"></div>
-        <button class="list" title="查看全部改动记录">
-          ${ICONS.list}<span>记录</span><span class="count" data-empty>0</span>
+        <button class="list" data-tip="list">
+          ${ICONS.list}<span class="count" data-empty>0</span>
         </button>
-        <button class="copy" title="把全部改动整理成提示词复制到剪贴板">
-          ${ICONS.copy}<span>复制提示词</span>
-        </button>
+        <button class="copy" data-tip="copy">${ICONS.copy}</button>
         <div class="sep"></div>
-        <button class="undo icon-only" title="撤销（⌘Z）" disabled>${ICONS.undo}</button>
-        <button class="redo icon-only" title="重做（⌘⇧Z）" disabled>${ICONS.redo}</button>
+        <button class="undo" data-tip="undo" disabled>${ICONS.undo}</button>
+        <button class="redo" data-tip="redo" disabled>${ICONS.redo}</button>
         <div class="sep"></div>
-        <button class="close icon-only" title="关闭编辑器">${ICONS.close}</button>
+        <button class="close" data-tip="close">${ICONS.close}</button>
       </div>
+      <div class="tip" hidden><span class="tip-label"></span><span class="tip-key"></span></div>
       `
 
     this.#bind()
@@ -112,15 +125,17 @@ export class ReviseToolbar extends HTMLElement {
     const count = this.#shadow.querySelector('.count')
     // 按钮上写清将要撤销的是什么：只画一个灰掉的箭头，用户没法判断
     // 点下去会发生什么，也就不敢点
-    for (const [cls, can, label, key] of [
-      ['.undo', ChangeStore.canUndo, ChangeStore.history.undoLabel, '⌘Z'],
-      ['.redo', ChangeStore.canRedo, ChangeStore.history.redoLabel, '⌘⇧Z'],
+    for (const [cls, can, label] of [
+      ['.undo', ChangeStore.canUndo, ChangeStore.history.undoLabel],
+      ['.redo', ChangeStore.canRedo, ChangeStore.history.redoLabel],
     ]) {
       const btn = this.#shadow.querySelector(cls)
       if (!btn) continue
       btn.disabled = !can
       const action = cls === '.undo' ? '撤销' : '重做'
-      btn.title = can ? `${action}：${label || '上一步'}（${key}）` : `没有可${action}的操作`
+      // 写进 dataset 而不是 title：气泡由我们自己画，留着 title
+      // 会让原生提示和自定义气泡一起冒出来，叠成两层
+      btn.dataset.tipLabel = can ? `${action}：${label || '上一步'}` : `没有可${action}的操作`
     }
 
     const copy = this.#shadow.querySelector('.copy')
@@ -191,9 +206,68 @@ export class ReviseToolbar extends HTMLElement {
     this.dispatchEvent(new CustomEvent(name, { bubbles: true, composed: true, detail }))
   }
 
+  // 标签藏起来之后，功能名和快捷键全靠这个气泡。名称取自 MODES / TIPS，
+  // 撤销这类内容会变的则读 dataset —— 定义只有一份，不会两处走样。
+  #tipFor(el) {
+    const kind = el.dataset.tip || ''
+    if (kind.startsWith('mode:')) {
+      const mode = MODES.find(m => m.id === kind.slice(5))
+      return mode ? [mode.label, mode.key] : null
+    }
+    const preset = TIPS[kind]
+    if (!preset) return null
+    return [el.dataset.tipLabel || preset[0], preset[1]]
+  }
+
+  #showTip(el) {
+    const tip = this.#shadow.querySelector('.tip')
+    const entry = this.#tipFor(el)
+    if (!tip || !entry) return
+
+    const [label, key] = entry
+    tip.querySelector('.tip-label').textContent = label
+    tip.querySelector('.tip-key').textContent = key || ''
+    tip.hidden = false
+
+    // 宿主与 .bar 同尺寸，所以按钮中心换算到宿主坐标即可
+    const host = this.getBoundingClientRect()
+    const r = el.getBoundingClientRect()
+    const center = r.left + r.width / 2 - host.left
+
+    tip.style.left = `${center}px`
+    tip.style.setProperty('--arrow-x', '0px')
+
+    // 工具条可以拖到贴边，气泡比按钮宽得多，不夹一下会跑出视口
+    const box = tip.getBoundingClientRect()
+    const vw = document.documentElement.clientWidth || innerWidth
+    const shift = box.left < 8 ? 8 - box.left
+      : box.right > vw - 8 ? vw - 8 - box.right
+      : 0
+
+    if (shift) {
+      tip.style.left = `${center + shift}px`
+      // 气泡整体挪开了，箭头要往回挪同样的距离才还指着那个按钮
+      tip.style.setProperty('--arrow-x', `${-shift}px`)
+    }
+  }
+
+  #hideTip() {
+    const tip = this.#shadow.querySelector('.tip')
+    if (tip) tip.hidden = true
+  }
+
   #bind() {
     const shadow = this.#shadow
     const on = (sel, fn) => shadow.querySelectorAll(sel).forEach(el => el.addEventListener('click', fn))
+
+    const bar = shadow.querySelector('.bar')
+    bar.addEventListener('pointerover', e => {
+      const target = e.target.closest?.('[data-tip]')
+      target ? this.#showTip(target) : this.#hideTip()
+    })
+    bar.addEventListener('pointerleave', () => this.#hideTip())
+    // 点下去就把气泡收掉：按钮多半会切换状态，留着一个说着旧状态的提示很怪
+    bar.addEventListener('pointerdown', () => this.#hideTip())
 
     on('button[data-mode]', e =>
       this.#emit('vr-mode', { mode: e.currentTarget.dataset.mode }))

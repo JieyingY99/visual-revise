@@ -108,6 +108,11 @@ export const mountVisualRevise = visbug => {
       entry ? 'info' : 'error')
   }
 
+  const toggleList = () => {
+    list.hidden = !list.hidden
+    if (!list.hidden) list.render()
+  }
+
   const onKeydown = e => {
     // ⌘Z / ⌘⇧Z（Windows 上 ⌘Y 也认）要在下面那道「带修饰键就放行」之前处理
     if ((e.metaKey || e.ctrlKey) && !e.altKey) {
@@ -171,18 +176,35 @@ export const mountVisualRevise = visbug => {
       return
     }
 
-    if (e.key === 'r' && !interactive) {
-      e.preventDefault()
-      e.stopPropagation()
-      setMode(mode === 'reorder' ? 'select' : 'reorder')
-      return
-    }
+    // 工具条上每个功能都有一个键。这些必须真正被我们接管（preventDefault +
+    // stopPropagation）：上游 VisBug 给自己的工具也注册了一批单字母热键，
+    // 它的工具条虽然藏了，热键却还活着——放行就会切到它的工具去。
+    if (!interactive) {
+      const key = e.key.toLowerCase()
 
-    if (e.key === 'c' && !interactive) {
-      e.preventDefault()
-      e.stopPropagation()
-      setMode(mode === 'comment' ? 'select' : 'comment')
-      return
+      const MODE_KEYS = { v: 'select', c: 'comment', r: 'reorder' }
+      if (MODE_KEYS[key]) {
+        e.preventDefault()
+        e.stopPropagation()
+        const next = MODE_KEYS[key]
+        // 再按一次回到选择态；选择态本身是默认，按 V 就是明确切回来
+        setMode(next !== 'select' && mode === next ? 'select' : next)
+        return
+      }
+
+      if (key === 'l') {
+        e.preventDefault()
+        e.stopPropagation()
+        toggleList()
+        return
+      }
+
+      if (key === 'p') {
+        e.preventDefault()
+        e.stopPropagation()
+        doCopy()
+        return
+      }
     }
 
     if (e.key === 'Escape') {
@@ -320,10 +342,7 @@ export const mountVisualRevise = visbug => {
   toolbar.addEventListener('vr-redo', doRedo)
   toolbar.addEventListener('vr-mode', e => setMode(e.detail.mode))
   toolbar.addEventListener('vr-close', () => visbug.remove())
-  toolbar.addEventListener('vr-open-list', () => {
-    list.hidden = !list.hidden
-    if (!list.hidden) list.render()
-  })
+  toolbar.addEventListener('vr-open-list', toggleList)
 
   // 面板的 × 等同关闭整个编辑器：只藏面板会让用户以为关不掉，
   // 而页面上其实还挂着选择引擎在拦截点击。

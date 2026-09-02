@@ -120,11 +120,103 @@ const iconCheck = await page.evaluate(() => {
 ok(iconCheck.svgCount === 9, `全部图标为内联 SVG（${iconCheck.svgCount} 个，含撤销 / 重做）`)
 ok(!iconCheck.hasEmoji, '界面文本中不含 emoji')
 
+// ── 纯图标 + hover 气泡 ─────────────────────────────────────
+// 标签藏起来之后，功能名只剩气泡承载，所以气泡必须真的出得来、
+// 且每个功能都带着自己的快捷键，否则新用户无从知道哪个按钮是哪个。
+
+const barSR = () => page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-toolbar').shadowRoot
+  return [...sr.querySelectorAll('.bar button')].map(b => b.textContent.trim())
+})
+ok((await barSR()).every(t => t === '' || /^\d+$/.test(t)),
+   '按钮上只剩图标，文字标签已隐藏（数字角标除外）')
+
+const tipOf = async sel => {
+  await page.locator(`visual-revise-toolbar ${sel}`).hover()
+  await page.waitForTimeout(180)
+  return page.evaluate(() => {
+    const sr = document.querySelector('visual-revise-toolbar').shadowRoot
+    const box = sr.querySelector('.tip')
+    if (!box || box.hidden) return null
+    const r = box.getBoundingClientRect()
+    return {
+      label: box.querySelector('.tip-label').textContent,
+      key: box.querySelector('.tip-key').textContent,
+      inside: r.left >= 0 && r.right <= document.documentElement.clientWidth,
+    }
+  })
+}
+
+for (const [sel, label, key] of [
+  ['[data-mode="select"]',  '选择元素', 'V'],
+  ['[data-mode="comment"]', '评论',     'C'],
+  ['[data-mode="reorder"]', '重排',     'R'],
+  ['.list',                 '改动记录', 'L'],
+  ['.copy',                 '复制提示词', 'P'],
+  ['.close',                '关闭编辑器', '⌥⇧D'],
+]) {
+  const tip = await tipOf(sel)
+  ok(tip?.label === label && tip.key === key,
+     `${sel} 的气泡：${tip?.label} ${tip?.key}`)
+}
+ok((await tipOf('.close'))?.inside, '贴边的按钮，气泡也被夹在视口内')
+
+// ── 新增的快捷键 ────────────────────────────────────────────
+const curMode = () => page.evaluate(() => window.__visualRevise.mode)
+
+await page.keyboard.press('Escape')
+await page.keyboard.press('c')
+await page.waitForTimeout(200)
+ok(await curMode() === 'comment', 'C 进评论模式')
+
+await page.keyboard.press('v')
+await page.waitForTimeout(200)
+ok(await curMode() === 'select', 'V 切回选择元素')
+
+await page.keyboard.press('r')
+await page.waitForTimeout(200)
+ok(await curMode() === 'reorder', 'R 进重排模式')
+await page.keyboard.press('v')
+await page.waitForTimeout(200)
+
+const listHidden = () => page.evaluate(() =>
+  document.querySelector('visual-revise-list').hidden)
+const wasHidden = await listHidden()
+await page.keyboard.press('l')
+await page.waitForTimeout(250)
+ok(await listHidden() !== wasHidden, 'L 开合改动记录')
+await page.keyboard.press('l')
+await page.waitForTimeout(250)
+
+await page.evaluate(() => {
+  const el = document.querySelector('.curve-card')
+  window.__visualRevise.store.applyProp(el, 'opacity', '0.5')
+})
+await page.keyboard.press('p')
+await page.waitForTimeout(600)
+const copied = await page.evaluate(() => navigator.clipboard.readText())
+ok(copied.includes('opacity'), 'P 复制提示词')
+
+// 页面输入框里打字不能被单字母快捷键吞掉
+await page.evaluate(() => {
+  const input = document.createElement('input')
+  input.id = 'vr-key-probe'
+  document.body.append(input)
+  input.focus()
+})
+await page.keyboard.type('vlp')
+await page.waitForTimeout(200)
+ok(await page.inputValue('#vr-key-probe') === 'vlp',
+   '在页面输入框里打 v / l / p 会正常输入，不触发快捷键')
+ok(await curMode() === 'select', '输入过程中模式未被误切')
+await page.evaluate(() => document.querySelector('#vr-key-probe')?.remove())
+
 // 关闭按钮
 await bar('.close').click()
 await page.waitForTimeout(500)
 ok(await page.locator('vis-bug').count() === 0, '关闭按钮移除整个编辑器')
 ok(await page.locator('visual-revise-toolbar').count() === 0, '工具条随之移除')
+
 
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')
