@@ -1,9 +1,11 @@
 import {
   takeSnapshot, diffSnapshot, diffText, diffAttrs,
-  revertProp, revertText, revertAttr, revertAll, elementId, readText,
-  readAttrs, TRACKED_ATTRS, textNodesOf,
+  revertProp, revertText, revertAttr, revertAll, elementId, adoptId, readText,
+  readInline, readAttrs, TRACKED_ATTRS, textNodesOf,
 } from './snapshot.js'
-import { collectAnchors } from './anchors.js'
+import {
+  collectAnchors, resolveElement, stableClasses, textLandmarks,
+} from './anchors.js'
 import { createHistory } from './history.js'
 
 const createStore = () => {
@@ -157,14 +159,20 @@ const createStore = () => {
   }
 
   const styleEdits = () => {
-    const entries = Array.from(snapshots.values()).map(snap => ({
+    const entries = Array.from(snapshots.values()).map(snap => snap.frozen ? {
+      id:      snap.id,
+      el:      snap.el,
+      anchors: snap.anchors,
+      orphaned: true,
+      ...snap.frozen,
+    } : {
       id:      snap.id,
       el:      snap.el,
       anchors: snap.anchors,
       changes: diffSnapshot(snap),
       text:    diffText(snap),
       attrs:   diffAttrs(snap),
-    }))
+    })
 
     // 改一句话会让它所有祖先的 textContent 都跟着变。祖先和后代都报文案改动时
     // 只留最内层那个——它才是用户真正动的元素，外层那条是连带的。
@@ -202,6 +210,7 @@ const createStore = () => {
             parent:      el.parentElement,
             nextSibling: el.nextElementSibling,
             anchors:     collectAnchors(el),
+            identity:    identityOf(el),
             tag:         el.tagName.toLowerCase(),
             text:        readText(el).slice(0, 80),
             childCount:  el.children.length,
@@ -229,7 +238,9 @@ const createStore = () => {
   // 已经被放回去的不再算删除
   const removalList = () =>
     Array.from(removals.values())
-      .filter(r => !r.el.isConnected)
+      // fighting 的元素此刻正躺在页面上（我们已经停止重复删除），
+      // 但那条记录依然是用户的意图，必须留在列表里说明情况
+      .filter(r => !r.el.isConnected || r.fighting)
       .sort((a, b) => a.seq - b.seq)
 
   const canRestore = rec => !!rec?.parent?.isConnected
@@ -257,8 +268,253 @@ const createStore = () => {
 
   const commentList = () =>
     Array.from(comments.values())
-      .filter(c => c.el.isConnected)
+      // 失联但没被重定位回来的不能直接丢：那正是「标注莫名其妙消失」的成因。
+      // 留在列表里标成 orphaned，用户至少知道发生了什么。
+      .filter(c => c.el.isConnected || c.orphaned)
+      .map(c => (c.el.isConnected ? c : { ...c, orphaned: true }))
       .sort((a, b) => a.seq - b.seq)
+
+  // ── 重新锚定 ────────────────────────────────────────────────
+  // 记录挂的是 DOM 节点引用。框架（React / Vue…）重渲染时会把节点整个换掉，
+  // 引用随之悬空，所有挂在上面的改动就静默消失了——用户看到的是「标注被清空」。
+  //
+  // 没有「切回来」这样一个可以挂钩子的时刻：重渲染发生在 hover、请求返回、
+  // 任意一次 state 变化时。所以这里是持续对账：DOM 一变就找回失联的记录，
+  // 按锚点重新绑定，并把用户的改动重新贴回新节点。
+
+  // 身份 ≠ 位置。标签 + 稳定类名 + 首条文本特征，足以区分「同一个东西回来了」
+  // 和「隔壁那个刚好挪到了这个位置」。
+  const identityOf = el =>
+    `${el.tagName}|${stableClasses(el).join('.')}|${textLandmarks(el, 1)[0] || ''}`
+
+  // 从别处导入的记录没有 identity 字段（那是这次才加的）。锚点里存着同样的
+  // 三样东西，推得出来——不然守卫会被静默跳过，级联删除就又回来了。
+  const identityOfRecord = rec => rec.identity || [
+    (rec.anchors?.tag || '').toUpperCase(),
+    (rec.anchors?.classes || []).join('.'),
+    rec.anchors?.text?.[0] || '',
+  ].join('|')
+
+  // 同类记录之间不能抢同一个元素。但样式记录和评论是两个维度——同一个元素
+  // 上既有改动又有备注是正常的，混在一个集合里会让后处理的那类被判成失联。
+  const claimedBy = map => {
+    const set = new Set()
+    for (const rec of map.values()) if (rec.el?.isConnected) set.add(rec.el)
+    return set
+  }
+
+  // 「元素被换掉了」和「元素被删掉了」，从记录的角度看是同一个现象：引用悬空。
+  // 区别只在 DOM 有没有同时长出替代品。观察器知道哪些节点是新增的，拿它当
+  // 候选范围，就不必靠选择器去猜——猜错会把改动贴到隔壁那个长得一样的元素上。
+  // 「被换掉」和「被删掉」需要的证据不一样，所以要两个池子：
+  //
+  //   改绑（样式 / 评论）要**替换**的证据——新节点必须出现在「同一个父节点
+  //   刚刚失去过子节点」的位置上。少了这一条，「删掉两行里的第一行」会被当成
+  //   「第一行被换成了第二行」，改动就贴到隔壁去了。
+  //
+  //   删除重放要的是**重新出现**的证据——应用把元素渲染回来时并不会伴随任何
+  //   删除，任何新增节点都得算候选。
+  let pool = { appeared: new Set(), replaced: new Set() }
+  let scanning = { appeared: new Set(), replaced: new Set() }
+
+  const within = (set, el) => {
+    for (const root of set)
+      if (root === el || root.contains?.(el)) return true
+    return false
+  }
+  const reappeared = el => within(scanning.appeared, el)
+  const replacedIn = el => within(scanning.replaced, el)
+
+  // 元素被换掉之前，用户到底改了什么。这一步必须赶在丢弃旧节点前做完：
+  // 旧节点一旦释放，改动就无从得知了。
+  const freezeEdits = snap => ({
+    changes: diffSnapshot(snap, { detached: true }),
+    text:    diffText(snap, { detached: true }),
+    attrs:   diffAttrs(snap, { detached: true }),
+  })
+
+  const captureLive = snap => ({
+    props:     readInline(snap.el),
+    attrs:     readAttrs(snap.el),
+    textNodes: snap.edited ? textNodesOf(snap.el).map(n => n.nodeValue) : null,
+  })
+
+  // 新节点是框架照自己的 state 渲出来的，身上没有我们写过的任何东西。
+  // 光改绑只能救回记录、救不回画面，所以要把改动重新贴上去。
+  const replayOnto = (el, live) => {
+    for (const [prop, value] of Object.entries(live.props)) writeProp(el, prop, value)
+
+    // 属性要逐个覆盖而不是只写有值的：用户把 srcset 清空过的话，
+    // 只写有值的那些会让新节点带着自己的 srcset 把换的图盖回去
+    for (const name of TRACKED_ATTRS) writeAttr(el, name, live.attrs[name] ?? '')
+
+    if (live.textNodes) {
+      const nodes = textNodesOf(el)
+      if (nodes.length === live.textNodes.length)
+        nodes.forEach((node, i) => { node.nodeValue = live.textNodes[i] })
+    }
+  }
+
+  // 重贴会引发新的 DOM 变化，观察器不挡住就会自己触发自己
+  let replaying = false
+  // 应用如果坚持把元素渲染回来，我们就会反复删它。这是必然的拉锯，
+  // 给个上限：超过就停手并标记，让用户看见「在跟页面打架」，
+  // 而不是页面闪成一团、CPU 跑满。
+  const REPLAY_BUDGET = 30
+
+  const overBudget = rec => {
+    rec.replays = (rec.replays || 0) + 1
+    if (rec.replays <= REPLAY_BUDGET) return false
+    rec.fighting = true
+    return true
+  }
+
+  // 身份对不上就不是同一个东西。这一关拦的是「隔壁那个刚好挪到了这个位置」，
+  // 选择器里的 nth-of-type 分辨不出这种情况。
+  const sameIdentity = (el, rec) => identityOf(el) === identityOfRecord(rec)
+
+  const rebindSnapshot = (snap, taken) => {
+    const wasOrphan = !!snap.orphaned
+    const live = captureLive(snap)
+
+    // 先冻结再尝试找回。无论后面走哪条失败分支，改动都已经留住了——
+    // 直接丢掉的话记录数会莫名往下掉，而用户会以为是自己没保存。
+    snap.frozen = freezeEdits(snap)
+    snap.orphaned = true
+
+    const { el } = resolveElement(snap, { exclude: taken })
+    // 返回 !wasOrphan：这一轮刚变成失联也是一次状态变化，要通知 UI 去标灰
+    if (!el || !replacedIn(el) || !sameIdentity(el, snap)) return !wasOrphan
+    if (overBudget(snap)) return !wasOrphan
+
+    adoptId(el, snap.id)                       // 过继 id，免得同一元素冒出两条记录
+    const fresh = takeSnapshot(el)
+    Object.assign(snap, fresh, { id: snap.id, edited: snap.edited })
+    snap.frozen = null
+    snap.orphaned = false
+    replayOnto(el, live)
+    taken.add(el)
+    return true
+  }
+
+  const rebindComment = (c, taken) => {
+    const wasOrphan = !!c.orphaned
+    const { el } = resolveElement(c, { exclude: taken })
+    if (!el || !replacedIn(el) || !sameIdentity(el, c)) {
+      c.orphaned = true
+      return !wasOrphan
+    }
+
+    c.el = el
+    c.anchors = collectAnchors(el)
+    c.orphaned = false
+    taken.add(el)
+    return true
+  }
+
+  // 删除记录反过来：元素本就该不在 DOM 上。应用把它渲染回来了，
+  // 就再删一次，并把父节点与后邻更新到新位置——否则「放回」会插错地方。
+  //
+  // 这里只认身份、不认位置。选择器里带 nth-of-type，而删除本身会让后面的
+  // 兄弟节点整体前移一位——照选择器匹配的话，删掉一个之后下一个正好顶上来，
+  // 于是被连着删掉，一路级联。
+  const reapplyRemoval = (rec, taken) => {
+    const { el } = resolveElement(rec)
+    if (!el || el === rec.el || !reappeared(el) || !sameIdentity(el, rec)) return false
+    if (overBudget(rec)) return false
+
+    rec.el = el
+    rec.parent = el.parentElement
+    rec.nextSibling = el.nextElementSibling
+    rec.anchors = collectAnchors(el)
+    el.remove()
+    return true
+  }
+
+  const reconcile = () => {
+    if (replaying) return 0
+    replaying = true
+    let changed = 0
+    scanning = pool
+    pool = { appeared: new Set(), replaced: new Set() }
+
+    try {
+      const canRebind = scanning.replaced.size > 0
+
+      // 删除先跑：被删的元素同时也有一条样式快照（removeElements 会 track 它），
+      // 快照要是先把重新出现的节点认领走，删除重放就找不到目标了。
+      //
+      // 不做失败退避：应用可能在下一帧就把元素渲染回来，退避会正好错过它。
+      // 成本本来就有两道闸——观察器只在有增删时才排一轮，rAF 又把一帧内的
+      // 多次变动合并成一次。
+      if (scanning.appeared.size)
+        for (const rec of removals.values()) {
+          if (rec.fighting) continue
+          if (reapplyRemoval(rec)) changed++
+        }
+
+      const takenSnaps = claimedBy(snapshots)
+      for (const snap of snapshots.values()) {
+        // 这个元素是被我们删掉的，它的快照不该再去页面上找替代品
+        if (removals.has(snap.id)) continue
+        if (snap.el.isConnected || snap.fighting) continue
+        // 已经标成失联、这一轮又没冒出任何替代品，就没什么可试的
+        if (snap.orphaned && !canRebind) continue
+        if (rebindSnapshot(snap, takenSnaps)) changed++
+      }
+
+      const takenComments = claimedBy(comments)
+      for (const c of comments.values()) {
+        if (c.el.isConnected) continue
+        if (c.orphaned && !canRebind) continue
+        if (rebindComment(c, takenComments)) changed++
+      }
+    } finally {
+      replaying = false
+      scanning = { appeared: new Set(), replaced: new Set() }
+    }
+
+    if (changed) notify()
+    return changed
+  }
+
+  // 观察器只看 childList：节点被整个换掉是这次要解决的情况，而框架重渲染
+  // 同一个节点时并不会清掉我们写的 inline 属性（它只管自己声明过的那些）。
+  // 加上属性监听会让开销高一个量级，收益却极小。
+  let frame = null
+  const schedule = () => {
+    if (frame) return
+    frame = requestAnimationFrame(() => { frame = null; reconcile() })
+  }
+
+  const observe = () => {
+    if (typeof MutationObserver === 'undefined' || !document.documentElement) return
+    new MutationObserver(records => {
+      if (replaying) return
+
+      // 先记下哪些父节点在这一批里失去过子节点，同一批里加到这些父节点下的
+      // 新节点才算「替换」。React 提交时的 removeChild / insertBefore 是两条
+      // 记录、同一个父节点，正好落在这个判定里。
+      const lostChildren = new Set()
+      for (const rec of records)
+        if (rec.removedNodes.length) lostChildren.add(rec.target)
+
+      for (const rec of records)
+        for (const node of rec.addedNodes) {
+          if (node.nodeType !== 1) continue
+          pool.appeared.add(node)
+          if (lostChildren.has(rec.target)) pool.replaced.add(node)
+        }
+
+      // 有新增才可能找回，有删除才需要把改动冻结下来，两者都没有就无事可做。
+      // 早先只在「有新增」时排一轮，结果元素被单纯删掉的那一批里没有新增，
+      // reconcile 压根不跑，记录直接从 isConnected 过滤里掉了——又成了静默丢弃。
+      if (!pool.appeared.size && !lostChildren.size) return
+      schedule()
+    }).observe(document.documentElement, { childList: true, subtree: true })
+  }
+
+  observe()
 
   const read = () => ({
     edits:    styleEdits(),
@@ -468,7 +724,7 @@ const createStore = () => {
     addComment, updateComment, removeComment, setCommentImages,
     recordRemoval, removeElements, restoreRemoval, canRestore,
     undoProp, undoText, undoAttr, undoElement, undoEverything, clear,
-    read, stats, touch,
+    read, stats, touch, reconcile,
     snapshots,
     history,
     undo: () => history.undo(),

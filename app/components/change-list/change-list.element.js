@@ -52,6 +52,13 @@ const shortValue = v => {
   return raw.length > 40 ? raw.slice(0, 37) + '…' : raw
 }
 
+// 记录还在、元素没了。这条必须看得见——静默丢弃正是「标注被清空」的成因。
+// fighting 是另一回事：页面一直把删掉的元素渲染回来，我们已经停手了。
+const GONE_BADGE = rec =>
+  rec.fighting  ? '<span class="badge" data-kind="gone" title="页面持续把它渲染回来，已停止重复删除">页面在还原</span>'
+  : rec.orphaned ? '<span class="badge" data-kind="gone" title="元素已从页面上消失，改动仍保留在记录里">元素已消失</span>'
+  : ''
+
 const shortSelector = anchors => {
   const parts = anchors.selector.split(' > ')
   return parts[parts.length - 1]
@@ -184,9 +191,10 @@ export class ChangeList extends HTMLElement {
           title="撤销这一项">×</button>
       </div>`).join('')
 
-    return `<div class="item" data-id="${entry.id}" data-kind="style">
+    return `<div class="item" data-id="${entry.id}" data-kind="style"${entry.orphaned ? ' data-orphaned' : ''}>
       <div class="item-head">
         <span class="sel" title="${entry.anchors.selector}">${shortSelector(entry.anchors)}</span>
+        ${GONE_BADGE(entry)}
         <span class="badge">${entry.changes.length + (entry.text ? 1 : 0) + (entry.attrs?.length || 0)}</span>
         <button class="icon-btn undo-el" data-id="${entry.id}" title="撤销此元素全部改动">↺</button>
       </div>
@@ -211,9 +219,10 @@ export class ChangeList extends HTMLElement {
       r.childCount ? `${r.childCount} 个子元素` : '',
     ].filter(Boolean).join(' · ')
 
-    return `<div class="item" data-id="${r.id}" data-kind="removal">
+    return `<div class="item" data-id="${r.id}" data-kind="removal"${r.fighting ? ' data-fighting' : ''}>
       <div class="item-head">
         <span class="sel" title="${esc(r.anchors.selector)}">${shortSelector(r.anchors)}</span>
+        ${GONE_BADGE(r)}
         <span class="badge" data-kind="removal">已删除</span>
         <button class="icon-btn restore" data-id="${r.id}"${restorable ? '' : ' disabled'}
           title="${restorable ? '放回原位' : '父元素已不在页面上，放不回去'}">↺</button>
@@ -228,9 +237,10 @@ export class ChangeList extends HTMLElement {
       ? `<span class="badge" data-kind="image" title="带 ${n} 张参考图">🖼 ${n}</span>`
       : ''
 
-    return `<div class="item" data-id="${c.id}" data-kind="comment">
+    return `<div class="item" data-id="${c.id}" data-kind="comment"${c.orphaned ? ' data-orphaned' : ''}>
       <div class="item-head">
         <span class="sel" title="${c.anchors.selector}">${shortSelector(c.anchors)}</span>
+        ${GONE_BADGE(c)}
         ${imageTag}
         <span class="badge" data-kind="comment">#${c.seq}</span>
         <button class="icon-btn del-comment" data-id="${c.id}" title="删除评论">×</button>

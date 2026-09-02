@@ -9,6 +9,13 @@ export const elementId = el => {
   return el[KEY]
 }
 
+// 记录改绑到重渲染出来的新节点时，要把原来的 id 一并过继过去。
+// 不然 track() 会按新节点算出另一个 id，同一个元素冒出两条记录。
+export const adoptId = (el, id) => {
+  el[KEY] = id
+  return el
+}
+
 // 文案比对用归一化后的 textContent：源码里的换行和缩进不是用户的改动
 export const readText = el => (el.textContent || '').replace(/\s+/g, ' ').trim()
 
@@ -85,9 +92,9 @@ export const readAttrs = el => TRACKED_ATTRS.reduce((acc, name) => {
   return acc
 }, {})
 
-export const diffAttrs = snapshot => {
+export const diffAttrs = (snapshot, { detached = false } = {}) => {
   const { el, attrs: original = {} } = snapshot
-  if (!el?.isConnected) return []
+  if (!detached && !el?.isConnected) return []
 
   const current = readAttrs(el)
   const names = new Set([...Object.keys(original), ...Object.keys(current)])
@@ -119,9 +126,9 @@ const revertAllAttrs = snapshot => {
 //
 // 前值优先取原始 inline 值（那是作者在源码里写的表达，AI 好对应），
 // 该属性原本没有 inline 声明时才回落到计算值（用户在屏幕上看到的起点）。
-export const diffSnapshot = snapshot => {
+export const diffSnapshot = (snapshot, { detached = false } = {}) => {
   const { el, computed, inline: original = {} } = snapshot
-  if (!el.isConnected) return []
+  if (!detached && !el.isConnected) return []
 
   const current = readInline(el)
   const changes = []
@@ -162,9 +169,9 @@ export const diffSnapshot = snapshot => {
 // 只看真正被放进编辑态的元素（edited）。拿容器比会得到两类假货：容器的
 // textContent 跟着子孙一起变，改一句话时所有祖先都报一条；而编辑途中才被
 // 跟踪的祖先更糟——它的「原文」本身就已经是改了一半的样子。
-export const diffText = snapshot => {
+export const diffText = (snapshot, { detached = false } = {}) => {
   const { el, text, edited } = snapshot
-  if (!edited || text === undefined || !el.isConnected) return null
+  if (!edited || text === undefined || (!detached && !el.isConnected)) return null
 
   const now = readText(el)
   return now === text ? null : { from: text, to: now }

@@ -144,3 +144,14 @@ footer button {
 /* 删除项：红色徽标，与样式改动、评论一眼区分开 */
 .badge[data-kind="removal"] { background: #4a2b2b; color: #ff8a8a; }
 .icon-btn.restore:disabled { opacity: .35; cursor: not-allowed; }
+
+/* ── 元素失联 ──
+   记录仍然有效，只是它指向的元素已经不在页面上了。压暗但不隐藏：
+   静默丢弃正是「标注被清空」的成因，用户至少要知道发生了什么。 */
+.item[data-orphaned], .item[data-fighting] { opacity: .62; }
+.item[data-orphaned] .sel, .item[data-fighting] .sel { color: var(--vr-text-mute); }
+.badge[data-kind="gone"] {
+  background: #4a3b23;
+  color: #e8b45c;
+  white-space: nowrap;
+}

@@ -129,3 +129,48 @@ export const collectAnchors = el => ({
                   return acc
                 }, {}),
 })
+
+// ── 重新定位 ────────────────────────────────────────────────
+// 记录挂的是 DOM 节点引用，而框架重渲染会把节点整个换掉——引用随之悬空。
+// 导入他人的 JSON 时同理：选择器在另一次构建后可能已经失效。
+// 两处用的是同一套回退：选择器 → 文本特征 → DOM 路径。
+
+// 任何一次 querySelector 都可能因选择器语法非法而抛错：Tailwind 的类名
+// 常含 CSS 保留字符（hover:bg-blue-500、w-1/2、top-[3px]）。一次抛错若
+// 逸出，整轮重定位会中断，前面已改绑的记录既不回滚也不上报。
+export const query = selector => {
+  if (!selector) return null
+  try { return document.querySelector(selector) } catch { return null }
+}
+
+export const queryAll = selector => {
+  if (!selector) return []
+  try { return Array.from(document.querySelectorAll(selector)) } catch { return [] }
+}
+
+// 回退档必须唯一命中才认。一屏相似的列表行里猜错一行，会把改动贴到隔壁
+// 元素上——那比丢失更糟：导出的提示词是错的，而用户不会发现。
+const only = list => (list.length === 1 ? list[0] : null)
+
+export const resolveElement = (record, { exclude } = {}) => {
+  const anchors = record?.anchors || record || {}
+  const selector = record?.selector || anchors.selector
+  const usable = el => el && el.isConnected && !exclude?.has(el)
+
+  const direct = query(selector)
+  if (usable(direct)) return { el: direct, via: 'selector' }
+
+  const wanted = anchors.text?.[0]
+  if (wanted) {
+    const byText = queryAll(anchors.tag || '*')
+      .filter(el => usable(el) && textLandmarks(el, 1)[0] === wanted)
+    if (only(byText)) return { el: byText[0], via: 'text' }
+  }
+
+  if (anchors.domPath) {
+    const byPath = queryAll(anchors.domPath.split(' > ').pop()).filter(usable)
+    if (only(byPath)) return { el: byPath[0], via: 'path' }
+  }
+
+  return { el: null, via: null }
+}

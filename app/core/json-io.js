@@ -1,5 +1,5 @@
 import { ChangeStore } from './change-store.js'
-import { textLandmarks } from './anchors.js'
+import { resolveElement } from './anchors.js'
 
 // v2 起带上图片：换图的属性改动与图片资产本身（base64 内嵌）。
 // 内嵌而不是只存文件名，是因为这份 JSON 的用途就是交给别人导入——
@@ -65,50 +65,6 @@ export const downloadJSON = (meta) => {
 
   setTimeout(() => URL.revokeObjectURL(url), 1000)
   return data
-}
-
-// 任何一次 querySelector 都可能因选择器语法非法而抛错：Tailwind 的类名
-// 常含 CSS 保留字符（hover:bg-blue-500、w-1/2、top-[3px]）。一次抛错若
-// 逸出，整个导入会中断，而前面已经应用的记录既不回滚也不上报。
-const query = selector => {
-  if (!selector) return null
-  try {
-    return document.querySelector(selector)
-  } catch {
-    return null
-  }
-}
-
-const queryAll = selector => {
-  if (!selector) return []
-  try {
-    return Array.from(document.querySelectorAll(selector))
-  } catch {
-    return []
-  }
-}
-
-// 选择器在另一台机器 / 另一次构建后可能失效（类名被重新哈希），
-// 因此按 选择器 → 文本特征 → DOM 路径 的顺序逐级回退。
-const resolveElement = record => {
-  const { selector, anchors } = record
-
-  const direct = query(selector)
-  if (direct) return { el: direct, via: 'selector' }
-
-  const wanted = anchors?.text?.[0]
-  if (wanted) {
-    const tag = anchors.tag || '*'
-    const byText = queryAll(tag).find(el => textLandmarks(el, 1)[0] === wanted)
-    if (byText) return { el: byText, via: 'text' }
-  }
-
-  if (anchors?.domPath) {
-    const byPath = query(anchors.domPath.split(' > ').pop())
-    if (byPath) return { el: byPath, via: 'path' }
-  }
-
-  return { el: null, via: null }
 }
 
 export const importJSON = (data, { apply = true } = {}) => {
