@@ -1,6 +1,7 @@
-import { ChangeStore } from './change-store.js'
 import { isOffBounds } from '../utilities/common.js'
 import { pageElementAt, isEditorUI } from './dom-utils.js'
+// 与树里的拖拽共用一份：两个入口写出的记录必须一致
+import { applyOrder } from './reorder.js'
 
 const INDICATOR_ID = 'visual-revise-drop-indicator'
 const HINT_STYLE_ID = 'visual-revise-drag-hints'
@@ -170,18 +171,6 @@ const moveGhost = (ghost, offX, offY, clientX, clientY) => {
 }
 
 const removeGhost = () => document.getElementById(GHOST_ID)?.remove()
-
-// 重排落到 order 上：纯 CSS、可被快照 diff 捕获、不改动 DOM 结构
-const applyOrder = (others, dragged, targetIndex) => {
-  const ordered = [...others.slice(0, targetIndex), dragged, ...others.slice(targetIndex)]
-
-  ordered.forEach((node, i) => {
-    ChangeStore.track(node)
-    ChangeStore.applyProp(node, 'order', String(i))
-  })
-
-  return ordered
-}
 
 export const createLayoutDrag = ({ onDone } = {}) => {
   let active = false

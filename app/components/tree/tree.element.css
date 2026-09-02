@@ -1,0 +1,148 @@
+:host {
+  --vr-bg:     #2c2c2c;
+  --vr-raised: #383838;
+  --vr-border: #3d3d3d;
+  --vr-divider:#202020;
+  --vr-text:   #fff;
+  --vr-mute:   #8c8c8c;
+  --vr-faint:  #6f6f6f;
+  --vr-accent: #0d99ff;
+
+  position: fixed;
+  top: 88px;
+  right: 16px;
+  z-index: 2147483646;
+  width: 300px;
+  max-height: calc(100vh - 104px);
+  display: flex;
+  flex-direction: column;
+  font: 400 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  color: var(--vr-text);
+  background: var(--vr-bg);
+  border: 1px solid var(--vr-border);
+  border-radius: 8px;
+  box-shadow: 0 10px 36px rgba(0, 0, 0, .42);
+  user-select: none;
+}
+:host([hidden]) { display: none; }
+* { box-sizing: border-box; }
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 8px 9px 12px;
+  border-bottom: 1px solid var(--vr-divider);
+}
+.title { font-size: 12px; font-weight: 500; }
+.hint { flex: 1; font-size: 10px; color: var(--vr-faint); }
+.close {
+  flex: none;
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  font: inherit; font-size: 14px;
+  color: var(--vr-mute);
+  background: transparent; border: none; border-radius: 4px;
+  cursor: pointer;
+}
+.close:hover { background: #444; color: var(--vr-text); }
+
+.list {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 0;
+}
+.list::-webkit-scrollbar { width: 10px; }
+.list::-webkit-scrollbar-thumb {
+  background: #4a4a4a;
+  border: 3px solid var(--vr-bg);
+  border-radius: 6px;
+}
+
+/* 缩进用 padding 而不是 margin：整行都要可点、可高亮，
+   margin 会在左边留出一条点不到的死区 */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding-left: calc(6px + var(--depth) * 12px);
+  padding-right: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.row:hover { background: rgb(255 255 255 / .06); }
+.row[data-selected] { background: rgb(13 153 255 / .18); }
+
+.twist {
+  flex: none;
+  width: 12px; height: 12px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  position: relative;
+}
+/* 折叠箭头用 clip-path 画，省一个 svg；叶子节点留出同样的位置，
+   不然同一层的名字会左右错开 */
+.twist:not([data-leaf])::before {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  background: var(--vr-mute);
+  clip-path: polygon(30% 12%, 30% 88%, 78% 50%);
+  transition: transform .12s ease;
+}
+.twist[data-open]::before { transform: rotate(90deg); }
+.twist[data-leaf] { cursor: default; }
+
+.name { flex: none; color: var(--vr-text); }
+.row[data-selected] .name { font-weight: 500; }
+
+/* 预览是补充信息，压暗且允许被截断——它不该把右边的标签名挤出去 */
+.preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--vr-mute);
+}
+.preview::before { content: '“'; }
+.preview::after { content: '”'; }
+
+.tag {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  font: 400 10px/1 ui-monospace, Menlo, monospace;
+  color: var(--vr-faint);
+}
+/* 没有预览时 .preview 不存在，靠 margin-left:auto 把标签名推到右边 */
+
+.more {
+  padding-left: calc(18px + var(--depth) * 12px);
+  height: 22px;
+  display: flex;
+  align-items: center;
+  color: var(--vr-faint);
+  font-size: 10px;
+}
+
+/* 拖动中：光标统一成 grabbing，且不让 hover 高亮跟着乱闪 */
+.list[data-dragging] .row:hover { background: transparent; }
+.list[data-dragging] { cursor: grabbing; }
+
+.drop-line {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  background: var(--vr-accent);
+  border-radius: 1px;
+  box-shadow: 0 0 6px rgb(13 153 255 / .8);
+  pointer-events: none;
+}
+.drop-line[hidden] { display: none; }

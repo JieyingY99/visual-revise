@@ -1,44 +1,10 @@
 import { ChangeStore } from '../../core/change-store.js'
+import { highlight, clearHighlight } from '../../core/highlight.js'
 import { downloadJSON, pickAndImport } from '../../core/json-io.js'
 import { containScroll } from '../../core/dom-utils.js'
 import { fileNameOf, parseCssUrl } from '../../core/image-source.js'
 import { default as list_css } from './change-list.element.css'
 
-const OVERLAY_ID = 'visual-revise-locate-overlay'
-
-const ensureOverlay = () => {
-  let el = document.getElementById(OVERLAY_ID)
-  if (el) return el
-
-  el = document.createElement('div')
-  el.id = OVERLAY_ID
-  el.setAttribute('data-visual-revise-ui', '')
-  el.style.cssText = `
-    position: absolute; z-index: 2147483645; pointer-events: none;
-    border: 2px solid #0d99ff; background: rgb(13 153 255 / .12);
-    border-radius: 2px; transition: all .12s ease-out; display: none;`
-  document.body.appendChild(el)
-  return el
-}
-
-const highlight = el => {
-  const overlay = ensureOverlay()
-  if (!el?.isConnected) { overlay.style.display = 'none'; return }
-
-  const r = el.getBoundingClientRect()
-  Object.assign(overlay.style, {
-    display: 'block',
-    top:    `${r.top + scrollY}px`,
-    left:   `${r.left + scrollX}px`,
-    width:  `${r.width}px`,
-    height: `${r.height}px`,
-  })
-}
-
-const clearHighlight = () => {
-  const overlay = document.getElementById(OVERLAY_ID)
-  if (overlay) overlay.style.display = 'none'
-}
 
 // dataUrl 有几十万字符，原样塞进列表会把面板撑爆；长 URL 只留文件名，
 // 那才是用户认得出的部分

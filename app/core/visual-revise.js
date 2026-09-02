@@ -4,16 +4,19 @@ import '../components/props-panel/props-panel.element.js'
 import '../components/change-list/change-list.element.js'
 import '../components/comment-layer/comment-layer.element.js'
 import '../components/toolbar/toolbar.element.js'
+import '../components/tree/tree.element.js'
 import { createLayoutDrag } from './layout-drag.js'
 import { pageElementAt, isEditorUI, isTypingTarget, isTextElement } from './dom-utils.js'
 import { buildPrompt } from './prompt-export.js'
 import { exportJSON, importJSON, downloadJSON, pickAndImport } from './json-io.js'
 import { fingerprint, findSharedElements } from './shared-elements.js'
 import { loadLocalFonts, isSupported as fontsSupported } from './local-fonts.js'
-import { clearHighlight } from '../components/change-list/change-list.element.js'
+import { clearHighlight } from './highlight.js'
 import { resizeMode, planResize, currentSize, isMainAxis, cssVariables } from './resizing.js'
 import { parseTracks, serializeTracks, readTracks, gridShape } from './grid.js'
 import { flowOf, planFlow, alignmentOf, planAlignment } from './layout.js'
+import { semanticName, describeNode, childrenOf } from './tree-model.js'
+import { orderedChildren, applyOrder } from './reorder.js'
 
 const UI_TAGS = 'visbug-handles, visbug-label, visbug-hover, visbug-grip, visbug-metatip, visbug-ally, visbug-corners, visbug-gridlines'
 
@@ -43,16 +46,31 @@ export const mountVisualRevise = visbug => {
   const toolbar = document.createElement('visual-revise-toolbar')
   document.body.appendChild(toolbar)
 
+  // 重排模式看的是结构而不是某个元素的属性，所以它有自己的面板。
+  // 两块 UI 占同一个位置、互斥出现。
+  const tree = document.createElement('visual-revise-tree')
+  tree.hidden = true
+  document.body.appendChild(tree)
+
   const layoutDrag = createLayoutDrag({
     onDone: ({ ordered }) => panel.toast(`已重排 ${ordered.length} 个元素`),
   })
 
   let interactive = false
+  // 声明要排在 onSelected 之前：engine.onSelectedUpdate 注册时会立刻回调一次，
+  // 那时 mode 还在暂时性死区里，读它会直接抛错
+  let mode = 'select'
   let suspended = []
   let listWasOpen = false
 
   const onSelected = els => {
     if (interactive) return
+
+    // 重排模式下选中元素要看的是它在结构里的位置，不是它的属性
+    if (mode === 'reorder') {
+      tree.setTarget(els?.[0] || null)
+      return
+    }
 
     panel.setTargets(els)
 
@@ -216,7 +234,6 @@ export const mountVisualRevise = visbug => {
   // select / comment / reorder 三态互斥，且都要接管页面指针事件，
   // 因此收敛到单一入口：按钮点击与快捷键最终都走这里，
   // 状态与工具条高亮不会分叉。
-  let mode = 'select'
 
   const MODE_HINTS = {
     comment: '点击任意元素写下需求 · 可连续标注 · Esc 退出',
@@ -235,6 +252,9 @@ export const mountVisualRevise = visbug => {
       engine.unselect_all()
       panel.hidden = true
     }
+
+    tree.hidden = next !== 'reorder'
+    if (next === 'reorder') tree.setTarget(engine.selection()[0] || null)
 
     if (changed && MODE_HINTS[next]) toolbar.toast(MODE_HINTS[next])
   }
@@ -345,6 +365,24 @@ export const mountVisualRevise = visbug => {
   toolbar.addEventListener('vr-close', () => visbug.remove())
   toolbar.addEventListener('vr-open-list', toggleList)
 
+  // 点树里的一行等同在页面上选中它：选中状态只有一份，
+  // 树和页面各记一套的话，两边迟早对不上
+  tree.addEventListener('vr-tree-select', e => {
+    const el = e.detail?.el
+    if (!el?.isConnected) return
+    engine.unselect_all()
+    engine.select(el)
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    tree.setTarget(el)
+  })
+
+  tree.addEventListener('vr-tree-reorder', e =>
+    toolbar.toast(`已重排 ${e.detail?.ordered?.length ?? 0} 个元素`))
+
+  // 树上的 × 退出重排模式，而不是只把树藏起来——树是这个模式的界面，
+  // 只藏界面会留下一个看不出自己还开着的模式
+  tree.addEventListener('vr-tree-close', () => setMode('select'))
+
   // 面板的 × 只收起面板，不动整个编辑器：工具条上有自己的 ×，
   // 那才是退出的地方。取消选中即可——面板本来就是跟着选中出现的，
   // 只藏不取消的话，下次选中它又冒出来，× 看着像没生效。
@@ -398,6 +436,7 @@ export const mountVisualRevise = visbug => {
       comments.remove()
       toolbar.remove()
       layoutDrag.destroy()
+      tree.remove()
       document.getElementById('visual-revise-locate-overlay')?.remove()
     },
   }
@@ -407,6 +446,7 @@ export const mountVisualRevise = visbug => {
 
   // 打包后的运行时入口，供调试与自动化测试使用——
   // 直接 import 源码会撞上 blingblingjs 等裸模块说明符
+  api.tree = tree
   api.lib = {
     buildPrompt, copyPrompt,
     exportJSON, importJSON, downloadJSON, pickAndImport,
@@ -416,6 +456,7 @@ export const mountVisualRevise = visbug => {
     resizeMode, planResize, currentSize, isMainAxis, cssVariables,
     parseTracks, serializeTracks, readTracks, gridShape,
     flowOf, planFlow, alignmentOf, planAlignment,
+    semanticName, describeNode, childrenOf, orderedChildren, applyOrder,
   }
   // 构建时间由 rollup 注入。一句话回答「我这份是不是最新的」——
   // 扩展重载、页面刷新、脚本缓存，三者任缺一环看到的都是上一版，
