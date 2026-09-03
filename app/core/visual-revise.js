@@ -1,3 +1,4 @@
+import hotkeys from 'hotkeys-js'
 import { ChangeStore } from './change-store.js'
 import { copyPrompt } from './prompt-export.js'
 import '../components/props-panel/props-panel.element.js'
@@ -19,7 +20,9 @@ import { flowOf, planFlow, alignmentOf, planAlignment } from './layout.js'
 import { semanticName, describeNode, childrenOf } from './tree-model.js'
 import { orderedChildren, applyOrder } from './reorder.js'
 
-const UI_TAGS = 'visbug-handles, visbug-label, visbug-hover, visbug-grip, visbug-metatip, visbug-ally, visbug-corners, visbug-gridlines'
+// visbug-distance 是「粘住」的测距线：它的所有权已从 measurements 模块转移出去，
+// 停用工具时的 clearMeasurements() 清不到它们，只能在这里一并收起。
+const UI_TAGS = 'visbug-handles, visbug-label, visbug-hover, visbug-grip, visbug-metatip, visbug-ally, visbug-corners, visbug-gridlines, visbug-distance'
 
 export const mountVisualRevise = visbug => {
   const engine = visbug.selectorEngine
@@ -33,6 +36,18 @@ export const mountVisualRevise = visbug => {
   // VisBug 工具栏纵向很高，贴在任何一侧都会盖住页面内容。
   // 属性面板已是主界面，工具栏默认收起，需要时用 ⌘/Ctrl + / 唤出。
   visbug.style.display = 'none'
+
+  // 上游给它那 13 个工具各注册了一个单字母热键（g i x l m p a v h d f e s），
+  // 而工具条默认是隐藏的。于是在页面上随手打个字就可能切到 margin / font /
+  // hueshift / boxshadow——界面上没有任何提示，但方向键从此就在改样式了，
+  // 连 Tab 隐身态（本该完全让开）也照样中招。
+  //
+  // 只解热键，不动工具本身：浏览模式靠 visbug.guides() 直调恢复、双击进 text
+  // 工具走的是 toolSelected()，都不经过热键；⌘/Ctrl + / 唤出工具条后点击也照常。
+  Object.keys(visbug.toolbar_model || {}).forEach(key => hotkeys.unbind(key))
+
+  // 上一次 destroy 会断开重锚观察器，重新挂载时要接回来（内部幂等）
+  ChangeStore.observe()
 
   const panel = document.createElement('visual-revise-panel')
   document.body.appendChild(panel)
@@ -63,6 +78,8 @@ export const mountVisualRevise = visbug => {
   let mode = 'select'
   let suspended = []
   let listWasOpen = false
+  // 进浏览模式要真正停掉 VisBug 的工具，退出时按原样装回来
+  let suspendedTool = null
   // Tab 的「完全让开」：连工具条一起藏。浏览模式只让开页面，工具条留着，
   // 否则进去就出不来了
   let stealth = false
@@ -110,6 +127,14 @@ export const mountVisualRevise = visbug => {
     suspended = engine.selection().slice()
     engine.unselect_all()
     engine.pause()
+
+    // 只给覆盖层设 display:none 不够——VisBug 的 guides 工具仍绑着 body 的
+    // mousemove，它的 showGridlines() 里有一句 `gridlines.style.display = null`，
+    // 鼠标一动就把我们设的 none 清掉，标尺线又浮回页面上。
+    // 要让页面真正干净，必须解绑工具本身。
+    suspendedTool = visbug.activeTool
+    visbug.deactivate_feature?.()
+
     document.querySelectorAll(UI_TAGS).forEach(el => { el.style.display = 'none' })
     panel.hidden = true
     tree.hidden = true
@@ -124,6 +149,15 @@ export const mountVisualRevise = visbug => {
     if (!interactive) return
     interactive = false
     engine.resume()
+
+    // 不能走 toolSelected()：它开头就有一句同名去重
+    // （active_tool.dataset.tool === el.dataset.tool 时直接 return），
+    // 而 active_tool 在停用后并未清空，恢复同一个工具会被它挡掉。
+    // 直接调用工具方法，它内部会重新赋值 deactivate_feature。
+    if (suspendedTool && typeof visbug[suspendedTool] === 'function')
+      visbug[suspendedTool]()
+    suspendedTool = null
+
     document.querySelectorAll(UI_TAGS).forEach(el => { el.style.display = '' })
     list.hidden = !listWasOpen
     comments.hidden = false
@@ -162,6 +196,15 @@ export const mountVisualRevise = visbug => {
     if (!list.hidden) list.render()
   }
 
+  // 面板里的弹层：下拉、色盘、填充、右键菜单。它们都挂在 body 上。
+  const POPUP_IDS = [
+    'visual-revise-menu',
+    'visual-revise-select-panel',
+    'visual-revise-color-panel',
+    'visual-revise-fill-panel',
+  ]
+  const hasOpenPopup = () => POPUP_IDS.some(id => document.getElementById(id))
+
   const onKeydown = e => {
     // ⌘Z / ⌘⇧Z（Windows 上 ⌘Y 也认）要在下面那道「带修饰键就放行」之前处理
     if ((e.metaKey || e.ctrlKey) && !e.altKey) {
@@ -180,7 +223,20 @@ export const mountVisualRevise = visbug => {
 
     if (e.metaKey || e.ctrlKey || e.altKey) return
 
-    if (isEditorUI(e)) return   // 面板内部按键归面板（Tab 切焦点、Esc 关弹窗）
+    // 面板内部只让出 Tab 与 Escape——这两个在面板里有自己的语义（切焦点、关弹窗）。
+    // 不能整块让路：用鼠标点过工具条按钮后，焦点就停在 shadow DOM 里那个 button 上，
+    // 整块让路会让此后所有快捷键失效，直到用户点回页面——而「点按钮切模式，
+    // 然后接着用键盘」恰恰是最常见的操作顺序。
+    // 单字母键在面板里没有任何语义，输入框由下面的 isTypingTarget 兜住。
+    if (isEditorUI(e) && e.key === 'Tab') return
+
+    // Esc 在面板里只有一个语义：关掉正开着的弹层（下拉 / 色盘 / 菜单）。
+    // 没有弹层时不该放行——否则用户在面板里点完一个控件、顺手按 Esc 想退出
+    // 当前模式，会什么也不发生，得先点一下页面再按，而「点一下面板然后接着
+    // 用键盘」恰恰是最常见的操作顺序。
+    // 这些弹层都挂在 body 上而不在 shadow 里（要脱离面板的层叠上下文），
+    // 所以按 id 找得到。
+    if (isEditorUI(e) && e.key === 'Escape' && hasOpenPopup()) return
 
     // 页面输入控件里打字时让路：单字母快捷键会吞掉字符，
     // Tab 则要保留表单字段间的正常跳转。Esc 仍然接管，
@@ -228,16 +284,20 @@ export const mountVisualRevise = visbug => {
     // 工具条上每个功能都有一个键。这些必须真正被我们接管（preventDefault +
     // stopPropagation）：上游 VisBug 给自己的工具也注册了一批单字母热键，
     // 它的工具条虽然藏了，热键却还活着——放行就会切到它的工具去。
-    if (!interactive) {
+    // 工具条可见时，它上面每个按钮的快捷键都必须管用——tooltip 已经把键印在
+    // 那儿了，按下去没反应就是在骗人。真正「把页面完全让给网站」的是 Tab
+    // 隐身态：那时工具条也藏起来，除 Tab 外一律放行，两层职责各管一段。
+    if (!stealth) {
       const key = e.key.toLowerCase()
 
       const MODE_KEYS = { b: 'browse', v: 'select', c: 'comment', r: 'reorder' }
       if (MODE_KEYS[key]) {
         e.preventDefault()
         e.stopPropagation()
-        const next = MODE_KEYS[key]
-        // 再按一次回到选择态；选择态本身是默认，按 V 就是明确切回来
-        setMode(next !== 'select' && mode === next ? 'select' : next)
+        // 幂等，不做 toggle：这四个模式是一组 segmented control，
+        // 连按 C 就该一直停在评论模式，正如点两次「Work」不会跳回别处。
+        // 退出某个模式靠按对应的那个键（多半是 V）或 Esc，不靠再按一次同一个键。
+        setMode(MODE_KEYS[key])
         return
       }
 
@@ -257,11 +317,23 @@ export const mountVisualRevise = visbug => {
     }
 
     if (e.key === 'Escape') {
-      // 浏览模式下我们只留 Tab 和 Esc，其余按键一律放行给页面——
-      // 用户此刻是在「用」这个网站，占着单字母会把它自己的快捷键打坏
+      // 浏览模式与隐身态都用 Esc 回到选择态
       if (interactive) { e.preventDefault(); e.stopPropagation(); setMode('select'); return }
       if (comments.hasDraft) { e.preventDefault(); e.stopPropagation(); comments.cancelDraft(); return }
-      if (mode !== 'select') { e.preventDefault(); e.stopPropagation(); setMode('select') }
+      if (mode !== 'select') { e.preventDefault(); e.stopPropagation(); setMode('select'); return }
+
+      // 已经在选择态，Esc 的下一层语义是取消选中。
+      //
+      // 这件事名义上由 VisBug 的 hotkeys('esc') 负责，但那条链路有两个断点：
+      // 它会跳过输入框里的按键（用户刚点完面板控件时焦点正在输入框里），
+      // 而且跟着活动工具走——编辑过一次文案（工具切到 text）之后就不再响应。
+      // 两种情况下用户按 Esc 都毫无反应，界面上也看不出为什么。
+      // 所以这里直接接管，不依赖它。
+      if (engine.selection().length) {
+        e.preventDefault()
+        e.stopPropagation()
+        engine.unselect_all()
+      }
     }
   }
 
@@ -344,6 +416,12 @@ export const mountVisualRevise = visbug => {
     if (!textMark || el !== textMark.el) return
     ChangeStore.endText(textMark)
     textMark = null
+
+    // 进入文案编辑会把 VisBug 的活动工具切成 text，而 selectable 的热键是
+    // 跟着工具激活/解绑的。编辑结束不切回来的话，此后 Esc 不再取消选中、
+    // 层级导航那一组键也全哑了——用户只是改了一句话，整套键盘操作却没了，
+    // 而界面上完全看不出发生过什么。
+    visbug.toolSelected?.('guides')
   }
 
   let textTimer = null
@@ -362,6 +440,26 @@ export const mountVisualRevise = visbug => {
   document.addEventListener('input', onTextInput, true)
   document.addEventListener('click', onClickCapture, true)
   document.addEventListener('keydown', onKeydown, true)
+
+  // 点插件自己的 UI，不该惊动页面。
+  // 页面上的 popover / dropdown / modal 普遍靠「点在外面就关掉」收起自己，
+  // 那是一个绑在 document 上的 pointerdown / mousedown / click 监听器。
+  // 而我们的面板就在页面 DOM 里，点它时事件照样冒到 document，
+  // 页面于是判定「点在外面」，把用户正看着的菜单关掉了。
+  //
+  // 拦在 body 的冒泡阶段：此刻插件 UI 内部早已处理完自己的事，
+  // 而 document 上页面的监听器还没轮到。绑 body 而不是 document，
+  // 是因为同一元素同一阶段按注册顺序触发，抢不过页面先注册的那些。
+  //
+  // 只掐这几个「按下」类事件，不碰 pointerup / mouseup：
+  // 元素缩放把手的收尾监听（handle.element.js）绑在 document 的冒泡阶段，
+  // 用户完全可能把元素拖到面板上方才松手，掐了它拖拽就再也结束不了。
+  // 插件自己那四个「点外面关闭」（color / select / fill / menu）都绑在
+  // 捕获阶段，document 先于此处收到事件，同样不受影响。
+  const PAGE_ISOLATED = ['pointerdown', 'mousedown', 'click', 'dblclick', 'contextmenu']
+  const isolateFromPage = e => { if (isEditorUI(e)) e.stopPropagation() }
+  for (const type of PAGE_ISOLATED)
+    document.body.addEventListener(type, isolateFromPage)
 
   const doCopy = async () => {
     const result = await copyPrompt(ChangeStore.read())
@@ -419,17 +517,23 @@ export const mountVisualRevise = visbug => {
   tree.addEventListener('vr-tree-reorder', e =>
     toolbar.toast(`已重排 ${e.detail?.ordered?.length ?? 0} 个元素`))
 
-  tree.addEventListener('vr-tree-close', () => setMode('browse'))
+  // 收起结构树，模式不动——和属性面板的 × 同一个意思。
+  // 关掉树之后仍在重排模式，页面上照样能直接拖着排序；
+  // 想把树叫回来按 R 就行：setMode 不做同模式早退，
+  // 每次调用都会重设 tree.hidden，所以幂等的模式键在这里正好管用。
+  tree.addEventListener('vr-tree-close', () => { tree.hidden = true })
 
-  // 两个面板的 × 都是「我不改了，把页面还给我」——去浏览模式。
-  // 只藏面板的话，选择引擎还在拦点击，页面看着能用其实点不动。
-  // 退出整个编辑器是工具条上那个 × 的事。
+  // × 只收这块面板，不动当前模式——用户多半还想接着选下一个元素，
+  // 把他从选择模式踢到浏览模式是自作主张。退出整个编辑器是工具条上那个 × 的事。
   panel.addEventListener('vr-close', () => {
     // 收起面板等于这一轮结束，把手动拖的位置也一并作废，
     // 下次选中重新按元素摆
     unpinPlacement(panel)
     placedFor = null
-    setMode('browse')
+    // 取消选中就够了：onSelected 里 panel.hidden 跟着选中数走，面板自己会收。
+    // 只藏面板而不取消选中的话，下次选中同一个元素时 onSelected 认为没变化，
+    // 面板不会重新出现，× 看着就像把面板弄坏了。
+    engine.unselect_all()
   })
   panel.addEventListener('vr-comment-toggle', () => setCommentMode(!comments.active))
   panel.addEventListener('vr-reorder-toggle', () => setReorderMode(!layoutDrag.active))
@@ -467,11 +571,15 @@ export const mountVisualRevise = visbug => {
     destroy() {
       clearTimeout(textTimer)
       document.removeEventListener('focusin', onTextFocus, true)
-    document.removeEventListener('focusout', onTextBlur, true)
+      document.removeEventListener('focusout', onTextBlur, true)
       document.removeEventListener('input', onTextInput, true)
       document.removeEventListener('keydown', onKeydown, true)
       document.removeEventListener('click', onClickCapture, true)
+      for (const type of PAGE_ISOLATED)
+        document.body.removeEventListener(type, isolateFromPage)
       engine.removeSelectedCallback(onSelected)
+      // 不断开的话，插件「关掉」之后它仍在观察整个文档树
+      ChangeStore.unobserve()
       panel.remove()
       list.remove()
       comments.remove()
@@ -504,6 +612,10 @@ export const mountVisualRevise = visbug => {
   // 而界面上分辨不出来。
   api.build = typeof __VR_BUILD__ === 'string' ? __VR_BUILD__ : 'dev'
   console.log(`[Visual Revise] 已就绪 · 构建于 ${api.build}`)
+
+  // 把版本落到 DOM 上：inject.js 跑在隔离世界，读不到这里的 window，
+  // 但 DOM 是两个世界共用的。它据此判断「页面里跑的这份是不是磁盘上那份」。
+  document.documentElement.dataset.visualReviseBuild = api.build
 
   window.__visualRevise = api
   return api

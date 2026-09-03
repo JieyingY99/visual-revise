@@ -168,5 +168,44 @@ const one = await page.evaluate(() => {
 })
 ok(one && !one.stillListed, '点单条「还原」，失联的那一行也会消失')
 
+// ── 观察器的生命周期 ────────────────────────────────────────
+// 重锚靠一个 MutationObserver。它早先是 `new MutationObserver(...).observe(...)`
+// 一行写完的，谁也拿不到引用——用户点 × 关掉插件之后它仍在观察整个文档树，
+// React 每渲染一次就白跑一轮。现在 destroy 会断开它，重新挂载再接回来。
+await page.evaluate(() => {
+  window.__visualRevise.store.clear()
+  window.__visualRevise.destroy()
+  document.querySelector('vis-bug')?.remove()
+})
+await page.waitForTimeout(300)
+ok(await page.evaluate(() => !document.querySelector('visual-revise-panel')),
+   'destroy 之后面板已卸载')
+
+// 关掉期间发生的 DOM 变动不该再被处理
+await rerender('.curve-card')
+await settle()
+
+// 重新挂载：observe 是幂等的，接回来之后重锚要照常工作
+await page.evaluate(() => {
+  const el = document.createElement('vis-bug')
+  el.setAttribute('tutsBaseURL', '/__ext/tuts')
+  document.body.prepend(el)
+})
+await page.waitForTimeout(500)
+ok(await page.evaluate(() => !!document.querySelector('visual-revise-panel')),
+   '重新挂载后面板回来了')
+
+await page.evaluate(() => {
+  const el = document.querySelector('.curve-card')
+  window.__visualRevise.store.applyProp(el, 'padding-top', '32px')
+})
+await rerender('.curve-card')
+await settle()
+const afterRemount = await stats()
+ok(afterRemount.props === 1,
+   `重新挂载后重锚照常工作（props=${afterRemount.props}）——观察器接回来了`)
+ok(await page.evaluate(() => document.querySelector('.curve-card').style.paddingTop) === '32px',
+   '改动也重新贴回了新节点')
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

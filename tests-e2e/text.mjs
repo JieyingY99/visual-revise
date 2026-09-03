@@ -148,6 +148,30 @@ await radius.press('Enter')
 await page.waitForTimeout(300)
 ok((await stats()).texts === before, '在属性面板里打字不会被记成页面文案改动')
 
+// ── 编辑结束要把工具交还给选择引擎 ──────────────────────────
+// 进入文案编辑会把 VisBug 的活动工具切成 text，selectable 的热键跟着解绑。
+// 不切回来的话，用户改完一句话之后 Esc 不再取消选中、层级导航也全哑了，
+// 而界面上看不出发生过什么。
+await page.reload(); await injectVisBug(page, origin); await page.waitForTimeout(400)
+const tool = () => page.evaluate(() => {
+  const vb = document.querySelector('vis-bug')
+  return vb.activeTool?.dataset?.tool ?? vb.activeTool ?? '?'
+})
+const selCount = () => page.evaluate(() => document.querySelectorAll('[data-selected]').length)
+
+await page.locator('.card-title').first().click(); await page.waitForTimeout(300)
+await page.evaluate(() => document.querySelector('vis-bug').toolSelected('text')); await page.waitForTimeout(300)
+await page.keyboard.press('End'); await page.keyboard.type('改'); await page.waitForTimeout(400)
+ok(await tool() === 'text', `编辑时活动工具是 text（${await tool()}）`)
+
+// 用户点别的元素离开编辑态
+await page.locator('.curve-card').nth(2).click({ position: { x: 120, y: 12 } })
+await page.waitForTimeout(450)
+ok(await tool() === 'guides', `离开编辑态后工具交还给选择引擎（${await tool()}）`)
+
+await page.keyboard.press('Escape'); await page.waitForTimeout(300)
+ok(await selCount() === 0, `编辑过文案之后 Esc 仍能取消选中（剩 ${await selCount()} 个）`)
+
 await browser.close()
 await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

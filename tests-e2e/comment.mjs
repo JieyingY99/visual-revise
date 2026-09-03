@@ -162,8 +162,8 @@ const edgeProbe = (id, css) => page.evaluate(([id, css]) => {
 }, [id, css])
 
 const draftOn = async id => {
-  // 模式常驻之后按 c 是「切换」——已经在评论模式时会把它关掉。
-  // 测试要的是「确保处于评论模式」，所以直接设值。
+  // 直接设值而不按 c：要的是「确保处于评论模式」这个前置条件，
+  // 不该顺带把快捷键的行为也测进来
   await page.evaluate(() => window.__visualRevise.setMode('comment'))
   await page.waitForTimeout(150)
   await page.locator(`#${id}`).click()

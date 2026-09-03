@@ -320,6 +320,7 @@ await page.locator('.curve-card').first().click()
 await page.waitForTimeout(300)
 ok(!(await page.locator('visual-revise-panel').isHidden()), '选中元素后面板出现')
 
+const modeBeforeClose = await page.evaluate(() => window.__visualRevise.mode)
 await page.locator('visual-revise-panel .close').click()
 await page.waitForTimeout(300)
 ok(await page.locator('visual-revise-panel').isHidden(), '× 收起面板')
@@ -327,6 +328,102 @@ ok(await page.locator('vis-bug').count() === 1, '编辑器仍在，没有被一�
 ok(await page.locator('visual-revise-toolbar').count() === 1, '工具条也还在')
 ok(await page.evaluate(() => document.querySelectorAll('[data-selected]').length) === 0,
    '同时取消了选中——只藏不取消的话，下次选中面板又冒出来，× 看着像没生效')
+
+// × 是「收起这块面板」，不是「退出当前模式」。用户多半还想接着选下一个元素，
+// 把他从选择模式踢到浏览模式是自作主张。
+const modeAfterClose = await page.evaluate(() => window.__visualRevise.mode)
+ok(modeAfterClose === modeBeforeClose,
+   `× 不改变当前模式（${modeBeforeClose} → ${modeAfterClose}）`)
+
+// 而且模式还活着：随手再点一个元素，面板应该照常回来
+await page.locator('.curve-card').nth(1).click({ position: { x: 4, y: 4 } })
+await page.waitForTimeout(350)
+ok(!(await page.locator('visual-revise-panel').isHidden()),
+   '收起后再选一个元素，面板照常回来——说明选择模式没被 × 关掉')
+
+// ── 点插件 UI 不该惊动页面 ──────────────────────────────────
+// 前面的用例收了面板、也改过页面元素，这一段从干净状态起
+await page.reload()
+await injectVisBug(page, origin)
+await page.waitForTimeout(400)
+
+// 页面上的 popover / dropdown / modal 普遍靠「点在外面就关掉」收起自己，
+// 那是一个绑在 document 上的 pointerdown / click 监听器。我们的面板就在
+// 页面 DOM 里，事件照样冒到 document，页面于是判定「点在外面」，
+// 把用户正看着的菜单关掉了。
+const openPagePopover = () => page.evaluate(() => {
+  document.getElementById('page-popover')?.remove()
+  const menu = document.createElement('div')
+  menu.id = 'page-popover'
+  menu.textContent = '钉选专案 / 删除'
+  menu.style.cssText = 'position:fixed;left:8px;bottom:8px;padding:8px;background:#fff;z-index:9'
+  document.body.appendChild(menu)
+  window.__pagePopoverOpen = true
+
+  // 页面侧最常见的两种写法都装上
+  const closeIfOutside = e => {
+    if (menu.contains(e.target)) return
+    window.__pagePopoverOpen = false
+    menu.remove()
+  }
+  document.addEventListener('pointerdown', closeIfOutside)
+  document.addEventListener('click', closeIfOutside)
+})
+const popoverOpen = () => page.evaluate(() => window.__pagePopoverOpen === true)
+
+// 先把面板开出来
+await page.locator('.curve-card').nth(1).click({ position: { x: 4, y: 4 } })
+await page.waitForTimeout(350)
+
+await openPagePopover()
+await page.locator('visual-revise-panel .tag').click()
+await page.waitForTimeout(250)
+ok(await popoverOpen(), '点属性面板的标题栏，页面上的菜单不会被关掉')
+
+await page.locator('visual-revise-panel').click({ position: { x: 20, y: 200 } })
+await page.waitForTimeout(250)
+ok(await popoverOpen(), '点面板身上任意位置同样不影响页面')
+
+await page.locator('visual-revise-toolbar').click({ position: { x: 8, y: 8 } })
+await page.waitForTimeout(250)
+ok(await popoverOpen(), '工具条也一样')
+
+// 反过来必须仍然管用：隔离只针对插件 UI，页面自己的「点外面关闭」不能被废掉。
+// 先收起面板，否则它浮在上面，这一点就落在插件 UI 上、验不到页面行为。
+await page.keyboard.press('Escape')
+await page.waitForTimeout(300)
+const spot = await page.evaluate(() => {
+  const r = document.querySelector('.curve-card').getBoundingClientRect()
+  return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+})
+await page.mouse.click(spot.x, spot.y)
+await page.waitForTimeout(250)
+ok(!(await popoverOpen()),
+   '点页面自己的区域时，页面的 outside-click 照常生效——隔离不是把页面功能一起掐了')
+
+// 而且那一下点击本身要照常起作用：选中元素、面板跟着刷新
+const tagReselected = await page.locator('visual-revise-panel .tag').textContent()
+ok(/\w/.test(tagReselected) && !tagReselected.includes('visual-revise'),
+   `同一下点击仍正常选中页面元素（命中最内层，这里是卡片里的标题）：${tagReselected}`)
+
+
+// ── 「重置本组」不能把用户原本的短属性删掉 ────────────────────
+// parseInlineStyle 遍历 CSSStyleDeclaration 只得到长属性，border-radius: 8px
+// 在表里是四个 border-*-radius；revertProp 按 'border-radius' 查不到就 remove，
+// 用户原本写的圆角就没了。padding / margin / border / gap 同理。
+await page.reload(); await injectVisBug(page, origin); await page.waitForTimeout(400)
+await page.evaluate(() => {
+  const d = document.createElement('div'); d.id = 'sh'
+  d.style.cssText = 'position:absolute;left:30px;top:600px;width:160px;height:60px;border-radius:8px;padding:12px;background:#345'
+  document.body.appendChild(d)
+})
+await page.locator('#sh').click({ position: { x: 80, y: 30 } }); await page.waitForTimeout(450)
+const radius = page.locator('visual-revise-panel input[data-prop="border-radius"]')
+await radius.fill('20'); await radius.press('Enter'); await page.waitForTimeout(250)
+await page.locator('visual-revise-panel .acts .undo[data-undo="appearance"]').click(); await page.waitForTimeout(300)
+const sh = await page.evaluate(() => { const s = document.getElementById('sh').style; return { radius: s.borderRadius, padding: s.padding } })
+ok(sh.radius === '8px', `重置本组把短属性 border-radius 还原到原值，而不是删掉（"${sh.radius}"）`)
+ok(sh.padding === '12px', `没动过的短属性 padding 原样保留（"${sh.padding}"）`)
 
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

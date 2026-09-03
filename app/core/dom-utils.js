@@ -8,10 +8,20 @@ export const pageElementAt = (clientX, clientY) => {
   return stack.find(node => node.nodeType === 1 && !isOffBounds(node)) || null
 }
 
-export const isEditorUI = eventOrPath => {
-  const path = Array.isArray(eventOrPath)
-    ? eventOrPath
-    : (eventOrPath.composedPath?.() || [])
+// 三种入参都要认：事件、路径数组、单个元素。
+// 早先只处理前两种——传元素时 `el.composedPath?.()` 是 undefined，走 `|| []`
+// 之后恒返回 false。它不报错，只是让每一处 `!isEditorUI(el)` 变成永真，
+// 守卫形同虚设。传元素的调用点有四个（删除过滤、删除后选邻居、
+// 文本编辑的两道守卫），全都靠别的机制侥幸没出事。
+export const isEditorUI = eventOrNode => {
+  const path = Array.isArray(eventOrNode)
+    ? eventOrNode
+    : typeof eventOrNode?.composedPath === 'function'
+      ? eventOrNode.composedPath()
+      // isOffBounds 自己会沿 closest + shadow host 往上找，单个元素就够
+      : eventOrNode?.nodeType === 1
+        ? [eventOrNode]
+        : []
 
   return path.some(node =>
     node?.nodeType === 1 && (isOffBounds(node) || node.tagName === 'VIS-BUG'))

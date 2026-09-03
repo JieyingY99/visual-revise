@@ -147,21 +147,34 @@
 }
 
 /* ── hover 大图 ── */
+/* 走 top layer（popover），不靠 z-index。
+   这个预览挂在 comment-layer 的 shadow 里，而 host 自己有 z-index，
+   等于给子元素扣了一个层叠上下文的天花板——工具条的 2147483647 比它高，
+   预览再怎么调 z-index 也钻不出去，只会被工具条压住半截。
+   top layer 在所有 z-index 之上，这类「必须盖住一切」的浮层就该用它。 */
 .preview {
-  position: absolute;
+  position: fixed;
+  /* popover 的 UA 样式是 inset:0 + margin:auto（居中弹窗），得先拆掉 */
+  inset: auto;
+  margin: 0;
+  padding: 4px;
+  border: 1px solid var(--vr-border);
+  overflow: visible;
   /* 不放大小图，但也不能让一张 16px 的图标缩成一个看不见的点 */
   min-width: 56px;
   min-height: 40px;
   display: grid;
   place-items: center;
-  padding: 4px;
   background: var(--vr-bg);
-  border: 1px solid var(--vr-border);
   border-radius: 8px;
   box-shadow: 0 14px 36px rgb(0 0 0 / .55);
   pointer-events: none;
 }
-.preview[hidden] { display: none; }
+/* 关闭态必须自己写。UA 里那条 [popover]:not(:popover-open){display:none} 在 UA 层，
+   而上面的 display:grid 是作者样式——层叠顺序里作者压过 UA，于是 hidePopover()
+   之后 popover 状态确实关了，框却还杵在屏幕上。
+   凡是给 popover 指定了非 none 的 display，都得补这一条。 */
+.preview:not(:popover-open) { display: none; }
 .preview img { display: block; border-radius: 4px; background: #111; }
 
 /* ── 图片说明区 ──

@@ -198,12 +198,20 @@ export const revertText = snapshot => {
 }
 
 // 单条撤销：把某个属性还原到快照状态
+// 原值从探针上按名取，而不是查 parseInlineStyle 的表：那张表是遍历
+// CSSStyleDeclaration 得来的，只有长属性——border-radius: 8px 在里面是四个
+// border-*-radius，查 'border-radius' 永远 undefined，结果就是把用户原本
+// 写的圆角 remove 掉。padding / margin / border / gap / background / inset / flex
+// 全都是这种短属性。探针的 getPropertyValue 会由浏览器从长属性合成短属性，
+// 长短都认，!important 也一并保住。
 export const revertProp = (snapshot, prop) => {
   const { el, inlineStyle } = snapshot
-  const original = parseInlineStyle(inlineStyle)
+  const probe = document.createElement('div')
+  probe.style.cssText = inlineStyle || ''
+  const original = probe.style.getPropertyValue(prop)
 
-  original[prop] !== undefined
-    ? el.style.setProperty(prop, original[prop])
+  original
+    ? el.style.setProperty(prop, original, probe.style.getPropertyPriority(prop))
     : el.style.removeProperty(prop)
 }
 

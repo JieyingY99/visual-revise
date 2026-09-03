@@ -39,7 +39,8 @@ const editorState = () => page.evaluate(() => {
 })
 
 const startDraft = async (target = '.curve-card') => {
-  // 模式常驻之后按 c 是「切换」，已经在评论模式时会把它关掉
+  // 直接设值而不按 c：要的是「确保处于评论模式」这个前置条件，
+  // 不该顺带把快捷键的行为也测进来
   await page.evaluate(() => window.__visualRevise.setMode('comment'))
   await page.waitForTimeout(250)
   await page.locator(target).first().click({ position: { x: 4, y: 4 } })
@@ -221,6 +222,54 @@ const hovered = await page.evaluate(() => {
 ok(hovered?.shown && hovered.sameImage, 'hover chip 弹出大图预览，且是这张图')
 ok(hovered?.inside, '预览没跑出视口')
 
+// 层级必须靠 top layer，不能靠 z-index。
+// 预览挂在 comment-layer 的 shadow 里，而 host 自己有 z-index——这等于给它的
+// 子元素扣了一个层叠上下文的天花板。工具条比这个天花板还高，所以预览无论加到
+// 多大的 z-index 都钻不出去，只会被工具条压住半截。
+const layered = await page.evaluate(() => {
+  const host = document.querySelector('visual-revise-comment-layer')
+  const box = host.shadowRoot.querySelector('.preview')
+  const bar = document.querySelector('visual-revise-toolbar')
+  return {
+    inTopLayer: box.matches(':popover-open'),
+    position: getComputedStyle(box).position,
+    hostZ: getComputedStyle(host).zIndex,
+    barZ: bar ? getComputedStyle(bar).zIndex : null,
+  }
+})
+ok(layered.inTopLayer,
+   `预览走 top layer（popover），绕开 host 的 z-index 天花板（host=${layered.hostZ}, 工具条=${layered.barZ}）`)
+ok(layered.position === 'fixed',
+   'popover 必须配 position:fixed —— top layer 里用 absolute 会按原包含块算，位置会飘')
+
+// 移开鼠标，预览必须真的消失。
+// 判据要落在几何尺寸上，不能只问 popover 状态——上一版就栽在这里：
+// hidePopover() 调用成功、`:popover-open` 也确实变成了 false，但作者样式里的
+// display:grid 盖过了 UA 的 [popover]:not(:popover-open){display:none}
+// （层叠顺序上作者压过 UA），框照样杵在屏幕上。只断言 open===false 测不出来。
+const previewGone = () => page.evaluate(() => {
+  const box = document.querySelector('visual-revise-comment-layer')
+    .shadowRoot.querySelector('.preview')
+  const r = box.getBoundingClientRect()
+  return { open: box.matches(':popover-open'), visible: r.width > 0 || r.height > 0 }
+})
+
+await page.mouse.move(4, 4)
+await page.waitForTimeout(350)
+const afterChipOut = await previewGone()
+ok(!afterChipOut.open && !afterChipOut.visible,
+   `hover 离开 chip 后预览消失（open=${afterChipOut.open}, visible=${afterChipOut.visible}）`)
+
+// 说明区那个缩略图走的是另一条路径（pointerenter / pointerleave），单独测
+await layer('.ref-thumb').first().hover()
+await page.waitForTimeout(300)
+ok((await previewGone()).visible, 'hover 说明区缩略图也会弹出预览')
+await page.mouse.move(4, 4)
+await page.waitForTimeout(350)
+const afterThumbOut = await previewGone()
+ok(!afterThumbOut.open && !afterThumbOut.visible,
+   `hover 离开说明区缩略图后预览同样消失（visible=${afterThumbOut.visible}）`)
+
 // Backspace 删 chip：它是 contenteditable=false，应当整块消失而不是被逐字啃
 await page.evaluate(() => {
   const sr = document.querySelector('visual-revise-comment-layer').shadowRoot
@@ -317,6 +366,47 @@ const rowLayout = await page.evaluate(() => {
 })
 ok(rowLayout.sameRow, '文件名、尺寸、× 在同一行')
 ok(rowLayout.noteBelow && rowLayout.noteFull, '说明框在下面一行，且占满整宽')
+
+await page.keyboard.press('Escape')
+await page.waitForTimeout(200)
+
+// ── 剪贴板截图的命名 ────────────────────────────────────────
+// Chrome 粘贴截图时 File.name 一律是 image.png，没有任何信息量——
+// 一条评论里贴三张，说明区就是三行 image.png，谁也分不清哪张是哪张。
+// 这类占位名换成「当天日期 + 两位序号」；从 Finder 复制真实文件再粘贴时
+// File.name 是真名，那种带信息，要原样留着。
+const pasteAs = name => page.evaluate(([n, b]) => {
+  const bytes = Uint8Array.from(atob(b), c => c.charCodeAt(0))
+  const dt = new DataTransfer()
+  dt.items.add(new File([bytes], n, { type: 'image/png' }))
+  const ed = document.querySelector('visual-revise-comment-layer').shadowRoot.querySelector('.editor')
+  ed.focus()
+  ed.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
+}, [name, B64])
+
+const refNames = () => page.evaluate(() =>
+  [...document.querySelector('visual-revise-comment-layer').shadowRoot
+    .querySelectorAll('.ref-name')].map(n => n.textContent.trim()))
+
+const d = new Date()
+const DAY = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+await startDraft('.cards')
+await pasteAs('image.png')
+await page.waitForTimeout(600)
+await pasteAs('image.png')
+await page.waitForTimeout(600)
+
+const dated = (await refNames()).filter(n => n.startsWith(DAY))
+ok(dated.length === 2, `两张剪贴板截图都拿到日期命名：${dated.join(', ') || '（无）'}`)
+ok(dated[0] === `${DAY}-01.png` && dated[1] === `${DAY}-02.png`,
+   `序号从 01 起、两位、依次递增（${dated.join(' / ')}）`)
+
+// 真实文件名带信息，改掉就是丢东西
+await pasteAs('设计稿-v3.png')
+await page.waitForTimeout(600)
+ok((await refNames()).includes('设计稿-v3.png'),
+   '从 Finder 粘贴真实文件时保留原名，不参与日期编号')
 
 await page.keyboard.press('Escape')
 await page.waitForTimeout(200)

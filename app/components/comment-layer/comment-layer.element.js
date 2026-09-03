@@ -601,6 +601,8 @@ export class CommentLayer extends HTMLElement {
     if (!box) {
       box = document.createElement('div')
       box.className = 'preview'
+      // manual：不要 light dismiss，显隐完全由 hover 决定
+      box.setAttribute('popover', 'manual')
       box.innerHTML = '<img alt="">'
       this.#shadow.querySelector('#root').append(box)
       this.#preview = box
@@ -614,20 +616,24 @@ export class CommentLayer extends HTMLElement {
     thumb.src = img.dataUrl
     thumb.style.width = `${Math.round((img.w || PREVIEW_MAX) * scale)}px`
     thumb.style.height = `${Math.round((img.h || PREVIEW_MAX) * scale)}px`
-    box.hidden = false
+    // 重复 showPopover 会抛 InvalidStateError
+    if (!box.matches(':popover-open')) box.showPopover()
 
+    // 量尺寸与写位置在同一个同步块里做完，中间不会有绘制，不会看到它先闪一下。
+    // 坐标是 viewport 的：popover 在 top layer 且 position:fixed，
+    // 再叠 scrollX/scrollY 会让它随页面滚动跑偏。
     const r = anchor.getBoundingClientRect()
     const p = box.getBoundingClientRect()
     const above = r.top - p.height - 8
-    const top = (above >= EDGE ? above : r.bottom + 8) + scrollY
-    const left = r.left + r.width / 2 - p.width / 2 + scrollX
+    const top = above >= EDGE ? above : r.bottom + 8
+    const left = r.left + r.width / 2 - p.width / 2
 
-    box.style.left = `${fit(left, scrollX + EDGE, scrollX + vw() - EDGE - p.width)}px`
-    box.style.top = `${fit(top, scrollY + EDGE, scrollY + vh() - EDGE - p.height)}px`
+    box.style.left = `${fit(left, EDGE, vw() - EDGE - p.width)}px`
+    box.style.top = `${fit(top, EDGE, vh() - EDGE - p.height)}px`
   }
 
   #hidePreview() {
-    if (this.#preview) this.#preview.hidden = true
+    if (this.#preview?.matches(':popover-open')) this.#preview.hidePopover()
   }
 
   #toast(message) {

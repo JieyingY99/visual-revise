@@ -502,9 +502,15 @@ const createStore = () => {
     frame = requestAnimationFrame(() => { frame = null; reconcile() })
   }
 
+  // 存引用才断得掉。早先是 `new MutationObserver(...).observe(...)` 一行写完，
+  // 谁也拿不到它——用户点 × 关掉插件之后，它仍在观察整个 documentElement 的
+  // subtree，React 每渲染一次就白跑一轮重锚。
+  let domObserver = null
+
   const observe = () => {
     if (typeof MutationObserver === 'undefined' || !document.documentElement) return
-    new MutationObserver(records => {
+    if (domObserver) return   // 幂等：重新挂载时不叠第二个
+    domObserver = new MutationObserver(records => {
       if (replaying) return
 
       // 先记下哪些父节点在这一批里失去过子节点，同一批里加到这些父节点下的
@@ -526,7 +532,16 @@ const createStore = () => {
       // reconcile 压根不跑，记录直接从 isConnected 过滤里掉了——又成了静默丢弃。
       if (!pool.appeared.size && !lostChildren.size) return
       schedule()
-    }).observe(document.documentElement, { childList: true, subtree: true })
+    })
+    domObserver.observe(document.documentElement, { childList: true, subtree: true })
+  }
+
+  const unobserve = () => {
+    domObserver?.disconnect()
+    domObserver = null
+    // 已经排上队的那一轮也要撤，否则断开后还会再跑一次
+    if (frame) { cancelAnimationFrame(frame); frame = null }
+    pool = { appeared: new Set(), replaced: new Set() }
   }
 
   observe()
@@ -763,7 +778,7 @@ const createStore = () => {
     addComment, updateComment, removeComment, setCommentImages,
     recordRemoval, removeElements, restoreRemoval, canRestore,
     undoProp, undoText, undoAttr, undoElement, undoEverything, clear,
-    read, stats, touch, reconcile,
+    read, stats, touch, reconcile, observe, unobserve,
     snapshots,
     history,
     undo: () => history.undo(),
