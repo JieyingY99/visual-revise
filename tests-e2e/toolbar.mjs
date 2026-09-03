@@ -138,8 +138,8 @@ const order = await page.evaluate(() => {
   return [...sr.querySelectorAll('.bar button')].map(b =>
     b.dataset.mode || b.className.split(' ')[0])
 })
-ok(order.join(',') === 'browse,select,comment,reorder,undo,redo,list,copy,close',
-   `撤销 / 重做排在出口那组前面：${order.join(' · ')}`)
+ok(order.join(',') === 'layout,browse,select,comment,reorder,undo,redo,list,copy,close',
+   `第一格是布局方向，撤销 / 重做排在出口那组前面：${order.join(' · ')}`)
 
 const tipOf = async sel => {
   await page.locator(`visual-revise-toolbar ${sel}`).hover()
@@ -171,6 +171,144 @@ for (const [sel, label, key] of [
      `${sel} 的气泡：${tip?.label} ${tip?.key}`)
 }
 ok((await tipOf('.close'))?.inside, '贴边的按钮，气泡也被夹在视口内')
+
+// ── 模式分段控件 ────────────────────────────────────────────
+// 四个模式是互斥单选，所以长成 segmented control：一条凹进去的轨道，
+// 当前项是一块滑块。滑块是独立元素、靠 transform 位移，切换时看得出是
+// 「同一块东西移过去了」，而不是「这块灭、那块亮」。
+const segShape = await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-toolbar').shadowRoot
+  const on = sr.querySelector('.segment button[data-on]')
+  return {
+    hasTrack: !!sr.querySelector('.segment'),
+    hasThumb: !!sr.querySelector('.segment .thumb'),
+    buttons:  sr.querySelectorAll('.segment button[data-mode]').length,
+    // 选中底色该由滑块提供，按钮自己不能再涂一层，否则两块底叠在一起
+    onBtnBg:  on ? getComputedStyle(on).backgroundColor : null,
+    // 纯图标，不带文字
+    onBtnText: on ? on.textContent.trim() : null,
+  }
+})
+ok(segShape.hasTrack && segShape.hasThumb && segShape.buttons === 4,
+   `四个模式在一条轨道里，且有滑块（buttons=${segShape.buttons}）`)
+ok(/rgba\(0, 0, 0, 0\)|transparent/.test(segShape.onBtnBg),
+   `选中按钮自身不涂底色，交给滑块（实得 ${segShape.onBtnBg}）`)
+ok(segShape.onBtnText === '', '分段按钮是纯图标，没有文字')
+
+// 滑块必须停在当前选中项上。这条同时验证了定位算法——
+// 落点是按钮的实际布局位置算出来的，不是写死的按钮宽度，
+// 图标尺寸或轨道内边距一改也不会错位。
+const thumbVsButton = () => page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-toolbar').shadowRoot
+  const t = sr.querySelector('.segment .thumb').getBoundingClientRect()
+  const b = sr.querySelector('.segment button[data-on]').getBoundingClientRect()
+  return { dx: Math.round(t.left - b.left), tw: Math.round(t.width), bw: Math.round(b.width) }
+})
+
+for (const m of ['reorder', 'browse', 'comment']) {
+  await page.evaluate(mode => window.__visualRevise.setMode(mode), m)
+  await page.waitForTimeout(400)          // 等滑动动画走完
+  const at = await thumbVsButton()
+  ok(Math.abs(at.dx) <= 1 && Math.abs(at.tw - at.bw) <= 1,
+     `切到 ${m} 后滑块贴合选中项（偏移 ${at.dx}px，宽度 ${at.tw}/${at.bw}）`)
+}
+await page.evaluate(() => window.__visualRevise.setMode('select'))
+await page.waitForTimeout(300)
+
+// ── 布局方向 ────────────────────────────────────────────────
+// 竖条贴左边，把顶部让给页面内容。第一格从品牌标记换成了方向切换按钮。
+const barBox = () => page.locator('visual-revise-toolbar').boundingBox()
+const isVertical = () => page.locator('visual-revise-toolbar')
+  .evaluate(el => el.hasAttribute('vertical'))
+
+const wide = await barBox()
+await page.locator('visual-revise-toolbar .layout').click()
+await page.waitForTimeout(500)
+ok(await isVertical(), '点第一格切到纵向')
+
+const tall = await barBox()
+ok(tall.height > tall.width && tall.width < wide.width,
+   `工具条变成竖条（${Math.round(wide.width)}×${Math.round(wide.height)} → ${Math.round(tall.width)}×${Math.round(tall.height)}）`)
+
+// 滑块的落点在纵向要走 offsetTop / translateY，横向那套算出来会全压在第一格上
+const thumbV = await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-toolbar').shadowRoot
+  const t = sr.querySelector('.segment .thumb').getBoundingClientRect()
+  const b = sr.querySelector('.segment button[data-on]').getBoundingClientRect()
+  return { dy: Math.round(t.top - b.top), dx: Math.round(t.left - b.left) }
+})
+ok(Math.abs(thumbV.dy) <= 1 && Math.abs(thumbV.dx) <= 1,
+   `纵向时滑块仍贴合选中项（偏移 ${thumbV.dx},${thumbV.dy}）`)
+
+// A 方案：竖排不留文字，靠 hover 气泡认按钮
+const labelHidden = await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-toolbar').shadowRoot
+  return getComputedStyle(sr.querySelector('.copy .label')).display === 'none'
+})
+ok(labelHidden, '竖排收起按钮文字——留着会宽到挡住页面')
+
+// 气泡也得跟着换边：竖排时按钮下方是另一个按钮，气泡压上去就看不清了
+await page.locator('visual-revise-toolbar .copy').hover()
+await page.waitForTimeout(350)
+const tipSide = await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-toolbar').shadowRoot
+  const tip = sr.querySelector('.tip').getBoundingClientRect()
+  const btn = sr.querySelector('.copy').getBoundingClientRect()
+  return { tipLeft: Math.round(tip.left), btnRight: Math.round(btn.right),
+           overlapY: tip.top < btn.bottom && tip.bottom > btn.top }
+})
+ok(tipSide.tipLeft >= tipSide.btnRight && tipSide.overlapY,
+   `气泡挪到按钮右侧并与它齐平（tip.left=${tipSide.tipLeft} ≥ btn.right=${tipSide.btnRight}）`)
+
+ok(await page.evaluate(() => localStorage.getItem('visual-revise:orientation')) === 'vertical',
+   '方向记进 localStorage，下次注入沿用')
+
+// 竖条也要被面板摆位让开——placeFor 传的是实时矩形，这里验证它确实生效
+await page.locator('.curve-card').first().click({ position: { x: 4, y: 4 } })
+await page.waitForTimeout(400)
+const clear = await page.evaluate(() => {
+  const bar = document.querySelector('visual-revise-toolbar').getBoundingClientRect()
+  const panel = document.querySelector('visual-revise-panel').getBoundingClientRect()
+  return bar.right <= panel.left || panel.right <= bar.left
+      || bar.bottom <= panel.top || panel.bottom <= bar.top
+})
+ok(clear, '属性面板避开竖条工具条，不重叠')
+
+await page.keyboard.press('Escape')
+await page.waitForTimeout(200)
+await page.locator('visual-revise-toolbar .layout').click()
+await page.waitForTimeout(500)
+ok(!(await isVertical()), '再点一次切回横向')
+
+// ── 面板里的 Esc ────────────────────────────────────────────
+// Esc 在面板里只有一个语义：关掉正开着的弹层。没有弹层时不该被面板吃掉——
+// 「点一下面板的控件、然后接着用键盘」是最常见的操作顺序，
+// 那时按 Esc 想退出当前模式，却什么也不发生，得先点一下页面再按。
+await page.locator('.curve-card').first().click({ position: { x: 120, y: 12 } })
+await page.waitForTimeout(400)
+await page.locator('visual-revise-panel input[data-prop="opacity"]').first().click()
+await page.waitForTimeout(200)
+ok(await page.evaluate(() => document.querySelectorAll('[data-selected]').length) === 1,
+   '焦点落在面板的输入框里')
+await page.keyboard.press('Escape')
+await page.waitForTimeout(300)
+ok(await page.evaluate(() => document.querySelectorAll('[data-selected]').length) === 0,
+   '焦点在面板里时按 Esc 仍能取消选中（此刻没有弹层）')
+
+// 反过来：弹层开着时 Esc 归弹层，先关它而不是退模式
+await page.locator('.curve-card').first().click({ position: { x: 120, y: 12 } })
+await page.waitForTimeout(400)
+await page.locator('visual-revise-panel vr-select[data-prop="position"]').click()
+await page.waitForTimeout(300)
+ok(await page.evaluate(() => !!document.getElementById('visual-revise-select-panel')),
+   '下拉弹层已打开')
+await page.keyboard.press('Escape')
+await page.waitForTimeout(300)
+ok(!(await page.evaluate(() => !!document.getElementById('visual-revise-select-panel')))
+   && await page.evaluate(() => document.querySelectorAll('[data-selected]').length) === 1,
+   'Esc 先关弹层，选中还在——弹层开着时它归弹层')
+await page.keyboard.press('Escape')
+await page.waitForTimeout(250)
 
 // ── 新增的快捷键 ────────────────────────────────────────────
 const curMode = () => page.evaluate(() => window.__visualRevise.mode)
@@ -222,6 +360,60 @@ ok(await page.inputValue('#vr-key-probe') === 'vlp',
 ok(await curMode() === 'select', '输入过程中模式未被误切')
 await page.evaluate(() => document.querySelector('#vr-key-probe')?.remove())
 
+// 上游给它那 13 个工具各注册了一个单字母热键，而它的工具条是隐藏的——
+// 按 m 会在背后切到 margin 工具，此后方向键就在改间距，界面上毫无提示。
+// 用户在页面上随手打个字就可能中招。挂载时已把这些热键解绑，
+// 这些键要么归我们，要么原样放行给页面，都不该再碰上游工具。
+const upstreamTool = () => page.evaluate(() =>
+  document.querySelector('vis-bug').activeTool)
+const upstreamKeys = await page.evaluate(() =>
+  Object.keys(document.querySelector('vis-bug').toolbar_model))
+ok(upstreamKeys.length > 0, `上游确实注册过单字母热键（${upstreamKeys.join(' ')}）`)
+
+await page.locator('body').click({ position: { x: 5, y: 5 } })
+await page.waitForTimeout(150)
+const toolBefore = await upstreamTool()
+for (const k of ['m', 'f', 'h', 'd', 'g', 'i', 'x', 'a', 's']) {
+  await page.keyboard.press(k)
+  await page.waitForTimeout(60)
+}
+await page.waitForTimeout(250)
+ok(await upstreamTool() === toolBefore,
+   `上游单字母热键已解绑，按 m/f/h/d… 不再在背后切工具（仍是 ${toolBefore}）`)
+ok(await curMode() === 'select', '这些键也没有误切我们自己的模式')
+
+// 解绑的只是热键，工具本身仍要能被代码直调——
+// 浏览模式的停用/恢复走的就是 visbug.guides()
+await page.keyboard.press('b')
+await page.waitForTimeout(300)
+await page.keyboard.press('b')
+await page.waitForTimeout(300)
+ok(await upstreamTool() === toolBefore, '解绑热键不影响 guides 被代码直调恢复')
+
+// 用鼠标点过工具条之后，键盘还得能用。
+// 这是最容易踩中的一条路径——点按钮切模式、接着想用键盘——而 shadow DOM 里的
+// button 点完就留住了焦点。早先「事件路径经过插件 UI 就整块让路」的写法会让
+// 此后所有快捷键失效，直到用户点回页面；从界面上完全看不出为什么。
+await page.locator('visual-revise-toolbar').locator('button[data-mode="comment"]').click()
+await page.waitForTimeout(300)
+const focusInUI = await page.evaluate(() => {
+  const host = document.activeElement
+  return host?.tagName === 'VISUAL-REVISE-TOOLBAR'
+      && host.shadowRoot?.activeElement?.tagName === 'BUTTON'
+})
+ok(focusInUI, '点工具条按钮后焦点确实留在面板内（这条不成立则下面测的是空气）')
+ok(await curMode() === 'comment', '点按钮切到评论模式')
+
+await page.keyboard.press('v')
+await page.waitForTimeout(250)
+ok(await curMode() === 'select', '焦点还在工具条上时，V 仍能切回选择元素')
+
+await page.keyboard.press('r')
+await page.waitForTimeout(250)
+ok(await curMode() === 'reorder', '焦点还在工具条上时，R 仍能切到重排')
+await page.keyboard.press('Escape')
+await page.waitForTimeout(200)
+
 // ── 浏览模式 ────────────────────────────────────────────────
 // 这个模式把页面完全还给用户：选择引擎暂停、覆盖层收起、评论 pin 也藏起来
 // （它们有 pointer-events，留着会挡住页面上那个位置的点击）。
@@ -233,9 +425,28 @@ const vrState = () => page.evaluate(() => ({
   toolbar: !document.querySelector('visual-revise-toolbar').hidden,
   comments: !document.querySelector('visual-revise-comment-layer').hidden,
   panel: !document.querySelector('visual-revise-panel').hidden,
+  tree: !document.querySelector('visual-revise-tree').hidden,
 }))
 
+// 只数「看得见」的：这些元素被隐藏时仍留在 DOM 里，光数个数会漏掉真问题
+const countRulers = () => page.evaluate(() => {
+  const visible = sel => Array.from(document.querySelectorAll(sel))
+    .filter(el => getComputedStyle(el).display !== 'none').length
+  const gridlines = visible('visbug-gridlines')
+  const distance  = visible('visbug-distance')
+  return { gridlines, distance, total: gridlines + distance }
+})
+
+// 先把标尺线造出来，否则后面「浏览模式下没有线」测的是空气
 await page.keyboard.press('Escape')
+await page.locator('.curve-card').nth(1).click({ position: { x: 4, y: 4 } })
+await page.waitForTimeout(250)
+await page.locator('.curve-card').nth(0).hover({ position: { x: 4, y: 4 } })
+await page.waitForTimeout(400)
+const ruled = await countRulers()
+ok(ruled.total > 0,
+   `选择模式下 hover 会画出标尺线（gridlines=${ruled.gridlines}, distance=${ruled.distance}）`)
+
 await page.keyboard.press('b')
 await page.waitForTimeout(300)
 const browsing = await vrState()
@@ -248,39 +459,101 @@ await page.waitForTimeout(250)
 ok(await page.evaluate(() => document.querySelectorAll('[data-selected]').length) === 0,
    '浏览模式下点击页面不会选中元素，页面照常工作')
 
-// 用户此刻在「用」这个网站，占着单字母会把它自己的快捷键打坏
-await page.keyboard.press('v')
-await page.keyboard.press('c')
-await page.keyboard.press('r')
+// 这一步是整段的重点：必须在「进入浏览模式之后」再动鼠标。
+// 旧实现给覆盖层设了 display:none 就收工，但 VisBug 的 guides 工具还绑着
+// body 的 mousemove，它的 showGridlines() 里一句 `display = null` 就能把线
+// 放回页面。只断言「切进去的瞬间」是干净的，永远测不出这个 bug。
+await page.mouse.move(320, 300)
+await page.mouse.move(520, 420)
+await page.mouse.move(360, 500)
+await page.waitForTimeout(400)
+const afterMove = await countRulers()
+ok(afterMove.total === 0,
+   `浏览模式下移动鼠标不会再画出标尺线（gridlines=${afterMove.gridlines}, distance=${afterMove.distance}）`)
+
+// 工具条还在，上面每个按钮都印着快捷键——按下去就得管用，否则 tooltip 在骗人。
+// 真正「把页面完全让给网站」的是下面那个 Tab 隐身态。
+//
+// 模式键是幂等的，不做 toggle：这四个模式是一组 segmented control，
+// 连按 B 就该一直停在浏览模式，正如点两次「Work」不会跳回别处。
+await page.keyboard.press('b')
 await page.waitForTimeout(250)
-ok((await vrState()).mode === 'browse', '浏览模式下单字母按键放行给页面，不切模式')
+ok((await vrState()).mode === 'browse', '连按 B 仍停在浏览模式，不会 toggle 回选择态')
+
+await page.keyboard.press('c')
+await page.waitForTimeout(250)
+ok((await vrState()).mode === 'comment', '浏览模式下 C 直接切到评论')
+
+await page.keyboard.press('c')
+await page.waitForTimeout(250)
+ok((await vrState()).mode === 'comment', '连按 C 也停在评论模式')
+
+await page.keyboard.press('v')
+await page.waitForTimeout(250)
+ok((await vrState()).mode === 'select', 'V 切回选择元素')
 
 await page.keyboard.press('Escape')
 await page.waitForTimeout(300)
 ok((await vrState()).mode === 'select', 'Esc 回到选择元素')
+
+// 停用必须是可逆的，否则等于把 VisBug 的测距永久关掉了。
+// 判据不能只看「元素还在且可见」——退出时我们刚把它们的 display 恢复成 ''，
+// 那只是旧元素露出来，跟工具是否在工作无关。gridlines 的 update setter 会把
+// display 写成 'block'，只有 mousemove 真的走到了 guides 才会发生。
+await page.evaluate(() =>
+  document.querySelectorAll('visbug-gridlines').forEach(el => { el.style.display = '' }))
+await page.mouse.move(340, 320)
+await page.mouse.move(560, 440)
+await page.waitForTimeout(400)
+const revived = await page.evaluate(() =>
+  Array.from(document.querySelectorAll('visbug-gridlines'))
+    .some(el => el.style.display === 'block'))
+ok(revived, '退出浏览模式后 VisBug guides 工具重新装回')
 
 // Tab 是另一件事：连工具条一起藏，完全让开
 await page.keyboard.press('Tab')
 await page.waitForTimeout(300)
 const stealth = await vrState()
 ok(stealth.interactive && !stealth.toolbar, 'Tab 连工具条一起藏（完全让开）')
+
+// 工具条都藏了，键就不该再归插件——此刻用户是在用这个网站，
+// 占着单字母会打坏它自己的快捷键
+await page.keyboard.press('c')
+await page.keyboard.press('r')
+await page.keyboard.press('l')
+await page.waitForTimeout(250)
+const stillStealth = await vrState()
+ok(stillStealth.interactive && !stillStealth.toolbar,
+   '隐身态下单字母一律放行给页面，不切模式也不开列表')
 await page.keyboard.press('Tab')
 await page.waitForTimeout(300)
 ok((await vrState()).mode === 'select', '再按 Tab 回到原来的模式')
 
-// 两个面板的 × 都是「我不改了，把页面还给我」
+// 两个 × 的语义不同：
+// 属性面板的 × 只收起这块面板，模式不动——用户多半还想接着选下一个元素；
+// 结构树的 × 退出的是「重排」这件事本身，所以仍然回到浏览模式。
 await page.locator('.curve-card').first().click()
 await page.waitForTimeout(300)
 ok((await vrState()).panel, '选中元素后属性面板出现')
 await page.locator('visual-revise-panel .close').click()
 await page.waitForTimeout(300)
-ok((await vrState()).mode === 'browse', '属性面板的 × 去到浏览模式')
+ok((await vrState()).mode === 'select', '属性面板的 × 不改变当前模式')
+ok(!(await vrState()).panel, '面板确实收起来了')
 
 await page.evaluate(() => window.__visualRevise.setMode('reorder'))
 await page.waitForTimeout(300)
+ok((await vrState()).tree, '重排模式下结构树出现')
 await page.locator('visual-revise-tree .close').click()
 await page.waitForTimeout(300)
-ok((await vrState()).mode === 'browse', '结构树的 × 同样去到浏览模式')
+ok((await vrState()).mode === 'reorder', '结构树的 × 同样不改变模式——和属性面板一个意思')
+ok(!(await vrState()).tree, '树确实收起来了')
+
+// 收起后仍在重排模式，页面上照样能直接拖着排序；按 R 把树叫回来。
+// 靠的是 setMode 不做同模式早退——每次调用都重设 tree.hidden，
+// 所以幂等的模式键在这里正好管用。
+await page.keyboard.press('r')
+await page.waitForTimeout(300)
+ok((await vrState()).tree, '按 R 能把收起的树叫回来，不至于关掉就找不回')
 
 await page.evaluate(() => window.__visualRevise.setMode('select'))
 await page.waitForTimeout(200)

@@ -11,9 +11,14 @@ const icon = (paths, { size = 18, fill = '' } = {}) => `
 
 const ICONS = {
   // 品牌：页面框内有一个被选中的元素
-  brand: icon(
-    `<rect x="3" y="3" width="18" height="18" rx="4"/>`,
-    { fill: `<rect x="7.5" y="7.5" width="9" height="9" rx="1.5" fill="currentColor" stroke="none" opacity=".92"/>` }),
+  // 布局方向：画的是「点下去会变成的那个方向」，
+  // 所以横排时显示竖条、竖排时显示横条
+  layoutVertical: icon(`
+    <rect x="9" y="3" width="6" height="18" rx="2"/>
+    <path d="M9 9.5h6M9 15h6"/>`),
+  layoutHorizontal: icon(`
+    <rect x="3" y="9" width="18" height="6" rx="2"/>
+    <path d="M9.5 9v6M15 9v6"/>`),
 
   // 浏览：一只手。这个模式下插件完全让开，页面照常点
   browse: icon(`
@@ -61,8 +66,22 @@ const MODES = [
 
 // 关闭没有自定义快捷键：⌥⇧D 是浏览器命令，按一下就把编辑器收起来，
 // 本来就是唤起用的那个键
+// 方向记在本地，下次注入沿用。localStorage 在无痕窗口或被策略禁掉时会直接抛，
+// 所以读写都得兜住——记不住只是少了个便利，不该让整条工具条挂掉。
+const ORIENTATION_KEY = 'visual-revise:orientation'
+
+const readOrientation = () => {
+  try { return localStorage.getItem(ORIENTATION_KEY) === 'vertical' }
+  catch { return false }
+}
+
+const writeOrientation = vertical => {
+  try { localStorage.setItem(ORIENTATION_KEY, vertical ? 'vertical' : 'horizontal') }
+  catch { /* 记不住就算了 */ }
+}
+
 const TIPS = {
-  brand: ['Visual Revise', ''],
+  layout: ['切换布局方向', ''],
   list:  ['改动记录', 'L'],
   copy:  ['复制提示词', 'P'],
   undo:  ['撤销', '⌘Z'],
@@ -81,6 +100,35 @@ export class ReviseToolbar extends HTMLElement {
     this.#shadow = this.attachShadow({ mode: 'open' })
   }
 
+  // 方向切换。竖条贴左边，适合宽屏上把顶部让给页面内容。
+  #applyOrientation(vertical) {
+    this.toggleAttribute('vertical', vertical)
+    const btn = this.#shadow.querySelector('.layout')
+    // 图标画的是「点下去会变成的方向」，所以和当前状态相反
+    if (btn) btn.innerHTML = vertical ? ICONS.layoutHorizontal : ICONS.layoutVertical
+    // 换向后按钮的位置全变了，滑块和已经打开的气泡都得重算
+    this.#moveThumb()
+    this.#hideTip()
+  }
+
+  toggleOrientation() {
+    const next = !this.hasAttribute('vertical')
+    this.#applyOrientation(next)
+    writeOrientation(next)
+    // 拖过的位置是按上一个方向定的，换向后必然不对，交还给 CSS 的默认摆位
+    this.style.removeProperty('left')
+    this.style.removeProperty('top')
+    this.style.removeProperty('transform')
+  }
+
+  static get observedAttributes() { return ['hidden'] }
+
+  // 隐身态下工具条不参与布局，滑块量不到落点。重新显示时补一次，
+  // 否则从 Tab 回来会看到它停在上一次的位置上。
+  attributeChangedCallback(name) {
+    if (name === 'hidden' && !this.hidden) this.#moveThumb()
+  }
+
   connectedCallback() {
     this.setAttribute('data-visual-revise-ui', '')
     this.addEventListener('keydown', e => e.stopPropagation())
@@ -88,11 +136,14 @@ export class ReviseToolbar extends HTMLElement {
     this.#shadow.innerHTML = `
       <style>${bar_css}</style>
       <div class="bar">
-        <div class="brand" data-tip="brand">${ICONS.brand}</div>
+        <button class="layout" data-tip="layout"></button>
         <div class="sep"></div>
-        ${MODES.map(m => `
-          <button data-mode="${m.id}" data-tip="mode:${m.id}">${m.icon}</button>
-        `).join('')}
+        <div class="segment">
+          <i class="thumb" data-instant></i>
+          ${MODES.map(m => `
+            <button data-mode="${m.id}" data-tip="mode:${m.id}">${m.icon}</button>
+          `).join('')}
+        </div>
         <div class="sep"></div>
         <button class="undo" data-tip="undo" disabled>${ICONS.undo}</button>
         <button class="redo" data-tip="redo" disabled>${ICONS.redo}</button>
@@ -109,6 +160,10 @@ export class ReviseToolbar extends HTMLElement {
       </div>
       <div class="tip" hidden><span class="tip-label"></span><span class="tip-key"></span></div>
       `
+
+    // 方向要在 setMode 之前套用：滑块落点是按方向算的，
+    // 先摆好横竖再让它就位，省得先算一次横向再纠正
+    this.#applyOrientation(readOrientation())
 
     this.#bind()
     this.#unsubscribe = ChangeStore.subscribe(() => this.#schedule())
@@ -165,6 +220,35 @@ export class ReviseToolbar extends HTMLElement {
       btn.dataset.mode === mode
         ? btn.setAttribute('data-on', '')
         : btn.removeAttribute('data-on'))
+    this.#moveThumb()
+  }
+
+  // 滑块的落点从按钮的实际布局位置来算，不写死按钮宽度——
+  // 图标尺寸或轨道内边距一改，硬编码的数字就会悄悄错位。
+  #moveThumb() {
+    const thumb = this.#shadow.querySelector('.thumb')
+    const btn = this.#shadow.querySelector(`button[data-mode="${this.#mode}"]`)
+    if (!thumb || !btn) return
+
+    // 工具条藏起来时量不到布局（offsetWidth 为 0），此时挪了也是错的，
+    // 等它重新显示时由 attributeChangedCallback 补一次
+    if (!btn.offsetWidth) return
+
+    const vertical = this.hasAttribute('vertical')
+    // offsetLeft / offsetTop 是布局位置，不受 transform 影响，差值始终自洽
+    if (vertical) {
+      thumb.style.width = `${btn.offsetWidth}px`
+      thumb.style.height = `${btn.offsetHeight}px`
+      thumb.style.transform = `translateY(${btn.offsetTop - thumb.offsetTop}px)`
+    } else {
+      thumb.style.width = `${btn.offsetWidth}px`
+      thumb.style.height = ''
+      thumb.style.transform = `translateX(${btn.offsetLeft - thumb.offsetLeft}px)`
+    }
+
+    // 首帧就位之后再把过渡接上，否则滑块会从轨道最左边滑进来
+    if (thumb.hasAttribute('data-instant'))
+      requestAnimationFrame(() => thumb.removeAttribute('data-instant'))
   }
 
   // toast 必须挂在 body 而不是工具条的 shadow 里：:host 上的
@@ -243,22 +327,33 @@ export class ReviseToolbar extends HTMLElement {
     // 宿主与 .bar 同尺寸，所以按钮中心换算到宿主坐标即可
     const host = this.getBoundingClientRect()
     const r = el.getBoundingClientRect()
-    const center = r.left + r.width / 2 - host.left
+    const vertical = this.hasAttribute('vertical')
 
-    tip.style.left = `${center}px`
-    tip.style.setProperty('--arrow-x', '0px')
+    // 两个方向是同一套逻辑，只是主轴换了：横排沿 x 排、气泡在下方，
+    // 竖排沿 y 排、气泡在右侧。夹回视口和箭头回移的算法完全一样。
+    const axis = vertical
+      ? { pos: 'top', arrow: '--arrow-y', center: r.top + r.height / 2 - host.top,
+          near: b => b.top, far: b => b.bottom,
+          limit: document.documentElement.clientHeight || innerHeight }
+      : { pos: 'left', arrow: '--arrow-x', center: r.left + r.width / 2 - host.left,
+          near: b => b.left, far: b => b.right,
+          limit: document.documentElement.clientWidth || innerWidth }
 
-    // 工具条可以拖到贴边，气泡比按钮宽得多，不夹一下会跑出视口
+    tip.style.left = ''
+    tip.style.top = ''
+    tip.style[axis.pos] = `${axis.center}px`
+    tip.style.setProperty(axis.arrow, '0px')
+
+    // 工具条可以拖到贴边，气泡比按钮大得多，不夹一下会跑出视口
     const box = tip.getBoundingClientRect()
-    const vw = document.documentElement.clientWidth || innerWidth
-    const shift = box.left < 8 ? 8 - box.left
-      : box.right > vw - 8 ? vw - 8 - box.right
+    const shift = axis.near(box) < 8 ? 8 - axis.near(box)
+      : axis.far(box) > axis.limit - 8 ? axis.limit - 8 - axis.far(box)
       : 0
 
     if (shift) {
-      tip.style.left = `${center + shift}px`
+      tip.style[axis.pos] = `${axis.center + shift}px`
       // 气泡整体挪开了，箭头要往回挪同样的距离才还指着那个按钮
-      tip.style.setProperty('--arrow-x', `${-shift}px`)
+      tip.style.setProperty(axis.arrow, `${-shift}px`)
     }
   }
 
@@ -288,6 +383,7 @@ export class ReviseToolbar extends HTMLElement {
     on('.list', () => this.#emit('vr-open-list'))
     on('.copy', () => this.#emit('vr-copy'))
     on('.close', () => this.#emit('vr-close'))
+    on('.layout', () => this.toggleOrientation())
 
     this.#makeDraggable(shadow.querySelector('.bar'))
   }

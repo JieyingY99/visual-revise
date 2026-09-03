@@ -6,6 +6,12 @@
   --bar-active:  rgba(255, 255, 255, .16);
   --bar-line:    rgba(255, 255, 255, .14);
   --bar-accent:  #0d99ff;
+  /* 分段控件沿用面板里那套（props-panel 的 .segment）：
+     轨道 --vr-field #383838，滑块 --vr-field-hi #444，前景保持白色。
+     是「亮一档的灰块浮起来」，不是反色白块——后者在这套暗色 UI 里太跳，
+     而且会跟 .icon-btn[data-on] 的实心蓝抢「这里是选中项」的表达。 */
+  --seg-track:   #363636;
+  --seg-thumb:   #474747;
 
   position: fixed;
   top: 20px;
@@ -29,8 +35,11 @@
   /* 按钮之间留一点缝：图标钮挨在一起时 hover 高亮会连成一片，
      角标也会压到隔壁按钮上 */
   gap: 2px;
-  height: 40px;
-  padding: 0 6px;
+  /* 44 = 内容区 40 + 上下各 2px 内边距。分段轨道自己已经占到 36px，
+     不留这 2px 的话它几乎顶到工具条的圆角边上，看着发闷。
+     box-sizing 是 border-box，所以内容区宽高不受这次加的 padding 影响。 */
+  height: 44px;
+  padding: 2px 6px;
   background: var(--bar-bg);
   border-radius: 12px;
   box-shadow:
@@ -40,15 +49,6 @@
   cursor: grab;
 }
 .bar:active { cursor: grabbing; }
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 8px;
-  white-space: nowrap;
-}
-.brand svg { flex: none; }
 
 .sep {
   flex: none;
@@ -78,9 +78,53 @@ button:hover { background: var(--bar-hover); }
 button:active { background: var(--bar-active); }
 button svg { flex: none; }
 
-/* 三个互斥模式：当前模式常亮 */
-button[data-on] { background: var(--bar-active); }
-button[data-on] svg { color: var(--bar-accent); }
+/* ── 模式分段控件 ──
+   四个模式是互斥单选，就该长成 segmented control：一条凹进去的轨道，
+   当前项是一块滑块。滑块单独一个绝对定位的元素、用 transform 位移，
+   而不是让每个按钮各自变背景——后者切换时是「这块灭、那块亮」，
+   看不出是同一块东西移过去了。 */
+.segment {
+  position: relative;
+  display: flex;
+  /* 分段之间不留缝，滑块才能连成一条轨道 */
+  gap: 0;
+  padding: 3px;
+  background: var(--seg-track);
+  border-radius: 10px;
+}
+
+.segment .thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  height: 30px;
+  border-radius: 7px;
+  background: var(--seg-thumb);
+  /* 与面板的 .segment button[data-on] 同一条阴影，浮起来一点点就够 */
+  box-shadow: 0 1px 2px rgb(0 0 0 / .25);
+  transition: transform .24s cubic-bezier(.32, .72, .32, 1), width .24s cubic-bezier(.32, .72, .32, 1);
+  pointer-events: none;
+}
+
+/* 首次定位不该从 0 滑到位；下一帧再把过渡接上 */
+.segment .thumb[data-instant] { transition: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .segment .thumb { transition: none; }
+}
+
+/* 按钮压在滑块之上，否则滑块会盖住图标 */
+.segment button { z-index: 1; }
+
+/* 轨道里已经有滑块了，hover 再加一层底会和它打架 */
+.segment button:hover { background: transparent; }
+.segment button:hover svg { color: var(--bar-text); }
+.segment button:active { background: transparent; }
+
+/* 未选中压暗、选中提亮到全白——和面板的 .segment 一致：
+   那里也是靠前景亮度加一块底色区分，而不是换色相 */
+.segment button svg { color: var(--bar-dim); transition: color .18s ease; }
+.segment button[data-on] svg { color: var(--bar-text); }
 
 /* 出口按钮：有改动时点亮，无改动时压暗但仍可点（点了给提示） */
 button.copy { color: var(--bar-dim); }
@@ -152,3 +196,63 @@ button.labeled {
 /* 快捷键压暗一档：它是补充信息，抢在名称前面被读到反而费解 */
 .tip-key { color: rgb(255 255 255 / .5); }
 .tip-key:empty { display: none; }
+
+
+/* ── 纵向布局 ────────────────────────────────────────────────
+   竖条贴在左边。按钮本身不变，变的只是主轴方向，外加几个随方向而定的量：
+   分隔线转 90°、hover 气泡从下方挪到右侧、带文字的按钮把文字收进气泡。
+   摆位那边不用改：placeFor 传的是工具条的实时矩形，竖条自然就被让开了。 */
+:host([vertical]) {
+  top: 50%;
+  left: 20px;
+  transform: translateY(-50%);
+}
+
+:host([vertical]) .bar {
+  flex-direction: column;
+  width: 44px;
+  height: auto;
+  padding: 6px 2px;
+}
+
+:host([vertical]) .segment { flex-direction: column; }
+
+:host([vertical]) .sep {
+  width: 18px;
+  height: 1px;
+  margin: 4px 0;
+}
+
+/* 竖排留文字会让整条宽到挡住页面，文字交给 hover 气泡 */
+:host([vertical]) button.labeled {
+  width: 30px;
+  padding: 0;
+}
+:host([vertical]) button.labeled .label { display: none; }
+
+/* 记录数角标：横排时贴在文字右边，竖排没有文字，收到图标右上角 */
+:host([vertical]) button.list .count {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  min-width: 14px;
+  padding: 0 3px;
+  font-size: 9px;
+  line-height: 14px;
+}
+
+/* 气泡从按钮正下方挪到右侧；top 由 JS 按按钮中心算 */
+:host([vertical]) .tip {
+  left: calc(100% + 8px);
+  transform: translateY(-50%);
+}
+/* 箭头从气泡顶边挪到左边，改指向左侧的按钮 */
+:host([vertical]) .tip::before {
+  bottom: auto;
+  top: calc(50% + var(--arrow-y, 0px));
+  left: auto;
+  right: 100%;
+  transform: translateY(-50%);
+  border-bottom-color: transparent;
+  border-right-color: #1c1c1c;
+}
