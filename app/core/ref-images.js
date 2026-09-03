@@ -10,6 +10,8 @@
 //   页面通道 —— 直接 <a download>。浏览器不告诉页面文件落在哪，只能按默认下载
 //               目录推测；提示词里会标注这一点，免得 AI 拿着一个不存在的路径去读图。
 
+import { EXT_BY_MIME } from './image-assets.js'
+
 export const REF_DIR = 'visual-revise-refs'
 const TIMEOUT = 10000
 
@@ -25,11 +27,6 @@ const pad = n => String(n).padStart(2, '0')
 
 export const stampFolder = (d = new Date()) =>
   `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
-
-const EXT_BY_MIME = {
-  'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp',
-  'image/gif': 'gif', 'image/avif': 'avif', 'image/svg+xml': 'svg',
-}
 
 // 文件名要能被人和 AI 一眼对上号，同时不能带路径分隔符或奇怪字符
 const safeName = (asset, i) => {

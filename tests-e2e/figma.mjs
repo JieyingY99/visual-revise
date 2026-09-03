@@ -84,7 +84,9 @@ await page.waitForTimeout(300)
 
 // ── 连体尺寸 + 比例锁 ──────────────────────────────────────
 ok(await panel('.dims').count() === 1, 'Layout 里 W / H 用连体控件呈现')
-ok(await panel('.dims .bracket').count() === 1, '右侧有连接括号')
+// 括号已随设计稿去掉：W / H 直接接到比例锁上。它原本占的那几像素
+// 正是让尺寸行和下面几行分界错开的原因之一。
+ok(await panel('.dims .bracket').count() === 0, '右侧不再有连接括号')
 ok(await panel('.dims input[data-prop="width"]').count() === 1 &&
    await panel('.dims input[data-prop="height"]').count() === 1, '连体控件内是 W 与 H')
 

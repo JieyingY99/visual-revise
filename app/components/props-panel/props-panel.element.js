@@ -1,6 +1,6 @@
 import { GROUPS, sameValue } from '../../core/tracked-props.js'
 import {
-  CONTROLS, SIDE_GROUPS, FIELD_PAIRS, FIELD_PREFIX,
+  CONTROLS, SIDE_GROUPS, FIELD_PAIRS, FIELD_PREFIX, HIDDEN_FIELDS, LABELED_PAIRS,
   isRelevant, coerceLength, stepValue, stepSize, displayValue,
   alignSupported, alignPlan, isReplacedElement,
 } from '../../core/controls.js'
@@ -9,12 +9,13 @@ import { pinPlacement } from '../../core/placement.js'
 import { readComputed, elementId } from '../../core/snapshot.js'
 import { stableClasses } from '../../core/anchors.js'
 import { findSharedElements, describeShared } from '../../core/shared-elements.js'
-import { loadLocalFonts, isSupported as fontsSupported } from '../../core/local-fonts.js'
+import { loadLocalFonts, isSupported as fontsSupported,
+  primaryFont, withPrimaryFont, COMMON_FONTS } from '../../core/local-fonts.js'
 import { containScroll, isTextElement } from '../../core/dom-utils.js'
 import { imageSourceOf, measureNatural, describeSize } from '../../core/image-source.js'
 import { pickImages, canRenderDataUrl } from '../../core/image-assets.js'
 import {
-  AXES, MODES, resizeMode, planResize, currentSize, isMainAxis, cssVariables,
+  AXES, MODES, resizeMode, planResize, currentSize, isMainAxis,
 } from '../../core/resizing.js'
 import { openMenu, openPopover, closeMenu } from '../controls/menu.js'
 import {
@@ -100,6 +101,22 @@ const LIMIT_RESET = {
 // 否则刚变得可用的字段要等下次重新选中才看得见。
 const RERENDER_ON = new Set(['position', 'display'])
 
+// 少数几个前缀用图形比用字符清楚：行高的「↕」和字距的「AV」摆在框里
+// 都认不出是什么，Figma 那边这两个位置也是图标。
+const PREFIX_ICON = {
+  // 尺寸限制：min 是两个箭头挤向中线，max 是两条边界线夹着一个双向箭头；
+  // 高度版本是同一组图形转 90°
+  'min-width':  svg('<path d="M2 4l3 4-3 4"/><path d="M8 3v10"/><path d="M14 4l-3 4 3 4"/>', 13),
+  'max-width':  svg('<path d="M2 3v10M14 3v10"/><path d="M4 8h8"/><path d="M6.5 5.5 4 8l2.5 2.5M9.5 5.5 12 8l-2.5 2.5"/>', 13),
+  'min-height': svg('<path d="M4 2l4 3 4-3"/><path d="M3 8h10"/><path d="M4 14l4-3 4 3"/>', 13),
+  'max-height': svg('<path d="M3 2h10M3 14h10"/><path d="M8 4v8"/><path d="M5.5 6.5 8 4l2.5 2.5M5.5 9.5 8 12l2.5-2.5"/>', 13),
+  'line-height': svg(
+    '<path d="M2.5 3.5v9"/><path d="M1 5 2.5 3.5 4 5"/><path d="M1 11l1.5 1.5L4 11"/>' +
+    '<path d="M6.5 4h8M6.5 8h8M6.5 12h8"/>', 14),
+  'letter-spacing': svg(
+    '<path d="M2 3v10M14 3v10"/><path d="M5.6 11.5 8 5l2.4 6.5M6.4 9.6h3.2"/>', 14),
+}
+
 // 这些属性的编辑界面在分区的 widget 里，不再单独渲染成一行字段。
 // background-image 不在此列——它还留着原来的文本框，那是 url(...) 的去处，
 // 也是渐变编辑器产物的原始值视图。
@@ -114,10 +131,15 @@ const WIDGET_OWNED = new Set([
 // 副作用是刚写完样式马上量，量到的是过渡中的中间值——往往就是旧值本身。
 // 量之前先把过渡关掉：transition-property 变成 none 会立即取消正在跑的过渡，
 // 计算值直接跳到终点；量完还原，此时起点终点相同，不会有可见的动画。
+// 量的是布局盒（offsetWidth / offsetHeight），不是 getBoundingClientRect：
+// 后者给的是 transform 之后的外接矩形，元素一带 rotate / scale，
+// 比例锁锁住的就是那个歪掉的外接框比例，改宽时算出的高怎么校正都收敛不到。
+// offset 尺寸就是边框盒的布局尺寸，不受 transform 影响，
+// 和「比例按边框盒算、与 Figma 的 W/H 一致」的原意正好吻合。
 const measure = el => {
   const prev = el.style.transition
   el.style.transition = 'none'
-  const rect = el.getBoundingClientRect()
+  const rect = { width: el.offsetWidth, height: el.offsetHeight }
   prev ? (el.style.transition = prev) : el.style.removeProperty('transition')
   return rect
 }
@@ -150,6 +172,8 @@ export class PropsPanel extends HTMLElement {
   #renderedFor = null
   // Typography 的「更多」是否展开（大小写、装饰线）
   #typoMore = false
+  // 读过一次本地字体后留着，供字体下拉框列出来
+  #localFonts = []
   #unsubscribe = null
   #releaseScroll = null
   #dirtyProps = new Set()
@@ -276,7 +300,11 @@ export class PropsPanel extends HTMLElement {
       const prop = el.dataset.prop
       if (!prop || prop.includes(',')) continue
 
-      const value = displayValue(prop, this.#computed[prop] ?? '')
+      // 字体框里只显示栈首那一个；整串是写回时才拼起来的，
+      // 原样同步回去会把下拉框重新撑成「Georgia, "PingFang TC", …」
+      const value = prop === 'font-family'
+        ? primaryFont(this.#computed[prop] ?? '')
+        : displayValue(prop, this.#computed[prop] ?? '')
 
       // 正在输入的字段不能覆盖。但外部改动确实发生了，得记一笔：
       // 失焦时浏览器会补发一个带着「用户离开前的值」的 change，
@@ -451,13 +479,17 @@ export class PropsPanel extends HTMLElement {
     const fontsBtn = fontsSupported()
       ? `<button class="icon-btn load-fonts" title="读取本地已安装字体">${ICON.download}</button>`
       : ''
+    // font-family 是后备栈，框里只展示栈首那一个。
+    // 整串塞进去会被截断成「Poppins, Poppins, "PingFang TC", "Micros…」——
+    // 读到的反而是最不重要的那截，而决定字形的是第一个。
+    const stack = this.#computed['font-family'] ?? ''
+    const current = primaryFont(stack)
+    const fontOptions = [...new Set([current, ...this.#localFonts, ...COMMON_FONTS].filter(Boolean))]
+
     rows.push(`<div class="field">
       <div class="with-action">
-        <div class="control">
-          <input type="text" data-prop="font-family"
-            value="${esc(displayValue('font-family', this.#computed['font-family'] ?? ''))}"
-            title="font-family">
-        </div>
+        <vr-select data-prop="font-family" value="${esc(current)}"
+          options='${JSON.stringify(fontOptions).replace(/'/g, '&apos;')}'></vr-select>
         ${fontsBtn}
       </div>
     </div>`)
@@ -809,6 +841,7 @@ export class PropsPanel extends HTMLElement {
 
     const props = group.props
       .filter(prop => !WIDGET_OWNED.has(prop))
+      .filter(prop => !HIDDEN_FIELDS.has(prop))
       .filter(prop => isRelevant(prop, this.#computed, this.target))
 
     for (const prop of props) {
@@ -826,6 +859,15 @@ export class PropsPanel extends HTMLElement {
       if (prop === 'width' && props.includes('height')) {
         consumed.add('width'); consumed.add('height')
         rows.push(this.#renderDims())
+        continue
+      }
+
+      // 共享标签的一组要先于普通配对判定：left/top 同时也在 FIELD_PAIRS 里，
+      // 谁先匹配谁生效
+      const labeled = LABELED_PAIRS.find(g => g.props.includes(prop))
+      if (labeled && labeled.props.every(p => props.includes(p))) {
+        labeled.props.forEach(p => consumed.add(p))
+        rows.push(this.#renderLabeledPair(labeled))
         continue
       }
 
@@ -981,35 +1023,47 @@ export class PropsPanel extends HTMLElement {
       </div>`
     }
 
-    const limitRow = kind => {
-      const props = [AXES.width[kind], AXES.height[kind]]
-      if (!props.some(p => this.#hasLimit(p))) return ''
+    // 尺寸限制按需出现，排布跟着上面的 W / H 两列走：
+    // 左列管宽度的上下限，右列管高度的，每条限制配自己的标签。
+    //
+    // 原来是「最小 [W][H]」横一行、共用一个窄标签。两条限制同时存在时，
+    // 得在「最小 / 最大」和「左边是宽、右边是高」两个维度之间来回对，
+    // 而且和内边距 / 外边距那种「一行一件事」的节奏也不一致。
+    // 现在每条限制自己一格、自己一个名字，扫一眼就知道是谁。
+    const limitCols = () => {
+      const kinds = ['min', 'max']
+      const has = (axis, kind) => this.#hasLimit(AXES[axis][kind])
+      if (!['width', 'height'].some(a => kinds.some(k => has(a, k)))) return ''
 
-      const one = prop => this.#hasLimit(prop)
-        ? `<div class="control limit">
-             <span class="prefix" data-drag data-prop="${prop}">${FIELD_PREFIX[prop]}</span>
-             <input type="text" data-prop="${prop}" data-num
-               value="${esc(displayValue(prop, this.#computed[prop]))}" title="${prop}">
-             <button class="drop-limit" data-prop="${prop}" title="移除这条限制">×</button>
-           </div>`
-        : '<div class="control limit is-empty"></div>'
+      const col = axis => {
+        const items = kinds.filter(k => has(axis, k)).map(kind => {
+          const prop = AXES[axis][kind]
+          const label = `${kind === 'min' ? '最小' : '最大'}${AXES[axis].label}度`
+          return `<div class="field">
+            <label class="name" data-prop="${prop}" data-drag title="${prop}">${label}</label>
+            <div class="control limit">
+              <span class="prefix is-icon" data-drag data-prop="${prop}">${PREFIX_ICON[prop] || FIELD_PREFIX[prop]}</span>
+              <input type="text" data-prop="${prop}" data-num
+                value="${esc(displayValue(prop, this.#computed[prop]))}" title="${prop}">
+              <button class="drop-limit" data-prop="${prop}" title="移除这条限制">×</button>
+            </div>
+          </div>`
+        })
+        // 空列不铺占位框：只加了最小宽度时，右边就该是空的
+        return `<div class="limit-col">${items.join('')}</div>`
+      }
 
-      return `<div class="limit-row" data-kind="${kind}">
-        <span class="limit-label">${kind === 'min' ? '最小' : '最大'}</span>
-        ${one(props[0])}${one(props[1])}
-      </div>`
+      return `<div class="limits">${col('width')}${col('height')}</div>`
     }
 
     return `<div class="field">
       <label class="name" data-prop="width,height">尺寸</label>
       <div class="dims">
         ${cell('width')}${cell('height')}
-        <i class="bracket"></i>
         <button class="icon-btn ratio"${this.#ratio ? ' data-on' : ''}
           title="锁定宽高比">${ICON.link}</button>
       </div>
-      ${limitRow('min')}
-      ${limitRow('max')}
+      ${limitCols()}
     </div>`
   }
 
@@ -1032,8 +1086,6 @@ export class PropsPanel extends HTMLElement {
       { separator: true },
       { id: 'min', label: `添加最小${A.label}度…`, disabled: this.#hasLimit(A.min) },
       { id: 'max', label: `添加最大${A.label}度…`, disabled: this.#hasLimit(A.max) },
-      { separator: true },
-      { id: 'var', label: '使用 CSS 变量…' },
     ], id => this.#applyResizePick(axis, id), { align: 'right' })
   }
 
@@ -1052,8 +1104,6 @@ export class PropsPanel extends HTMLElement {
       return
     }
 
-    if (id === 'var') return this.#varMenu(axis)
-
     const patch = planResize(el, axis, id, this.#computed)
     this.#batch(`${A.label}：${MODES[id].label}`, () => {
       for (const [prop, value] of Object.entries(patch)) this.#applyToAll(prop, value ?? '')
@@ -1062,24 +1112,6 @@ export class PropsPanel extends HTMLElement {
     this.#computed = readComputed(el)
     this.render()
     this.toast(`${A.label}：${MODES[id].label}`)
-  }
-
-  #varMenu(axis) {
-    const anchor = this.#shadow.querySelector(`.mode[data-axis="${axis}"]`)
-    if (!anchor) return
-
-    const names = cssVariables()
-    if (!names.length) {
-      this.toast('页面上没有定义在 :root 的 CSS 变量', 'error')
-      return
-    }
-
-    openMenu(anchor, names.slice(0, 60).map(n => ({ id: n, label: n })), name => {
-      this.#applyToAll(axis, `var(${name})`)
-      this.#computed = readComputed(this.target)
-      this.render()
-      this.toast(`${AXES[axis].label}：var(${name})`)
-    }, { align: 'right' })
   }
 
   #renderSides(sg) {
@@ -1101,13 +1133,16 @@ export class PropsPanel extends HTMLElement {
     </div>`
   }
 
-  #renderField(prop) {
+  // 控件本体，不带标签。拆出来是为了让「一个标签罩两个字段」那种排布
+  // （Figma 的 Position = 一个「位置」配 X/Y 两个框）能复用同一套控件。
+  // dragPrefix：标签被合并掉之后，拖着调值的手柄改由前缀承担。
+  #renderControl(prop, { dragPrefix = false } = {}) {
     const spec = CONTROLS[prop]
     if (!spec) return ''
     const value = displayValue(prop, this.#computed[prop] ?? '')
     const prefix = FIELD_PREFIX[prop]
 
-    const field = (() => {
+    return (() => {
       switch (spec.type) {
         case 'select': {
           const options = spec.options.includes(value) || !value
@@ -1137,16 +1172,32 @@ export class PropsPanel extends HTMLElement {
 
         default:
           return `<div class="control">
-            ${prefix ? `<span class="prefix">${prefix}</span>` : ''}
+            ${prefix ? `<span class="prefix${PREFIX_ICON[prop] ? ' is-icon' : ''}"${dragPrefix && spec.type === 'num' ? ` data-drag data-prop="${prop}"` : ''}>${PREFIX_ICON[prop] || prefix}</span>` : ''}
             <input type="text" data-prop="${prop}" data-num value="${esc(value)}">
           </div>`
       }
     })()
+  }
 
+  #renderField(prop) {
+    const spec = CONTROLS[prop]
+    if (!spec) return ''
     const draggable = spec.type === 'num' ? ' data-drag' : ''
     return `<div class="field">
       <label class="name" data-prop="${prop}"${draggable} title="${prop}">${spec.label}</label>
-      ${field}
+      ${this.#renderControl(prop)}
+    </div>`
+  }
+
+  // 一个标签罩住两个字段：标签说的是「这一组是什么」，
+  // 具体哪个是哪个交给框里的前缀（X / Y）——和 Figma 的 Position 一致。
+  #renderLabeledPair(group) {
+    const controls = group.props
+      .map(p => this.#renderControl(p, { dragPrefix: true }))
+      .join('')
+    return `<div class="field">
+      <label class="name" data-prop="${group.props.join(',')}" title="${group.props.join(' / ')}">${group.label}</label>
+      <div class="pair">${controls}</div>
     </div>`
   }
 
@@ -1162,7 +1213,12 @@ export class PropsPanel extends HTMLElement {
 
   #commit(prop, raw, { coerce = true } = {}) {
     const spec = CONTROLS[prop]
-    const value = coerce && spec?.coerce ? spec.coerce(raw) : raw
+    let value = coerce && spec?.coerce ? spec.coerce(raw) : raw
+
+    // 下拉框交上来的是单个字体名。写回时只替换栈首，后备原样留着——
+    // 直接写死一个名字会把中文后备字体一起丢掉，英文看着没事，
+    // 页面上的中文会掉回浏览器默认字形。
+    if (prop === 'font-family') value = withPrimaryFont(this.#computed[prop], value)
     this.#applyToAll(prop, value)
     this.#applyRatio(prop)
     if (RERENDER_ON.has(prop)) this.render()
@@ -1442,15 +1498,10 @@ export class PropsPanel extends HTMLElement {
 
       if (!result.ok) { this.#toast(result.reason, 'error'); return }
 
-      const input = this.#shadow.querySelector('input[data-prop="font-family"]')
-      let dl = this.#shadow.querySelector('#vr-font-list')
-      if (!dl) {
-        dl = document.createElement('datalist')
-        dl.id = 'vr-font-list'
-        this.#shadow.querySelector('#root').appendChild(dl)
-      }
-      dl.innerHTML = result.fonts.map(f => `<option value="${f}"></option>`).join('')
-      input?.setAttribute('list', 'vr-font-list')
+      // 直接补进下拉框的选项，不再走 datalist 那套自动补全——
+      // 现在字体是选出来的，不是敲出来的
+      this.#localFonts = result.fonts
+      this.render()
       this.#toast(`已读取 ${result.fonts.length} 个本地字体`)
     })
 

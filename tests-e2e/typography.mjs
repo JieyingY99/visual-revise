@@ -119,5 +119,103 @@ const ids = await page.locator('visual-revise-panel section')
 ok(ids.indexOf('typography') === ids.indexOf('appearance') + 1,
    `Typography 紧跟 Appearance：${ids.join(' → ')}`)
 
+
+// ── 字体是选出来的，不是敲出来的 ──────────────────────────
+// font-family 是个后备栈。整串塞进输入框会被截断成
+// 「Poppins, Poppins, "PingFang TC", "Micros…」——读到的反而是最不重要的
+// 那截，而真正决定字形的是第一个。所以框里只列栈首那一个。
+await page.evaluate(() => {
+  document.getElementById('font-probe')?.remove()
+  const p = document.createElement('p')
+  p.id = 'font-probe'
+  p.textContent = '测试 Test'
+  p.style.cssText = 'font-family: Poppins, "PingFang TC", "Microsoft YaHei", sans-serif; font-size:16px'
+  document.body.appendChild(p)
+})
+await page.locator('#font-probe').click()
+await page.waitForTimeout(500)
+
+const fontBox = () => page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+  const sel = sr.querySelector('vr-select[data-prop="font-family"]')
+  return {
+    isSelect: !!sel,
+    stillInput: !!sr.querySelector('input[data-prop="font-family"]'),
+    shown: sel?.getAttribute('value') || '',
+    loadBtn: !!sr.querySelector('.load-fonts'),
+  }
+})
+const probeCss = () => page.evaluate(() =>
+  getComputedStyle(document.getElementById('font-probe')).fontFamily)
+
+const before = await fontBox()
+ok(before.isSelect && !before.stillInput, '字体是下拉框，不再是文本框')
+ok(before.shown === 'Poppins', `框里只显示栈首那一个字体（${before.shown}）`)
+ok(before.loadBtn, '读取本地字体的按钮还在')
+
+await page.evaluate(() => {
+  document.querySelector('visual-revise-panel').shadowRoot
+    .querySelector('vr-select[data-prop="font-family"]')
+    .dispatchEvent(new CustomEvent('vr-select',
+      { detail: { value: 'Georgia' }, bubbles: true, composed: true }))
+})
+await page.waitForTimeout(450)
+
+ok((await fontBox()).shown === 'Georgia',
+   '选完之后框里仍然只显示一个——同步时不能把整串塞回去')
+
+// 字重/字号 与 行高/字距 是上下相邻的两行，分栏必须落在同一条竖线上，
+// 否则扫下来是歪的。原来 .typo-pair 用 1fr 96px / gap 6，
+// 而 .pair 用 1fr 1fr / gap 8，差出来的那几像素肉眼能看见。
+const rowSplits = await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+  const sec = [...sr.querySelectorAll('section')]
+    .find(s => s.querySelector('h3 .title')?.textContent.trim() === 'Typography')
+  const edges = row => {
+    const a = row.children[0].getBoundingClientRect()
+    const b = row.children[1].getBoundingClientRect()
+    return [Math.round(a.right), Math.round(b.left)]
+  }
+  return {
+    ws: edges(sec.querySelector('.typo-pair')),
+    lh: edges([...sec.querySelectorAll('.pair')].pop()),
+  }
+})
+ok(rowSplits.ws[0] === rowSplits.lh[0] && rowSplits.ws[1] === rowSplits.lh[1],
+   `字重/字号 与 行高/字距 的分栏对齐（${rowSplits.ws.join('→')} vs ${rowSplits.lh.join('→')}）`)
+
+// 字体框要占满整行。从 .control 换成 vr-select 时，.with-action 的伸展
+// 规则只认 .control，下拉框缩成了自身内容宽、右边空一大片。
+const fontWidths = await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+  const row = sr.querySelector('.with-action')
+  const sel = row.querySelector('vr-select[data-prop="font-family"]')
+  const btn = row.querySelector('.load-fonts')
+  return {
+    row: Math.round(row.getBoundingClientRect().width),
+    sel: Math.round(sel.getBoundingClientRect().width),
+    btn: Math.round(btn.getBoundingClientRect().width),
+  }
+})
+ok(fontWidths.sel > fontWidths.row - fontWidths.btn - 16,
+   `字体框撑满整行，只给右边的读取按钮让位（行 ${fontWidths.row} / 框 ${fontWidths.sel} / 按钮 ${fontWidths.btn}）`)
+
+// 行高与字距的前缀是图标不是字符：「↕」和「AV」摆在框里认不出是什么
+const iconPrefixes = await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+  return ['line-height', 'letter-spacing'].map(p => {
+    const el = sr.querySelector(`.prefix[data-prop="${p}"], .field .control:has(input[data-prop="${p}"]) .prefix`)
+    return { prop: p, isIcon: !!el?.classList.contains('is-icon'), hasSvg: !!el?.querySelector('svg') }
+  })
+})
+ok(iconPrefixes.every(p => p.isIcon && p.hasSvg),
+   `行高 / 字距的前缀是图标：${JSON.stringify(iconPrefixes)}`)
+
+// 换字体只换栈首：直接写死一个名字会把中文后备字体一起丢掉，
+// 英文看着没事，页面上的中文会掉回浏览器默认字形
+const after = await probeCss()
+ok(after.startsWith('Georgia') && /PingFang TC/.test(after) && /Microsoft YaHei/.test(after),
+   `换字体只替换栈首，后备栈原样留着（${after}）`)
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

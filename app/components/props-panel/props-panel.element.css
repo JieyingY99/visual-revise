@@ -166,6 +166,14 @@ label.name[data-dirty] { color: var(--vr-accent); font-weight: 500; }
 /* ── 控件 ── */
 .control { position: relative; display: flex; align-items: center; }
 
+/* 图标前缀比字符前缀高一点，用 grid 居中，免得基线对不齐 */
+.prefix.is-icon {
+  display: grid;
+  place-items: center;
+  color: var(--vr-label);
+}
+.prefix.is-icon svg { display: block; }
+
 .prefix {
   position: absolute;
   left: 8px;
@@ -221,23 +229,19 @@ input::placeholder { color: var(--vr-mute); }
 .align button:nth-child(3) { margin-right: 3px; }
 
 /* ── 尺寸：W / H 连体，右侧括号接到比例锁 ── */
-.dims {
+/* Layout 里「两列 + 末尾动作位」的行共用一套栅格：左右两列等宽，
+   末尾固定 24px 给比例锁 / 展开按钮。尺寸、限制、内边距、外边距四行
+   上下相邻，竖直分界必须落在同一条线上——原来三套栅格
+   （1fr 1fr auto auto / 1fr 1fr auto / 1fr 1fr）各差几像素，扫下来是歪的。 */
+.dims,
+.side-pair,
+.limits {
   display: grid;
-  grid-template-columns: 1fr 1fr auto auto;
-  align-items: center;
+  grid-template-columns: 1fr 1fr 24px;
+  gap: 8px;
 }
+.dims, .side-pair { align-items: center; }
 .dims .control { min-width: 0; }
-.dims .control:first-child { margin-right: 4px; }
-/* 括号紧贴 H 的右边缘长出来，再接到锁上——中间留缝就散了 */
-.dims .bracket {
-  width: 6px;
-  height: 18px;
-  margin-right: 2px;
-  border: 1px solid var(--vr-border);
-  border-left: none;
-  border-radius: 0 3px 3px 0;
-}
-.dims .ratio { width: 22px; height: 22px; }
 .dims .ratio[data-on] {
   background: rgb(13 153 255 / .16);
   color: var(--vr-accent);
@@ -286,7 +290,10 @@ input::placeholder { color: var(--vr-mute); }
 }
 
 .with-action { display: flex; gap: 6px; align-items: center; }
-.with-action .control { flex: 1; min-width: 0; }
+/* 字体那行的主控件从 .control 换成了 vr-select，伸展规则要一起认上，
+   否则下拉框只占自身内容宽，右边空一大片 */
+.with-action .control,
+.with-action vr-select { flex: 1; min-width: 0; }
 
 .empty {
   padding: 32px 20px;
@@ -381,6 +388,26 @@ input::placeholder { color: var(--vr-mute); }
    点开能切换 固定/贴合/填满，以及添加尺寸限制。 */
 .resize-cell { position: relative; }
 
+/* 尺寸行与限制行：模式名 / 箭头 / × 都要在框内。
+   框改由容器来画，input 自己透明——否则 input 后面的兄弟（模式钮、× 钮）
+   全掉在框外，看起来像三个东西并排而不是一个控件。
+   hover / focus 的态也跟着挪到容器上，不然只亮 input 那一截。 */
+.resize-cell,
+.control.limit {
+  background: var(--vr-field);
+  border-radius: 5px;
+  border: 1px solid transparent;
+}
+.resize-cell input,
+.control.limit input {
+  background: transparent;
+  border: none;
+}
+.resize-cell:hover,
+.control.limit:hover { background: var(--vr-field-hi); }
+.resize-cell:focus-within,
+.control.limit:focus-within { border-color: var(--vr-accent); background: var(--vr-field); }
+
 .resize-cell .mode {
   flex: none;
   display: grid;
@@ -416,27 +443,16 @@ input::placeholder { color: var(--vr-mute); }
 .mode:hover .mode-name,
 .mode[data-menu-open] .mode-name { display: none; }
 
-/* 尺寸限制：按需出现的一行，左边一个窄标签，右边两列对齐 W/H */
-.limit-row {
-  display: grid;
-  grid-template-columns: 26px 1fr 1fr;
-  gap: 4px;
-  align-items: center;
-  margin-top: 4px;
-}
+/* 尺寸限制：跟着上面的 W / H 分两列，每列纵向堆自己的上下限。
+   列内间距沿用 .rows 的 12px，读起来和面板其余部分同一个节奏。 */
+.limits { align-items: start; margin-top: 12px; }
 
-.limit-label { font-size: 10px; color: var(--vr-mute); }
+.limit-col { display: grid; gap: 12px; align-content: start; }
 
-.limit-row .control.is-empty {
-  background: transparent;
-  border-color: transparent;
-  pointer-events: none;
-}
-
-.limit-row .drop-limit {
+.limits .drop-limit {
   flex: none;
   width: 18px; height: 18px;
-  margin-right: 2px;
+  margin-right: 4px;
   display: grid; place-items: center;
   font: inherit; font-size: 12px;
   color: var(--vr-mute);
@@ -444,7 +460,7 @@ input::placeholder { color: var(--vr-mute); }
   border: none; border-radius: 3px;
   cursor: pointer;
 }
-.limit-row .drop-limit:hover { background: #4a3030; color: var(--vr-text); }
+.limits .drop-limit:hover { background: #4a3030; color: var(--vr-text); }
 
 /* ── Layout：Flow ── */
 .flow-row { display: flex; gap: 6px; align-items: center; }
@@ -505,12 +521,6 @@ input::placeholder { color: var(--vr-mute); }
 .align-grid[data-flow="vertical"]   .align-cell[data-on]::before { width: 13px; height: 3px; }
 
 /* ── 两段式间距 ── */
-.side-pair {
-  display: grid;
-  grid-template-columns: 1fr 1fr auto;
-  gap: 6px;
-  align-items: center;
-}
 
 .side-pair .prefix { display: grid; place-items: center; }
 
@@ -599,10 +609,14 @@ input::placeholder { color: var(--vr-mute); }
 /* ── Typography 紧凑排布 ──
    字体独占一行、字重与字号并排，都不带标签——它们的内容本身就说明了是什么。
    只有行高与字距需要标签，光看数字认不出来。 */
+/* 分栏必须和 .pair 一模一样（1fr 1fr / gap 8）。字重字号这行在它正上方，
+   列宽差一点点，两行的竖直分界就错开，扫下来是歪的。
+   字号原来给固定 96px 是想把余量让给字重下拉，但字重的值都很短
+   （400 / 600 / bold），并不需要那份余量，对齐更值钱。 */
 .typo-pair {
   display: grid;
-  grid-template-columns: 1fr 96px;
-  gap: 6px;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
 .typo-align { display: flex; gap: 6px; align-items: center; }

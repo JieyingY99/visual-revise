@@ -9,8 +9,46 @@ export const MAX_TOTAL  = 20 * 1024 * 1024    // 一次会话累计上限
 
 const ACCEPTED = /^image\/(png|jpeg|webp|gif|avif|svg\+xml)$/i
 
+export const EXT_BY_MIME = {
+  'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp',
+  'image/gif': 'gif', 'image/avif': 'avif', 'image/svg+xml': 'svg',
+}
+
 let seq = 0
 const nextId = () => `im-${++seq}`
+
+// ── 命名 ──
+// 剪贴板里的截图没有真名字：Chrome 一律叫 image.png，别的浏览器可能什么都不给。
+// 这类名字没有任何信息量，一条评论里贴三张就是三个 image.png，谁也分不清。
+// 改用「当天日期 + 两位序号」，至少能看出是哪天的第几张。
+//
+// 只替换这种占位名。从 Finder 复制一个真实文件再粘贴时 File.name 是真名
+// （「设计稿-v3.png」），那种带信息，改掉反而是丢东西。
+const PLACEHOLDER_NAME = /^(image|untitled|未命名|blob)(\s*\(\d+\))?(\.[a-z0-9]+)?$/i
+
+const pad2 = n => String(n).padStart(2, '0')
+
+const today = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+}
+
+// 序号只活在内存里，刷新页面就从 01 重来。这不会撞名：
+// 导出目录本身带时间戳（visual-revise-refs/<日期-时分秒>/），
+// 且落盘时还会再加一层 01- 前缀。
+let nameDay = ''
+let nameSeq = 0
+
+const datedName = mime => {
+  const day = today()
+  if (day !== nameDay) { nameDay = day; nameSeq = 0 }   // 跨天归零
+  return `${day}-${pad2(++nameSeq)}.${EXT_BY_MIME[mime] || 'png'}`
+}
+
+export const assetName = file =>
+  file?.name && !PLACEHOLDER_NAME.test(file.name)
+    ? file.name
+    : datedName(file?.type)
 
 export const isAcceptedImage = file =>
   !!file && ACCEPTED.test(file.type || '')
@@ -45,7 +83,7 @@ export const readImageFile = async file => {
       ok: true,
       asset: {
         id:      nextId(),
-        name:    file.name || `pasted-${Date.now()}.png`,
+        name:    assetName(file),
         mime:    file.type,
         dataUrl,
         bytes:   file.size,

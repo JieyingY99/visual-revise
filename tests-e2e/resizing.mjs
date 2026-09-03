@@ -250,5 +250,132 @@ await select('.rz-hasmin')
 ok(await panel('input[data-prop="min-height"]').count() === 1,
    '元素本来就有 min-height 时字段自动显示，不用手动添加')
 
+
+// ── 尺寸限制的排布 ──────────────────────────────────────────
+// 跟着上面的 W / H 分两列：左列管宽度的上下限，右列管高度的，
+// 每条限制配自己的标签。原来是「最小 [W][H]」横一行共用一个窄标签，
+// 两条限制并存时要在「最小/最大」和「左宽/右高」两个维度之间来回对。
+const limitLabels = async css => {
+  await page.evaluate(c => {
+    document.getElementById('limit-probe')?.remove()
+    const d = document.createElement('div')
+    d.id = 'limit-probe'
+    d.style.cssText = 'width:200px;height:80px;background:#456;' + c
+    document.body.appendChild(d)
+  }, css)
+  await page.locator('#limit-probe').click({ position: { x: 4, y: 4 } })
+  await page.waitForTimeout(450)
+  return page.evaluate(() => {
+    const limits = document.querySelector('visual-revise-panel').shadowRoot.querySelector('.limits')
+    if (!limits) return null
+    return [...limits.querySelectorAll('.limit-col')].map(col =>
+      [...col.querySelectorAll('label.name')].map(l => l.textContent.trim()))
+  })
+}
+
+ok((await limitLabels('')) === null, '一条限制都没加时，不留空的限制区')
+
+const onlyMin = await limitLabels('min-width:100px')
+ok(JSON.stringify(onlyMin) === '[["最小宽度"],[]]',
+   `只加最小宽度：左列一条、右列空着不铺占位框（${JSON.stringify(onlyMin)}）`)
+
+const both = await limitLabels('min-width:100px;max-width:400px')
+ok(JSON.stringify(both) === '[["最小宽度","最大宽度"],[]]',
+   `宽度的上下限堆在同一列（${JSON.stringify(both)}）`)
+
+const all4 = await limitLabels('min-width:100px;max-width:400px;min-height:50px;max-height:200px')
+ok(JSON.stringify(all4) === '[["最小宽度","最大宽度"],["最小高度","最大高度"]]',
+   `四条限制分成宽 / 高两列（${JSON.stringify(all4)}）`)
+
+// Layout 里尺寸 / 限制 / 内边距 / 外边距四行上下相邻，竖直分界必须落在
+// 同一条线上。原来三套栅格（1fr 1fr auto auto / 1fr 1fr auto / 1fr 1fr）
+// 各差几像素，扫下来是歪的。统一成 1fr 1fr 24px / gap 8——末尾 24px
+// 固定给比例锁 / 展开按钮，没有按钮的行也留着这一格，分界才不会漂。
+const splits = await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+  const sec = [...sr.querySelectorAll('section')]
+    .find(s => s.querySelector('h3 .title')?.textContent.trim() === 'Layout')
+  const edges = row => {
+    const A = row.children[0].getBoundingClientRect(), B = row.children[1].getBoundingClientRect()
+    return `${Math.round(A.right)}→${Math.round(B.left)}`
+  }
+  const sides = [...sec.querySelectorAll('.side-pair')]
+  return {
+    dims: edges(sec.querySelector('.dims')),
+    limits: edges(sec.querySelector('.limits')),
+    padding: edges(sides[0]),
+    margin: edges(sides[1]),
+    bracket: !!sec.querySelector('.bracket'),
+  }
+})
+ok(splits.dims === splits.limits && splits.limits === splits.padding && splits.padding === splits.margin,
+   `尺寸 / 限制 / 内边距 / 外边距四行的分界在同一条线上（${splits.dims}）`)
+ok(!splits.bracket, '尺寸行的括号已去掉，设计稿里没有它')
+
+// 尺寸行的模式钮、限制行的 × 钮都要在框内。框改由容器来画、input 透明——
+// 原来背景画在 input 上，它后面的兄弟（模式钮、× 钮）全掉在框外，
+// 看起来像三个东西并排，而不是一个控件。
+const inBox = await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+  const inside = (outer, inner) => {
+    const o = outer.getBoundingClientRect(), i = inner.getBoundingClientRect()
+    return i.left >= o.left - 0.5 && i.right <= o.right + 0.5
+        && i.top >= o.top - 0.5 && i.bottom <= o.bottom + 0.5
+  }
+  const cell = sr.querySelector('.resize-cell[data-axis="width"]')
+  const limit = sr.querySelector('.control.limit')
+  return {
+    mode: inside(cell, cell.querySelector('.mode')),
+    x: inside(limit, limit.querySelector('.drop-limit')),
+    icon: !!limit.querySelector('.prefix svg'),
+    boxOnContainer: getComputedStyle(cell).backgroundColor !== 'rgba(0, 0, 0, 0)'
+      && getComputedStyle(cell.querySelector('input')).backgroundColor === 'rgba(0, 0, 0, 0)',
+  }
+})
+ok(inBox.mode && inBox.boxOnContainer, '尺寸行的模式名 / 箭头在框内（框由容器画，input 透明）')
+ok(inBox.x, '限制行的 × 在框内')
+ok(inBox.icon, '限制行的前缀是设计稿里的图标（>|< / |↔| 及其竖向版）')
+
+// 尺寸菜单里不再有「使用 CSS 变量…」：页面上定义在 :root 的变量几乎全是
+// 颜色（--accent / --background / --border…），列在宽高菜单里点开一屏色名，
+// 没有一个能填进 width。这个入口属于颜色控件，不属于这里。
+await page.locator('visual-revise-panel .mode[data-axis="width"]').click()
+await page.waitForTimeout(350)
+const menuTexts = await page.evaluate(() =>
+  [...document.querySelectorAll('#visual-revise-menu div')].map(d => d.textContent.trim()).filter(Boolean))
+ok(menuTexts.length >= 5 && !menuTexts.some(t => /CSS 变量/.test(t)),
+   `尺寸菜单里没有「使用 CSS 变量」（${menuTexts.filter(t => t.length < 12).join(' / ')}）`)
+await page.keyboard.press('Escape')
+await page.waitForTimeout(200)
+
+// 标签合并不能把调值能力一起合并掉：每条限制的前缀仍可横向拖
+const drags = await page.evaluate(() =>
+  document.querySelector('visual-revise-panel').shadowRoot
+    .querySelectorAll('.limits [data-drag]').length)
+ok(drags >= 8, `四条限制的标签与前缀都还能拖着调值（${drags} 个手柄）`)
+
+
+// ── 比例锁不能被 transform 带偏 ──────────────────────────────
+// 原来 measure() 用 getBoundingClientRect，元素一带 rotate，锁住的就是
+// 旋转后外接矩形的比例（240×100 转 15° 外接框是 1.62，而元素本身是 2.4），
+// 改宽时算出的高怎么校正都收敛不到。改量 offsetWidth / offsetHeight。
+await page.evaluate(() => {
+  document.getElementById('ratio-probe')?.remove()
+  const d = document.createElement('div'); d.id = 'ratio-probe'
+  d.style.cssText = 'position:absolute;left:40px;top:640px;width:240px;height:100px;rotate:15deg;background:#654'
+  document.body.appendChild(d)
+})
+await page.keyboard.press('Escape'); await page.waitForTimeout(150)
+await page.locator('#ratio-probe').click({ position: { x: 120, y: 50 } }); await page.waitForTimeout(400)
+const layoutRatio = () => page.evaluate(() => { const e = document.getElementById('ratio-probe'); return e.offsetWidth / e.offsetHeight })
+const r0 = await layoutRatio()
+await page.locator('visual-revise-panel .ratio').click(); await page.waitForTimeout(200)
+const wIn = page.locator('visual-revise-panel input[data-prop="width"]')
+await wIn.fill('480'); await wIn.press('Enter'); await page.waitForTimeout(400)
+const r1 = await layoutRatio()
+ok(Math.abs(r1 - r0) < 0.02,
+   `带 rotate 的元素锁比例后改宽，布局盒比例保持（${r0.toFixed(2)} → ${r1.toFixed(2)}）`)
+await page.locator('visual-revise-panel .ratio').click(); await page.waitForTimeout(150)
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

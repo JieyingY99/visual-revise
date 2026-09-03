@@ -125,10 +125,26 @@ export const CONTROLS = {
 // Figma 把成对的字段并排放：X/Y、W/H、水平/垂直内边距。
 // 这里声明哪些属性构成一对，渲染时合并到同一行的两列里。
 // width/height 不在此列——它们用带比例锁的连体控件单独渲染。
+// 面板上不再单独给这两个留字段——Figma 的 Position 只给 X/Y，
+// 右/下在实际改稿里几乎用不到，却常年占着一整行。
+//
+// 只是不渲染，仍然留在 tracked-props 里继续跟踪：那个数组是双重职责
+// （渲染顺序 + 跟踪清单），从那里删掉的话，用户在别处改的 right / bottom
+// 就不会进改动记录、也不会导出到提示词，那是另一回事。
+export const HIDDEN_FIELDS = new Set(['right', 'bottom'])
+
+// 一个标签罩住两个字段。Figma 的 Position 面板就是一个「位置」配 X / Y 两个框，
+// 不给每个框单独起名——框里的前缀已经说清楚了谁是谁，再各配一个「左」「上」
+// 是重复标注，还白占一行的宽度。
+export const LABELED_PAIRS = [
+  { label: '位置', props: ['left', 'top'] },
+]
+
 export const FIELD_PAIRS = [
   ['left', 'top'],
   ['right', 'bottom'],
-  ['z-index', 'rotate'],
+  // 旋转在前：它比 z-index 常用，Figma 的 Position 也是把旋转摆在显眼处
+  ['rotate', 'z-index'],
   ['justify-content', 'align-items'],
   ['min-width', 'min-height'],
   ['max-width', 'max-height'],
