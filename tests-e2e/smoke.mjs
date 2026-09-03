@@ -162,5 +162,15 @@ ok(healed.errors.length === 0,
 ok(healed.after.visbug === 1 && healed.after.toolbar === 1,
    `死元素被清掉并重新注入成功（vis-bug ${healed.after.visbug}，工具条 ${healed.after.toolbar}）`)
 
+// 版本要落到 DOM 上，inject.js 才有得比。
+// 它跑在隔离世界，读不到主世界的 window.__visualRevise，
+// 但 DOM 是两个世界共用的——这是整套自检的支点。
+const buildMark = await page.evaluate(() => ({
+  api: window.__visualRevise?.build,
+  dom: document.documentElement.dataset.visualReviseBuild,
+}))
+ok(!!buildMark.dom && buildMark.dom === buildMark.api,
+   `构建版本同时写在 api 和 <html> 上，供隔离世界比对（${buildMark.dom}）`)
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

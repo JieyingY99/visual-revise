@@ -38,6 +38,29 @@ try {
   console.warn('[Visual Revise] 注入失败：', err?.message || err)
 }
 
+// 页面里跑的那份 bundle，是不是磁盘上现在这一份？
+//
+// bundle 是 ES module，浏览器按 URL 去重：同一个页面只求值一次。所以扩展
+// 重载之后，只要这个标签页没有真正重新加载，跑的仍是第一次注入的旧代码——
+// 而界面上完全分辨不出来，只会觉得「改了没生效」。
+//
+// inject.js 每次点图标都由 executeScript 从磁盘重新注入，读到的必然是新的；
+// 页面里那份的版本写在 <html data-visual-revise-build> 上（DOM 在隔离世界
+// 和主世界之间共用）。两者一比，就能把结论直接说出来，不用让人对着界面猜。
+fetch(platform.runtime.getURL('toolbar/build-id.json'))
+  .then(res => res.json())
+  .then(({ build }) => {
+    const running = document.documentElement.dataset.visualReviseBuild
+    // 首次注入时 bundle 还没执行完，没有 running，此时无从比较也无需比较
+    if (!running || !build || running === build) return
+    console.warn(
+      `[Visual Revise] 这个页面里跑的是旧代码。\n` +
+      `  页面：${running}\n  磁盘：${build}\n` +
+      `  扩展已经是新的，但本页的 module 缓存还留着上一版——` +
+      `按 ⌘⇧R 硬刷新，或关掉这个标签页重开。`)
+  })
+  .catch(() => { /* 版本文件缺失不该影响正常注入 */ })
+
 platform.runtime.onMessage.addListener(request => {
   const visbug = document.querySelector('vis-bug')
   if (!visbug) return

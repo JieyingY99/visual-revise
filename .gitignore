@@ -13,3 +13,4 @@ VisBug/VisBug.xcodeproj/project.xcworkspace/xcuserdata/argyle.xcuserdatad/UserIn
 # 验收截图与本地演示产物：体积大且随时可由脚本重新生成
 .screenshots/
 visual-revise.zip
+extension/toolbar/build-id.json

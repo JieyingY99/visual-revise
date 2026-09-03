@@ -76,6 +76,20 @@ for (const f of ['toolbar/bundle.min.js', 'toolbar/bundle.css', 'toolbar/inject.
   ok(size > 0, `产物存在：${f}（${(size / 1024).toFixed(1)}KB）`)
 }
 
+
+// ── 版本自检：告诉用户「页面里跑的是不是这次构建的代码」 ──
+// bundle 是 ES module，按 URL 去重，同一个页面只求值一次。扩展重载后
+// 不刷新页面，跑的仍是旧代码，而界面上分辨不出来——这个坑反复踩过。
+const buildIdRaw = await readFile(join(extPath, 'toolbar/build-id.json'), 'utf8').catch(() => '')
+let buildId = null
+try { buildId = JSON.parse(buildIdRaw).build } catch {}
+ok(typeof buildId === 'string' && /^\d{4}-\d\d-\d\dT/.test(buildId),
+   `构建产出版本文件 build-id.json：${buildId || buildIdRaw || '(缺失)'}`)
+
+const injectSrc = await readFile(join(extPath, 'toolbar/inject.js'), 'utf8')
+ok(injectSrc.includes('build-id.json') && injectSrc.includes('visualReviseBuild'),
+   'inject.js 会拿磁盘版本和页面里跑的版本比对')
+
 await context.close()
 await close()
 await rm(userDataDir, { recursive: true, force: true })
