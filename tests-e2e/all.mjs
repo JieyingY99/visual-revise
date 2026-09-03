@@ -1,6 +1,10 @@
 import { spawn } from 'node:child_process'
 
-const SUITES = ['smoke', 'core', 'toolbar', 'controls', 'panel', 'figma', 'typography', 'layout', 'grid', 'resizing', 'fill', 'image-fill', 'swap-image', 'text', 'list', 'comment', 'comment-refs', 'removal', 'reanchor', 'tree', 'history', 'guides', 'drag', 'advanced']
+const SUITES = ['smoke', 'core', 'toolbar', 'controls', 'panel', 'figma', 'typography', 'layout', 'grid', 'resizing', 'fill', 'image-fill', 'swap-image', 'text', 'list', 'comment', 'comment-refs', 'removal', 'reanchor', 'tree', 'history', 'guides', 'drag', 'advanced',
+  // PRD 验收：按 docs/PRD.md 的 AC 编号逐条走，排在最后——
+  // 上面那些按技术模块组织、跟着实现一路加，天然偏向「已实现的那条路径」；
+  // 这四个按用户目标组织，专门用来暴露「功能存在但没人真的走过这条路」。
+  'acceptance', 'acceptance-panel', 'acceptance-content', 'acceptance-export']
 const results = []
 
 for (const suite of SUITES) {
