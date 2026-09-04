@@ -25,9 +25,39 @@
   user-select: none;
 }
 :host([hidden]) { display: none; }
+
+/* 内嵌进属性面板的「结构」tab 时，外壳的那一套全交给面板：
+   定位、宽度、圆角、阴影、边框都不再由自己出，高度撑满 tab 的内容区。
+   标题与关闭钮也归面板的标题栏，这里藏掉，免得一个面板里两行标题。 */
+:host([embedded]) {
+  position: static;
+  width: auto;
+  max-height: none;
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+:host([embedded]) .tree-head { display: none; }
+
+/* 面板宽度固定 300，深层嵌套横向会挤。缩进不能减——层级正是结构树的
+   全部意义——所以让它横向滚，而不是把层级压扁。 */
+:host([embedded]) {
+  min-width: 0;
+  overflow: hidden;
+}
+/* 纵向滚动本来就在 .list 上；横向另开，让深层缩进能滑出来看，
+   而不是把面板撑宽 */
+:host([embedded]) .list {
+  overflow-x: auto;
+  min-width: 0;
+}
+
 * { box-sizing: border-box; }
 
-header {
+/* 叫 tree-head 而不是 header：内嵌进属性面板后会和面板标题栏重名 */
+.tree-head {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -36,7 +66,7 @@ header {
 }
 .title { font-size: 12px; font-weight: 500; }
 .hint { flex: 1; font-size: 10px; color: var(--vr-faint); }
-.close {
+.tree-close {
   flex: none;
   width: 22px; height: 22px;
   display: grid; place-items: center;
@@ -45,7 +75,7 @@ header {
   background: transparent; border: none; border-radius: 4px;
   cursor: pointer;
 }
-.close:hover { background: #444; color: var(--vr-text); }
+.tree-close:hover { background: #444; color: var(--vr-text); }
 
 .list {
   position: relative;
@@ -113,7 +143,9 @@ header {
 .preview::before { content: '“'; }
 .preview::after { content: '”'; }
 
-.tag {
+/* 叫 node-tag 而不是 tag：树内嵌进属性面板后，和标题栏的 .tag 同处一个
+   查询范围，重名会让 `visual-revise-panel .tag` 一次匹配到一堆。 */
+.node-tag {
   flex: none;
   margin-left: auto;
   padding-left: 8px;

@@ -10,35 +10,56 @@ console.log('\n[结构树测试] 重排模式的面板\n')
 await page.goto(origin)
 await injectVisBug(page, origin)
 
-const tree = sel => page.locator(`visual-revise-tree ${sel}`)
+const tree = sel => page.locator(`visual-revise-panel visual-revise-tree ${sel}`)
 const rows = () => page.evaluate(() => {
-  const sr = document.querySelector('visual-revise-tree').shadowRoot
+  const sr = document.querySelector('visual-revise-panel').shadowRoot.querySelector('visual-revise-tree').shadowRoot
   return [...sr.querySelectorAll('.row')].map(r => ({
     depth: +r.style.getPropertyValue('--depth'),
     name: r.querySelector('.name')?.textContent || '',
     preview: r.querySelector('.preview')?.textContent || '',
-    tag: r.querySelector('.tag')?.textContent || '',
+    tag: r.querySelector('.node-tag')?.textContent || '',
     selected: r.hasAttribute('data-selected'),
     open: r.querySelector('.twist')?.hasAttribute('data-open'),
     leaf: r.querySelector('.twist')?.hasAttribute('data-leaf'),
   }))
 })
 
-// ── 模式互斥 ────────────────────────────────────────────────
-await page.evaluate(() => window.__visualRevise.setMode('reorder'))
-await page.waitForTimeout(300)
-ok(!(await page.locator('visual-revise-tree').isHidden()), '重排模式出现结构树')
-ok(await page.locator('visual-revise-panel').isHidden(), '属性面板同时收起——两块 UI 占同一个位置')
+// ── 结构是面板里的一个 tab ──────────────────────────────────
+// 重排以前是独立模式（按 R 弹一个单独的树浮层）。现在同一个元素的属性和它
+// 在结构里的位置在一处看，不用在两块 UI 之间来回对。
+const openStructure = async () => {
+  if (!(await page.evaluate(() => !!document.querySelector('visual-revise-panel').target)))
+    await page.locator('.curve-card').first().click({ position: { x: 120, y: 12 } })
+  await page.waitForTimeout(400)
+  await page.locator('visual-revise-panel .tab[data-tab="structure"]').click()
+  await page.waitForTimeout(400)
+}
+const tabState = () => page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+  return { tab: sr.querySelector('.tab[data-on]')?.dataset.tab, treeShown: !sr.querySelector('.structure')?.hidden,
+           propsShown: !sr.querySelector('.scroll')?.hidden }
+})
 
-await page.evaluate(() => window.__visualRevise.setMode('select'))
-await page.waitForTimeout(300)
-ok(await page.locator('visual-revise-tree').isHidden(), '切回选择模式，结构树收起')
+ok(await page.evaluate(() => document.querySelectorAll('visual-revise-tree').length) === 0,
+   '未选中元素时没有结构树——面板本身就还没出现')
+
+await openStructure()
+const t1 = await tabState()
+ok(t1.tab === 'structure' && t1.treeShown && !t1.propsShown,
+   `切到「结构」tab 显示结构树、隐藏属性分组（${JSON.stringify(t1)}）`)
+
+await page.locator('visual-revise-panel .tab[data-tab="props"]').click()
+await page.waitForTimeout(350)
+const t2 = await tabState()
+ok(t2.tab === 'props' && !t2.treeShown && t2.propsShown, '切回「选择元素」tab，属性分组回来')
 
 // ── 语义名 ──────────────────────────────────────────────────
-await page.evaluate(() => window.__visualRevise.setMode('reorder'))
-await page.waitForTimeout(300)
+await openStructure()
 const top = await rows()
-ok(top.length > 0 && top.every(r => r.depth === 0), `默认只列顶层（${top.length} 行，均为 depth 0）`)
+// 树列的是整页结构，并自动展开到当前选中的元素（和 DevTools 一致），
+// 所以这里不再是「只有顶层」——顶层仍在，选中项那一支也展开着。
+ok(top.some(r => r.depth === 0) && top.some(r => r.selected),
+   `整页结构 + 展开到选中项（${top.length} 行，最深 depth ${Math.max(...top.map(r => r.depth))}）`)
 ok(top.some(r => r.name === 'Main' && r.tag === 'main'), '语义标签直接取原义：Main / main')
 
 const named = await page.evaluate(() => {
@@ -90,7 +111,7 @@ ok(openCount > 0 && openCount < afterSelect.length,
 
 // ── 折叠箭头与选中互不干扰 ──────────────────────────────────
 const countRows = () => page.evaluate(() =>
-  document.querySelector('visual-revise-tree').shadowRoot.querySelectorAll('.row').length)
+  document.querySelector('visual-revise-panel').shadowRoot.querySelector('visual-revise-tree').shadowRoot.querySelectorAll('.row').length)
 
 const beforeFold = await countRows()
 // 必须用真实点击：合成的 click 不带坐标，会被 VisBug 的 body 捕获处理器
@@ -118,15 +139,23 @@ const before = await page.evaluate(() =>
 const dragged = await page.evaluate(async () => {
   const vr = window.__visualRevise
   const cards = document.querySelector('.cards')
-  vr.setMode('reorder')
-  await new Promise(r => setTimeout(r, 200))
+  // 面板只在选中元素后出现，树活在它的「结构」tab 里
+  vr.setMode('select')
+  const panel = document.querySelector('visual-revise-panel')
+  if (!panel.target) {
+    const first = cards.children[0]
+    first.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }))
+    await new Promise(r => setTimeout(r, 300))
+  }
+  panel.setTab('structure')
+  await new Promise(r => setTimeout(r, 300))
 
-  const sr = document.querySelector('visual-revise-tree').shadowRoot
+  const sr = document.querySelector('visual-revise-panel').shadowRoot.querySelector('visual-revise-tree').shadowRoot
   const list = sr.querySelector('.list')
   const kids = [...cards.children]
 
   // 把树展开到卡片这一层
-  const t = document.querySelector('visual-revise-tree')
+  const t = document.querySelector('visual-revise-panel').shadowRoot.querySelector('visual-revise-tree')
   t.setTarget(kids[0])
   await new Promise(r => setTimeout(r, 100))
 
@@ -178,6 +207,52 @@ const restored = await page.evaluate(() => {
 ok(restored[0] === before[0],
    `一次 ⌘Z 整体退回（${afterDrag[0]} → ${restored[0]}）——拖一次是一个动作，不该退好几步`)
 ok(depth >= 1, `拖拽只压了一条历史（depth=${depth}）`)
+
+// ── 深层嵌套不能把面板撑爆 ──────────────────────────────────
+// flex 子项默认按内容算最小宽度。树的行在深层缩进下很宽，没有 min-width:0
+// 就会把整条链顶开：面板宽度失控、标题栏和 tab 被挤出视口，纵向滚动也一起没了。
+await page.evaluate(() => {
+  document.getElementById('deepwrap')?.remove()
+  const w = document.createElement('div')
+  w.id = 'deepwrap'
+  w.style.cssText = 'position:absolute;left:20px;top:560px'
+  const build = d => d === 0 ? '<span>底</span>'
+    : `<div class="lv" style="display:flex">${build(d - 1)}${'<div class="sib" style="display:flex"><span>x</span></div>'.repeat(4)}</div>`
+  w.innerHTML = build(12)
+  document.body.appendChild(w)
+})
+await page.keyboard.press('Escape'); await page.waitForTimeout(200)
+await page.locator('#deepwrap .lv').first().click(); await page.waitForTimeout(450)
+await page.locator('visual-revise-panel .tab[data-tab="structure"]').click(); await page.waitForTimeout(600)
+await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+    .querySelector('visual-revise-tree').shadowRoot
+  sr.querySelectorAll('.twist:not([data-open]):not([data-leaf])').forEach(t => t.click())
+})
+await page.waitForTimeout(600)
+
+const deep = await page.evaluate(() => {
+  const p = document.querySelector('visual-revise-panel'), sr = p.shadowRoot
+  const pr = p.getBoundingClientRect()
+  const treeSr = sr.querySelector('visual-revise-tree').shadowRoot
+  const list = treeSr.querySelector('.list')
+  const head = sr.querySelector('header').getBoundingClientRect()
+  const tabs = sr.querySelector('.tabs').getBoundingClientRect()
+  return {
+    width: Math.round(pr.width),
+    inViewport: pr.top >= 0 && pr.bottom <= innerHeight,
+    headVisible: head.top >= 0 && head.bottom <= innerHeight,
+    tabsVisible: tabs.top >= 0 && tabs.bottom <= innerHeight,
+    rows: treeSr.querySelectorAll('.row').length,
+    scrollable: list.scrollHeight > list.clientHeight,
+  }
+})
+ok(deep.width === 300, `深层嵌套下面板宽度仍是 300（实得 ${deep.width}）`)
+ok(deep.inViewport && deep.headVisible && deep.tabsVisible,
+   '标题栏与 tab 没有被挤出视口')
+ok(deep.rows > 30 && deep.scrollable,
+   `内容超出时树可纵向滚动（${deep.rows} 行）`)
+await page.evaluate(() => document.getElementById('deepwrap')?.remove())
 
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

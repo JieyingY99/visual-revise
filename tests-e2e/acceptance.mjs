@@ -121,7 +121,9 @@ console.log('\n── 2. 模式体系')
 
 await setMode('select'); await page.waitForTimeout(200)
 await clickBody()   // 只点这一次把焦点交回页面；循环里再点，评论模式那轮会起草稿
-for (const [key, mode] of [['b', 'browse'], ['c', 'comment'], ['r', 'reorder'], ['v', 'select']]) {
+// 键位：V 让开页面、C 评论；选择元素拆成 A（属性）与 F（结构）两个入口，
+// 直接落到面板的两个 tab 上。B 与 R 已释放。
+for (const [key, mode] of [['v', 'browse'], ['c', 'comment'], ['a', 'select']]) {
   await page.keyboard.press(key)
   await page.waitForTimeout(250)
   AC(`AC-2.1${key}`, (await vr()).mode === mode, `按 ${key.toUpperCase()} 进入 ${mode}`)
@@ -177,7 +179,6 @@ AC('AC-2.9', s29b.mode === 'select',
    `Esc 从任何模式回到选择态（前 ${JSON.stringify(s29a)} → 后 ${JSON.stringify(s29b)}）`)
 
 const beforeSwitch = (await vr()).total
-await setMode('reorder'); await page.waitForTimeout(200)
 await setMode('comment'); await page.waitForTimeout(200)
 await setMode('select'); await page.waitForTimeout(200)
 AC('AC-2.11', (await vr()).total === beforeSwitch,
@@ -411,7 +412,7 @@ AC('AC-5.3', pL.l >= 0 && pL.t >= 0 && pL.r <= v.w && pL.b <= v.h, `面板不超
 AC('AC-5.4', !overlaps(pL, await rect('visual-revise-toolbar')), '面板不盖住工具条')
 
 // 拖动后钉住
-const head = page.locator('visual-revise-panel header')
+const head = page.locator('visual-revise-panel > #root > header, visual-revise-panel header:not(.tree-head)')
 const hb = await head.boundingBox()
 await page.mouse.move(hb.x + 40, hb.y + 12); await page.mouse.down()
 await page.mouse.move(hb.x - 200, hb.y + 120, { steps: 6 }); await page.mouse.up()
@@ -427,10 +428,14 @@ await card(LAST).click({ position: { x: 120, y: 12 } }); await page.waitForTimeo
 const unpinned = await rect('visual-revise-panel')
 AC('AC-5.5b', Math.abs(unpinned.l - pinned.l) > 20, `关闭面板后解除钉住，重新按元素摆（${Math.round(unpinned.l)} vs 钉住时 ${Math.round(pinned.l)}）`)
 
-await setMode('reorder'); await page.waitForTimeout(400)
-const tr = await rect('visual-revise-tree')
-AC('AC-5.6', tr.l >= 0 && tr.t >= 0 && tr.r <= v.w && tr.b <= v.h && !overlaps(tr, await rect('visual-revise-toolbar')), '结构树同一套摆位规则：在视口内、不盖工具条')
-await setMode('select'); await page.keyboard.press('Escape'); await page.waitForTimeout(150)
+// 结构树已并进面板，跟着面板一起摆位，不再单独占一块
+await card(0).click({ position: { x: 120, y: 12 } }); await page.waitForTimeout(400)
+await page.locator('visual-revise-panel .tab[data-tab="structure"]').click(); await page.waitForTimeout(400)
+const tp = await rect('visual-revise-panel')
+AC('AC-5.6', tp.l >= 0 && tp.t >= 0 && tp.r <= v.w && tp.b <= v.h && !overlaps(tp, await rect('visual-revise-toolbar')),
+   '结构 tab 打开时面板仍在视口内、不盖工具条')
+await page.locator('visual-revise-panel .tab[data-tab="props"]').click(); await page.waitForTimeout(300)
+await page.keyboard.press('Escape'); await page.waitForTimeout(150)
 
 await card(0).click({ position: { x: 120, y: 12 } }); await page.waitForTimeout(400)
 const beforeScroll = await rect('visual-revise-panel')

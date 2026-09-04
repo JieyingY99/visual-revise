@@ -87,8 +87,55 @@ header:active { cursor: grabbing; }
   font-size: 13px;
   line-height: 1;
 }
+/* SVG 默认是行内元素，按基线排版会在下方留出一条行距，
+   于是图标看起来比按钮的方块中心偏上。改成块级，place-items 才真正居中——
+   底色一亮（data-on）这点偏移就很显眼。 */
+.icon-btn svg { display: block; }
 .icon-btn:hover { background: var(--vr-field-hi); color: var(--vr-text); }
 .icon-btn[data-on] { background: var(--vr-accent); color: #fff; }
+
+/* ── 顶部 tab ──
+   「选择元素」是原来那一整套属性分组，「结构」是整页结构树。
+   重排以前是一个独立模式（按 R 弹出一个单独的树浮层），现在降级成这里的
+   一个 tab——同一个元素，属性和它在结构里的位置本就该在一处看。 */
+.tabs {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--vr-divider);
+}
+
+.tab {
+  flex: 1;
+  height: 26px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--vr-label);
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.tab:hover { color: var(--vr-text); }
+.tab[data-on] {
+  background: var(--vr-field-hi);
+  color: var(--vr-text);
+  box-shadow: 0 1px 2px rgb(0 0 0 / .25);
+}
+
+/* 结构 tab 的容器：树自己撑满，滚动交给树内部的 .list */
+/* min-width: 0 不能省。树的行在深层嵌套下很宽，flex 子项默认按内容算最小宽度，
+   于是整条链被顶开：面板宽度失控、标题栏和 tab 被挤出视口，纵向滚动也一起失效。
+   写死 0 之后，超出的部分归树自己横向滚。 */
+.structure {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.structure[hidden] { display: none; }
 
 /* ── 滚动区 ── */
 .scroll {
@@ -362,7 +409,10 @@ input::placeholder { color: var(--vr-mute); }
 
 /* min-width:0 不能省——flex 子项默认按内容的固有宽度撑开，
    长文件名会把整行顶出面板，省略号也就永远不生效 */
+/* 占满缩略图与右侧按钮之间的全部余量。不写 flex:1 的话，这块按内容宽收缩，
+   文件名一短，右边的换图钮就跟着往左跑——同一个按钮在不同图片上位置不一样。 */
 .image-row .image-meta {
+  flex: 1;
   display: grid;
   gap: 2px;
   min-width: 0;

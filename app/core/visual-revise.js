@@ -62,11 +62,8 @@ export const mountVisualRevise = visbug => {
   const toolbar = document.createElement('visual-revise-toolbar')
   document.body.appendChild(toolbar)
 
-  // 重排模式看的是结构而不是某个元素的属性，所以它有自己的面板。
-  // 两块 UI 占同一个位置、互斥出现。
-  const tree = document.createElement('visual-revise-tree')
-  tree.hidden = true
-  document.body.appendChild(tree)
+  // 结构树不再是独立浮层：它活在属性面板的「结构」tab 里，由面板持有。
+  // 树发出的事件带 composed，会从面板的 shadow 冒上来，所以监听挂在面板上。
 
   const layoutDrag = createLayoutDrag({
     onDone: ({ ordered }) => panel.toast(`已重排 ${ordered.length} 个元素`),
@@ -100,13 +97,6 @@ export const mountVisualRevise = visbug => {
   const onSelected = els => {
     if (interactive) return
 
-    // 重排模式下选中元素要看的是它在结构里的位置，不是它的属性
-    if (mode === 'reorder') {
-      tree.setTarget(els?.[0] || null)
-      placeFor(els?.[0], tree)
-      return
-    }
-
     panel.setTargets(els)
 
     // 工具条是入口，属性面板只在真正选中元素后出现，
@@ -137,7 +127,6 @@ export const mountVisualRevise = visbug => {
 
     document.querySelectorAll(UI_TAGS).forEach(el => { el.style.display = 'none' })
     panel.hidden = true
-    tree.hidden = true
     listWasOpen = !list.hidden
     list.hidden = true
     // pin 有 pointer-events，留着会挡住页面上那个位置的点击
@@ -290,7 +279,18 @@ export const mountVisualRevise = visbug => {
     if (!stealth) {
       const key = e.key.toLowerCase()
 
-      const MODE_KEYS = { b: 'browse', v: 'select', c: 'comment', r: 'reorder' }
+      // V 让开页面，C 评论。选择元素拆成两个键，直接落到面板的两个 tab 上：
+      // A 看属性、F 看结构——比「先切模式再切 tab」少一步。
+      if (key === 'a' || key === 'f') {
+        e.preventDefault()
+        e.stopPropagation()
+        setMode('select')
+        if (panel.target) panel.setTab(key === 'f' ? 'structure' : 'props')
+        layoutDrag.setActive(key === 'f')
+        return
+      }
+
+      const MODE_KEYS = { v: 'browse', c: 'comment' }
       if (MODE_KEYS[key]) {
         e.preventDefault()
         e.stopPropagation()
@@ -317,6 +317,15 @@ export const mountVisualRevise = visbug => {
     }
 
     if (e.key === 'Escape') {
+      // 正拖着的时候，Esc 先取消这一次拖拽——收尾但不提交，页面回到拖之前。
+      // 排在最前：此刻用户要撤的是手上这个动作，不是模式，也不是选中。
+      if (layoutDrag.dragging) {
+        e.preventDefault()
+        e.stopPropagation()
+        layoutDrag.cancelDrag()
+        return
+      }
+
       // 浏览模式与隐身态都用 Esc 回到选择态
       if (interactive) { e.preventDefault(); e.stopPropagation(); setMode('select'); return }
       if (comments.hasDraft) { e.preventDefault(); e.stopPropagation(); comments.cancelDraft(); return }
@@ -344,7 +353,6 @@ export const mountVisualRevise = visbug => {
   const MODE_HINTS = {
     browse: '页面已交还给你，正常点击即可 · Esc 或再点一次回到编辑',
     comment: '点击任意元素写下需求 · 可连续标注 · Esc 退出',
-    reorder: '拖动 flex / grid 容器里的子元素调整顺序 · Esc 退出',
   }
 
   const setMode = next => {
@@ -357,7 +365,9 @@ export const mountVisualRevise = visbug => {
     toolbar.hidden = stealth
 
     comments.setActive(next === 'comment')
-    layoutDrag.setActive(next === 'reorder')
+    // 页面上直接拖子元素，只在面板停在「结构」tab 时开着——
+    // 它接管页面指针事件，属性 tab 下开着会挡住正常的选中
+    layoutDrag.setActive(next === 'select' && panel.tab === 'structure')
     toolbar.setMode(next)
 
     if (next !== 'select') {
@@ -365,15 +375,25 @@ export const mountVisualRevise = visbug => {
       panel.hidden = true
     }
 
-    tree.hidden = next !== 'reorder'
-    if (next === 'reorder') tree.setTarget(engine.selection()[0] || null)
-
     if (changed && MODE_HINTS[next]) toolbar.toast(MODE_HINTS[next])
   }
 
   // 兼容既有调用点
   const setCommentMode = on => setMode(on ? 'comment' : 'select')
-  const setReorderMode = on => setMode(on ? 'reorder' : 'select')
+
+  // 重排不再是一个模式，但「开启 / 关闭页面上的拖拽重排」这件事还在。
+  // 名字保留：调用方要的一直是这个语义，底层从「切模式」换成了
+  // 「切到面板的结构 tab」。没有选中元素时面板不出现，也就没有结构可看，
+  // 此时只开页面拖拽本身。
+  const setReorderMode = on => {
+    if (mode !== 'select') setMode('select')
+    if (panel.target) panel.setTab(on ? 'structure' : 'props')
+    // 选中框（visbug-handles）浮在元素上方并拦指针，会挡住拖拽的起手。
+    // 以前进重排模式顺带清了选中，所以没暴露；现在重排不再是模式，
+    // 这一步得自己做。
+    if (on) engine.unselect_all()
+    layoutDrag.setActive(on)
+  }
 
   // 评论模式下点击不选中元素，而是在该元素上起草评论。
   // 用 document capture 抢在 VisBug 的 body capture 监听之前。
@@ -505,23 +525,17 @@ export const mountVisualRevise = visbug => {
 
   // 点树里的一行等同在页面上选中它：选中状态只有一份，
   // 树和页面各记一套的话，两边迟早对不上
-  tree.addEventListener('vr-tree-select', e => {
+  panel.addEventListener('vr-tree-select', e => {
     const el = e.detail?.el
     if (!el?.isConnected) return
     engine.unselect_all()
     engine.select(el)
     el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    tree.setTarget(el)
   })
 
-  tree.addEventListener('vr-tree-reorder', e =>
-    toolbar.toast(`已重排 ${e.detail?.ordered?.length ?? 0} 个元素`))
+  panel.addEventListener('vr-tree-reorder', e =>
+    toolbar.toast(`已重排 ${(e.detail?.others?.length ?? 0) + 1} 个元素`))
 
-  // 收起结构树，模式不动——和属性面板的 × 同一个意思。
-  // 关掉树之后仍在重排模式，页面上照样能直接拖着排序；
-  // 想把树叫回来按 R 就行：setMode 不做同模式早退，
-  // 每次调用都会重设 tree.hidden，所以幂等的模式键在这里正好管用。
-  tree.addEventListener('vr-tree-close', () => { tree.hidden = true })
 
   // × 只收这块面板，不动当前模式——用户多半还想接着选下一个元素，
   // 把他从选择模式踢到浏览模式是自作主张。退出整个编辑器是工具条上那个 × 的事。
@@ -536,7 +550,8 @@ export const mountVisualRevise = visbug => {
     engine.unselect_all()
   })
   panel.addEventListener('vr-comment-toggle', () => setCommentMode(!comments.active))
-  panel.addEventListener('vr-reorder-toggle', () => setReorderMode(!layoutDrag.active))
+  panel.addEventListener('vr-tab', e =>
+    layoutDrag.setActive(mode === 'select' && e.detail.tab === 'structure'))
   list.addEventListener('vr-toast', e => toolbar.toast(e.detail.message, e.detail.kind))
 
   panel.addEventListener('vr-open-list', () => {
@@ -585,7 +600,6 @@ export const mountVisualRevise = visbug => {
       comments.remove()
       toolbar.remove()
       layoutDrag.destroy()
-      tree.remove()
       document.getElementById('visual-revise-locate-overlay')?.remove()
     },
   }
@@ -595,7 +609,10 @@ export const mountVisualRevise = visbug => {
 
   // 打包后的运行时入口，供调试与自动化测试使用——
   // 直接 import 源码会撞上 blingblingjs 等裸模块说明符
-  api.tree = tree
+  // 树活在面板的 shadow 里，测试与调试从这里拿
+  Object.defineProperty(api, 'tree', {
+    get: () => panel.shadowRoot?.querySelector('visual-revise-tree') || null,
+  })
   api.lib = {
     buildPrompt, copyPrompt,
     exportJSON, importJSON, downloadJSON, pickAndImport,

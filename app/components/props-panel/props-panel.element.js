@@ -9,6 +9,7 @@ import { pinPlacement } from '../../core/placement.js'
 import { readComputed, elementId } from '../../core/snapshot.js'
 import { stableClasses } from '../../core/anchors.js'
 import { findSharedElements, describeShared } from '../../core/shared-elements.js'
+import { applyOrder, orderedChildren } from '../../core/reorder.js'
 import { loadLocalFonts, isSupported as fontsSupported,
   primaryFont, withPrimaryFont, COMMON_FONTS } from '../../core/local-fonts.js'
 import { containScroll, isTextElement } from '../../core/dom-utils.js'
@@ -172,6 +173,9 @@ export class PropsPanel extends HTMLElement {
   #renderedFor = null
   // Typography 的「更多」是否展开（大小写、装饰线）
   #typoMore = false
+  // 面板顶部的两个 tab：props = 属性分组，structure = 整页结构树
+  #tab = 'props'
+  #tree = null
   // 读过一次本地字体后留着，供字体下拉框列出来
   #localFonts = []
   #unsubscribe = null
@@ -239,6 +243,12 @@ export class PropsPanel extends HTMLElement {
   }
 
   get target() { return this.#targets[0] || null }
+  get tab() { return this.#tab }
+  setTab(next) {
+    if (next === this.#tab) return
+    this.#tab = next
+    this.render()
+  }
 
   #scope() {
     return this.#shared
@@ -397,6 +407,9 @@ export class PropsPanel extends HTMLElement {
     this.#bind()
     this.#refreshDirty()
     this.#fillImageDims()
+    // root.innerHTML 每次重建都会把树冲掉，所以挂载放在重建之后。
+    // 树本身是复用的同一个实例，状态不丢。
+    if (this.target) this.#mountTree()
 
     this.#restoreScroll(scrollTop)
   }
@@ -430,8 +443,55 @@ export class PropsPanel extends HTMLElement {
         <button class="icon-btn fold" title="折叠面板">${ICON.collapse}</button>
         <button class="icon-btn close" title="关闭">${ICON.close}</button>
       </header>
-      <div class="scroll">${sections}</div>
+      <div class="tabs">
+        <button class="tab" data-tab="props"${this.#tab === 'props' ? ' data-on' : ''}>选择元素</button>
+        <button class="tab" data-tab="structure"${this.#tab === 'structure' ? ' data-on' : ''}>结构</button>
+      </div>
+      <div class="scroll"${this.#tab === 'structure' ? ' hidden' : ''}>${sections}</div>
+      <div class="structure"${this.#tab === 'structure' ? '' : ' hidden'}></div>
       <div class="toast"></div>`
+  }
+
+  // 结构树只建一次，在两个 tab 之间来回切时保留它自己的展开 / 滚动状态。
+  // 每次重建的话，改一个属性面板重绘一次，树就会跟着收回顶层，没法用。
+  // 树只上报意图，写入在这里：共享开着时，同一个顺序要落到每一个同构容器上。
+  // 「把第 3 个孩子挪到最前」这件事在结构相同的兄弟容器里是同一件事，
+  // 按下标映射过去即可——不能按元素引用找，那些是不同的节点。
+  #applyReorder({ container, dragged, index } = {}) {
+    if (!container || !dragged) return
+
+    const from = orderedChildren(container).indexOf(dragged)
+    const containers = this.#shared
+      ? [container, ...findSharedElements(container).filter(c => c !== container)]
+      : [container]
+
+    this.#batch('重排', () => {
+      for (const c of containers) {
+        const kids = orderedChildren(c)
+        // 同构容器的孩子数可能因内容不同而略有出入，越界就跳过这一个，
+        // 而不是把顺序写歪
+        if (from < 0 || from >= kids.length || index > kids.length - 1) continue
+        const moved = kids[from]
+        applyOrder(kids.filter(k => k !== moved), moved, index)
+      }
+    })
+
+    this.dispatchEvent(new CustomEvent('vr-change', { bubbles: true, composed: true }))
+  }
+
+  #mountTree() {
+    const slot = this.#shadow.querySelector('.structure')
+    if (!slot) return
+    if (!this.#tree) {
+      this.#tree = document.createElement('visual-revise-tree')
+      this.#tree.setAttribute('embedded', '')
+      // 绑在树自己身上而不是走 #bind：那里是渲染完立刻扫 shadow，
+      // 而树是渲染之后才挂进去的，那时还不存在，扫不到。
+      this.#tree.addEventListener('vr-tree-reorder', e => this.#applyReorder(e.detail))
+    }
+    if (this.#tree.parentNode !== slot) slot.appendChild(this.#tree)
+    // 整页结构，当前选中项高亮——和 DevTools 一致
+    this.#tree.setTarget(this.target)
   }
 
   #renderGroup(group) {
@@ -1388,6 +1448,18 @@ export class PropsPanel extends HTMLElement {
     })
 
     // ── Grid ──
+    on('.tab', 'click', e => {
+      const next = e.currentTarget.dataset.tab
+      if (next === this.#tab) return
+      this.#tab = next
+      this.render()
+      // 页面上直接拖 flex / grid 子元素，只在看着结构时开着——
+      // 它会接管页面的指针事件，属性 tab 下开着会挡住正常的选中
+      this.dispatchEvent(new CustomEvent('vr-tab', {
+        bubbles: true, composed: true, detail: { tab: next },
+      }))
+    })
+
     on('.typo-more', 'click', () => { this.#typoMore = !this.#typoMore; this.render() })
 
     on('.grid-shape', 'click', e => { e.stopPropagation(); this.#gridPicker() })

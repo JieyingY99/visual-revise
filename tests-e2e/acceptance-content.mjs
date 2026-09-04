@@ -84,14 +84,26 @@ await page.locator('visual-revise-toolbar .list').click(); await deselect()
 console.log('── 7.4 页面拖拽')
 await page.evaluate(() => { const z = document.createElement('div'); z.id = 'dz'; z.style.cssText = 'position:absolute;left:30px;top:780px;display:flex;gap:8px'; z.innerHTML = '<div class="k" style="width:90px;height:40px;background:#a55">k0</div><div class="k" style="width:90px;height:40px;background:#5a5">k1</div><div class="k" style="width:90px;height:40px;background:#55a">k2</div>'; document.body.appendChild(z) })
 const orders = () => page.evaluate(() => [...document.querySelectorAll('#dz .k')].map(k => k.style.order))
-await setMode('reorder'); await page.waitForTimeout(400)
+// setReorderMode 会清选中并切到结构 tab，面板宽度随之变化——
+// 坐标必须在它稳定之后再量，否则拖拽落点整体偏掉
+await page.evaluate(() => window.__visualRevise.setReorderMode(true)); await page.waitForTimeout(500)
+// 从干净的起点测「取消不留痕」。清零必须在 setReorderMode 之后：
+// 它会清选中、切 tab、开拖拽，这几步本身可能带出一次重绘与写入。
+await page.evaluate(() => {
+  window.__visualRevise.store.clear(); window.__visualRevise.store.history?.clear?.()
+  document.querySelectorAll('#dz .k').forEach(k => k.style.removeProperty('order'))
+}); await page.waitForTimeout(300)
+const clean = await orders()
+AC('AC-7.4-pre', clean.every(o => o === ''), `拖拽前 order 已清零（${JSON.stringify(clean)}）`)
 const k2 = await page.locator('#dz .k').nth(2).boundingBox(), k0 = await page.locator('#dz .k').nth(0).boundingBox()
 // 中途取消
 await page.mouse.move(k2.x + 45, k2.y + 8); await page.mouse.down(); await page.mouse.move(k0.x + 10, k0.y + 8, { steps: 6 })
 await page.keyboard.press('Escape'); await page.mouse.up(); await page.waitForTimeout(250)
 AC('AC-7.4a', (await orders()).every(o => o === ''), `拖到一半 Esc 取消，不留任何 order（${JSON.stringify(await orders())}）`)
-await setMode('reorder'); await page.waitForTimeout(250)
-await page.mouse.move(k2.x + 45, k2.y + 8); await page.mouse.down(); await page.mouse.move(k0.x + 10, k0.y + 8, { steps: 8 }); await page.mouse.up(); await page.waitForTimeout(350)
+await page.evaluate(() => window.__visualRevise.setReorderMode(true)); await page.waitForTimeout(350)
+// 上一步取消拖拽后位置可能有变，重新量一次
+const k2b = await page.locator('#dz .k').nth(2).boundingBox(), k0b = await page.locator('#dz .k').nth(0).boundingBox()
+await page.mouse.move(k2b.x + 45, k2b.y + 8); await page.mouse.down(); await page.mouse.move(k0b.x + 10, k0b.y + 8, { steps: 8 }); await page.mouse.up(); await page.waitForTimeout(350)
 const o = await orders()
 AC('AC-7.4b', o.every(x => x !== '') && +o[2] < +o[0], `把 k2 拖到最前，落点写 order（${JSON.stringify(o)}）`)
 AC('AC-7.4c', (await stats()).props >= 1, `重排进了改动记录（props=${(await stats()).props}）`)
@@ -115,6 +127,8 @@ await deselect()
 console.log('── 7.6 共享元素')
 await page.evaluate(() => { window.__visualRevise.store.clear(); document.querySelectorAll('.curve-card').forEach(c => { c.style.paddingTop = ''; c.style.opacity = '' }) })
 await page.locator('.curve-card').nth(0).click({ position: { x: 120, y: 12 } }); await page.waitForTimeout(450)
+// 上一节把面板切到了「结构」tab，属性控件在另一个 tab 下
+await page.locator('visual-revise-panel .tab[data-tab="props"]').click(); await page.waitForTimeout(350)
 await page.locator('visual-revise-panel .shared').click(); await page.waitForTimeout(300)
 const sub = await page.locator('visual-revise-panel .sub').textContent()
 AC('AC-7.6a', /联动\s*3/.test(sub), `开启共享后面板显示联动数量（「${sub.trim()}」）`)
@@ -126,7 +140,10 @@ await page.locator('visual-revise-panel .shared').click(); await page.waitForTim
 const op = page.locator('visual-revise-panel input[data-prop="opacity"]')
 await op.fill('0.5'); await op.press('Enter'); await page.waitForTimeout(300)
 const ops = await page.evaluate(() => [...document.querySelectorAll('.curve-card')].map(c => c.style.opacity))
-AC('AC-7.6c', ops[0] === '0.5' && ops.filter(Boolean).length === 1, `关闭共享后只改选中项（${JSON.stringify(ops)}）`)
+// 只断言「恰好一张被改」，不锁是第几张——选中项由前面的步骤决定，
+// 写死下标会让这条随上文顺序漂移
+AC('AC-7.6c', ops.filter(Boolean).length === 1 && ops.some(o => o === '0.5'),
+   `关闭共享后只改选中项（${JSON.stringify(ops)}）`)
 
 await browser.close(); await close()
 console.log(`\n合计：${passed} 通过 / ${failed} 失败\n`)

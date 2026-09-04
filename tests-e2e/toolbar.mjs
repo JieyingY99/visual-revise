@@ -17,7 +17,8 @@ const litMode = () => page.evaluate(() => {
 })
 
 ok(await page.locator('visual-revise-toolbar').count() === 1, '工具条已挂载')
-ok(await bar('button[data-mode]').count() === 4, '四个模式按钮（浏览 / 选择 / 评论 / 重排）')
+// 重排已并进属性面板的「结构」tab，不再是一个模式
+ok(await bar('button[data-mode]').count() === 3, '三个模式按钮（浏览 / 选择 / 评论）')
 ok(await bar('.sep').count() === 4, '分组竖线（撤销 / 重做自成一组）')
 
 // 初始态
@@ -32,9 +33,9 @@ ok((await litMode()).join() === 'comment', `高亮跟随且互斥（亮着的：
 ok(await page.evaluate(() => window.__visualRevise.comments.active), '评论层已激活')
 ok(!(await page.evaluate(() => window.__visualRevise.layoutDrag.active)), '重排同时被关闭')
 
-await bar('button[data-mode="reorder"]').click()
+await bar('button[data-mode="select"]').click()
 await page.waitForTimeout(300)
-ok(await mode() === 'reorder' && (await litMode()).join() === 'reorder', '切到重排模式，评论自动退出')
+ok(await mode() === 'select' && (await litMode()).join() === 'select', '切回选择模式，评论自动退出')
 ok(!(await page.evaluate(() => window.__visualRevise.comments.active)), '评论层已关闭')
 
 // 快捷键与工具条双向同步
@@ -117,7 +118,7 @@ const iconCheck = await page.evaluate(() => {
     hasEmoji: /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(sr.textContent),
   }
 })
-ok(iconCheck.svgCount === 10, `全部图标为内联 SVG（${iconCheck.svgCount} 个，含撤销 / 重做）`)
+ok(iconCheck.svgCount === 9, `全部图标为内联 SVG（${iconCheck.svgCount} 个，含撤销 / 重做）`)
 ok(!iconCheck.hasEmoji, '界面文本中不含 emoji')
 
 // ── 纯图标 + hover 气泡 ─────────────────────────────────────
@@ -138,7 +139,7 @@ const order = await page.evaluate(() => {
   return [...sr.querySelectorAll('.bar button')].map(b =>
     b.dataset.mode || b.className.split(' ')[0])
 })
-ok(order.join(',') === 'layout,browse,select,comment,reorder,undo,redo,list,copy,close',
+ok(order.join(',') === 'layout,browse,select,comment,undo,redo,list,copy,close',
    `第一格是布局方向，撤销 / 重做排在出口那组前面：${order.join(' · ')}`)
 
 const tipOf = async sel => {
@@ -158,10 +159,9 @@ const tipOf = async sel => {
 }
 
 for (const [sel, label, key] of [
-  ['[data-mode="browse"]',  '浏览页面', 'B'],
-  ['[data-mode="select"]',  '选择元素', 'V'],
+  ['[data-mode="browse"]',  '浏览页面', 'V'],
+  ['[data-mode="select"]',  '选择元素', 'A / F'],
   ['[data-mode="comment"]', '评论',     'C'],
-  ['[data-mode="reorder"]', '重排',     'R'],
   ['.list',                 '改动记录', 'L'],
   ['.copy',                 '复制提示词', 'P'],
   ['.close',                '关闭编辑器', '⌥⇧D'],
@@ -189,8 +189,8 @@ const segShape = await page.evaluate(() => {
     onBtnText: on ? on.textContent.trim() : null,
   }
 })
-ok(segShape.hasTrack && segShape.hasThumb && segShape.buttons === 4,
-   `四个模式在一条轨道里，且有滑块（buttons=${segShape.buttons}）`)
+ok(segShape.hasTrack && segShape.hasThumb && segShape.buttons === 3,
+   `三个模式在一条轨道里，且有滑块（buttons=${segShape.buttons}）`)
 ok(/rgba\(0, 0, 0, 0\)|transparent/.test(segShape.onBtnBg),
    `选中按钮自身不涂底色，交给滑块（实得 ${segShape.onBtnBg}）`)
 ok(segShape.onBtnText === '', '分段按钮是纯图标，没有文字')
@@ -205,7 +205,7 @@ const thumbVsButton = () => page.evaluate(() => {
   return { dx: Math.round(t.left - b.left), tw: Math.round(t.width), bw: Math.round(b.width) }
 })
 
-for (const m of ['reorder', 'browse', 'comment']) {
+for (const m of ['browse', 'comment', 'select']) {
   await page.evaluate(mode => window.__visualRevise.setMode(mode), m)
   await page.waitForTimeout(400)          // 等滑动动画走完
   const at = await thumbVsButton()
@@ -318,15 +318,24 @@ await page.keyboard.press('c')
 await page.waitForTimeout(200)
 ok(await curMode() === 'comment', 'C 进评论模式')
 
+await page.keyboard.press('a')
+await page.waitForTimeout(200)
+ok(await curMode() === 'select', 'A 回到选择元素')
+
 await page.keyboard.press('v')
 await page.waitForTimeout(200)
-ok(await curMode() === 'select', 'V 切回选择元素')
+ok(await curMode() === 'browse', 'V 进浏览模式')
+await page.keyboard.press('a')
+await page.waitForTimeout(200)
 
+// 重排已并进属性面板的「结构」tab，R 不再是模式键，按了不该切走当前模式
 await page.keyboard.press('r')
 await page.waitForTimeout(200)
-ok(await curMode() === 'reorder', 'R 进重排模式')
-await page.keyboard.press('v')
+ok(await curMode() === 'select', 'R 不再是模式键，按了仍停在选择模式')
+// B 也已释放：浏览改用 V
+await page.keyboard.press('b')
 await page.waitForTimeout(200)
+ok(await curMode() === 'select', 'B 已释放，按了不切模式')
 
 const listHidden = () => page.evaluate(() =>
   document.querySelector('visual-revise-list').hidden)
@@ -357,6 +366,7 @@ await page.keyboard.type('vlp')
 await page.waitForTimeout(200)
 ok(await page.inputValue('#vr-key-probe') === 'vlp',
    '在页面输入框里打 v / l / p 会正常输入，不触发快捷键')
+// v 现在是浏览键，模式若被切走这一条就会红
 ok(await curMode() === 'select', '输入过程中模式未被误切')
 await page.evaluate(() => document.querySelector('#vr-key-probe')?.remove())
 
@@ -384,9 +394,9 @@ ok(await curMode() === 'select', '这些键也没有误切我们自己的模式'
 
 // 解绑的只是热键，工具本身仍要能被代码直调——
 // 浏览模式的停用/恢复走的就是 visbug.guides()
-await page.keyboard.press('b')
+await page.keyboard.press('v')
 await page.waitForTimeout(300)
-await page.keyboard.press('b')
+await page.keyboard.press('v')
 await page.waitForTimeout(300)
 ok(await upstreamTool() === toolBefore, '解绑热键不影响 guides 被代码直调恢复')
 
@@ -404,13 +414,13 @@ const focusInUI = await page.evaluate(() => {
 ok(focusInUI, '点工具条按钮后焦点确实留在面板内（这条不成立则下面测的是空气）')
 ok(await curMode() === 'comment', '点按钮切到评论模式')
 
-await page.keyboard.press('v')
+await page.keyboard.press('a')
 await page.waitForTimeout(250)
-ok(await curMode() === 'select', '焦点还在工具条上时，V 仍能切回选择元素')
+ok(await curMode() === 'select', '焦点还在工具条上时，A 仍能回到选择元素')
 
 await page.keyboard.press('r')
 await page.waitForTimeout(250)
-ok(await curMode() === 'reorder', '焦点还在工具条上时，R 仍能切到重排')
+ok(await curMode() === 'select', '焦点还在工具条上时，R 也不再切模式')
 await page.keyboard.press('Escape')
 await page.waitForTimeout(200)
 
@@ -425,7 +435,9 @@ const vrState = () => page.evaluate(() => ({
   toolbar: !document.querySelector('visual-revise-toolbar').hidden,
   comments: !document.querySelector('visual-revise-comment-layer').hidden,
   panel: !document.querySelector('visual-revise-panel').hidden,
-  tree: !document.querySelector('visual-revise-tree').hidden,
+  // 树不再是独立浮层，它活在面板的「结构」tab 里
+  tree: !!document.querySelector('visual-revise-panel').shadowRoot
+    .querySelector('.structure:not([hidden]) visual-revise-tree'),
 }))
 
 // 只数「看得见」的：这些元素被隐藏时仍留在 DOM 里，光数个数会漏掉真问题
@@ -447,10 +459,10 @@ const ruled = await countRulers()
 ok(ruled.total > 0,
    `选择模式下 hover 会画出标尺线（gridlines=${ruled.gridlines}, distance=${ruled.distance}）`)
 
-await page.keyboard.press('b')
+await page.keyboard.press('v')
 await page.waitForTimeout(300)
 const browsing = await vrState()
-ok(browsing.mode === 'browse' && browsing.interactive, 'B 进入浏览模式')
+ok(browsing.mode === 'browse' && browsing.interactive, 'V 进入浏览模式')
 ok(browsing.toolbar, '工具条留着——藏了就回不来了')
 ok(!browsing.comments, '评论 pin 隐藏，不挡住页面上那个位置的点击')
 
@@ -476,9 +488,9 @@ ok(afterMove.total === 0,
 //
 // 模式键是幂等的，不做 toggle：这四个模式是一组 segmented control，
 // 连按 B 就该一直停在浏览模式，正如点两次「Work」不会跳回别处。
-await page.keyboard.press('b')
+await page.keyboard.press('v')
 await page.waitForTimeout(250)
-ok((await vrState()).mode === 'browse', '连按 B 仍停在浏览模式，不会 toggle 回选择态')
+ok((await vrState()).mode === 'browse', '连按 V 仍停在浏览模式，不会 toggle 回选择态')
 
 await page.keyboard.press('c')
 await page.waitForTimeout(250)
@@ -488,9 +500,9 @@ await page.keyboard.press('c')
 await page.waitForTimeout(250)
 ok((await vrState()).mode === 'comment', '连按 C 也停在评论模式')
 
-await page.keyboard.press('v')
+await page.keyboard.press('a')
 await page.waitForTimeout(250)
-ok((await vrState()).mode === 'select', 'V 切回选择元素')
+ok((await vrState()).mode === 'select', 'A 回到选择元素')
 
 await page.keyboard.press('Escape')
 await page.waitForTimeout(300)
@@ -540,22 +552,21 @@ await page.waitForTimeout(300)
 ok((await vrState()).mode === 'select', '属性面板的 × 不改变当前模式')
 ok(!(await vrState()).panel, '面板确实收起来了')
 
-await page.evaluate(() => window.__visualRevise.setMode('reorder'))
-await page.waitForTimeout(300)
-ok((await vrState()).tree, '重排模式下结构树出现')
-await page.locator('visual-revise-tree .close').click()
-await page.waitForTimeout(300)
-ok((await vrState()).mode === 'reorder', '结构树的 × 同样不改变模式——和属性面板一个意思')
-ok(!(await vrState()).tree, '树确实收起来了')
+// 结构不再是一个模式，而是面板里的一个 tab：F 进结构、A 回属性。
+// 面板只在选中元素后出现，所以先选一个。
+await page.locator('.curve-card').first().click({ position: { x: 120, y: 12 } })
+await page.waitForTimeout(400)
+await page.keyboard.press('f')
+await page.waitForTimeout(400)
+ok((await vrState()).tree, 'F 打开面板的「结构」tab')
+ok((await vrState()).mode === 'select', '结构是 tab 不是模式，当前仍在选择模式')
 
-// 收起后仍在重排模式，页面上照样能直接拖着排序；按 R 把树叫回来。
-// 靠的是 setMode 不做同模式早退——每次调用都重设 tree.hidden，
-// 所以幂等的模式键在这里正好管用。
-await page.keyboard.press('r')
-await page.waitForTimeout(300)
-ok((await vrState()).tree, '按 R 能把收起的树叫回来，不至于关掉就找不回')
+await page.keyboard.press('a')
+await page.waitForTimeout(400)
+ok(!(await vrState()).tree, 'A 切回「选择元素」tab')
+ok((await vrState()).panel, '面板本身还在——切 tab 不是关面板')
 
-await page.evaluate(() => window.__visualRevise.setMode('select'))
+await page.keyboard.press('Escape')
 await page.waitForTimeout(200)
 
 // 关闭按钮

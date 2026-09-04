@@ -237,6 +237,11 @@ export const createLayoutDrag = ({ onDone } = {}) => {
 
   return {
     get active() { return active },
+    // 是否正拖着。Esc 要据此判断该不该抢下这一键——没在拖的时候
+    // Esc 有别的活儿（退模式、取消选中）。
+    get dragging() { return !!drag },
+    // 中途取消：收尾但不提交，页面回到拖之前的样子
+    cancelDrag() { endDrag({ commit: false }) },
     setActive(on) {
       active = on
       if (on) {

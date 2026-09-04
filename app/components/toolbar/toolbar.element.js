@@ -58,10 +58,13 @@ const ICONS = {
 // 标签藏起来之后，功能名只剩 tooltip 承载，所以名称与快捷键必须成对定义，
 // 免得两处各写一份、改了一处忘另一处。
 const MODES = [
-  { id: 'browse',  label: '浏览页面', key: 'B', icon: ICONS.browse },
-  { id: 'select',  label: '选择元素', key: 'V', icon: ICONS.select },
+  { id: 'browse',  label: '浏览页面', key: 'V', icon: ICONS.browse },
+  // 选择元素有两个入口：A 进属性、F 进结构，落点是面板的两个 tab
+  { id: 'select',  label: '选择元素', key: 'A / F', icon: ICONS.select },
   { id: 'comment', label: '评论',     key: 'C', icon: ICONS.comment },
-  { id: 'reorder', label: '重排',     key: 'R', icon: ICONS.reorder },
+  // 重排不再是一个独立模式：结构树已并进属性面板的「结构」tab，
+  // 同一个元素的属性和它在结构里的位置本就该在一处看，
+  // 而不是按 R 另弹一个浮层、还要在两块 UI 之间来回对。
 ]
 
 // 关闭没有自定义快捷键：⌥⇧D 是浏览器命令，按一下就把编辑器收起来，

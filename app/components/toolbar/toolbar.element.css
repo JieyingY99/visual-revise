@@ -224,9 +224,14 @@ button.labeled {
 }
 
 /* 竖排留文字会让整条宽到挡住页面，文字交给 hover 气泡 */
+/* 竖排把宽度压到 30px 后，图标必须自己居中。
+   button.labeled 是 flex 但没有 justify-content——横排时靠文字把它撑开、
+   看不出来；文字一藏，图标就贴到左边，和上面那排纯图标钮对不齐。 */
 :host([vertical]) button.labeled {
   width: 30px;
   padding: 0;
+  justify-content: center;
+  gap: 0;
 }
 :host([vertical]) button.labeled .label { display: none; }
 

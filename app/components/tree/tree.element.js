@@ -1,7 +1,7 @@
 import { ChangeStore } from '../../core/change-store.js'
 import { elementId } from '../../core/snapshot.js'
 import { childrenOf, describeNode, pathTo } from '../../core/tree-model.js'
-import { applyOrder, canReorder } from '../../core/reorder.js'
+import { canReorder } from '../../core/reorder.js'
 import { highlight, clearHighlight } from '../../core/highlight.js'
 import { containScroll } from '../../core/dom-utils.js'
 import { default as tree_css } from './tree.element.css'
@@ -37,11 +37,11 @@ export class ReviseTree extends HTMLElement {
 
     this.#shadow.innerHTML = `
       <style>${tree_css}</style>
-      <header>
+      <div class="tree-head">
         <span class="title">结构</span>
         <span class="hint">拖动行可排序</span>
-        <button class="close" title="关闭">×</button>
-      </header>
+        <button class="tree-close" title="关闭">×</button>
+      </div>
       <div class="list"><div class="drop-line" hidden></div></div>`
 
     this.#bind()
@@ -122,7 +122,7 @@ export class ReviseTree extends HTMLElement {
         <button class="twist"${row.hasChildren ? open : ' data-leaf'}></button>
         <span class="name">${esc(name)}</span>
         ${preview ? `<span class="preview">${esc(preview)}</span>` : ''}
-        <span class="tag">${esc(tag)}</span>
+        <span class="node-tag">${esc(tag)}</span>
       </div>`
     }).join('')
 
@@ -143,7 +143,7 @@ export class ReviseTree extends HTMLElement {
     const shadow = this.#shadow
     const list = shadow.querySelector('.list')
 
-    shadow.querySelector('.close').addEventListener('click', () =>
+    shadow.querySelector('.tree-close').addEventListener('click', () =>
       this.#emit('vr-tree-close'))
 
     // 折叠箭头单独处理：它和「选中这一行」是两件事，不能互相触发
@@ -248,8 +248,15 @@ export class ReviseTree extends HTMLElement {
 
     if (!drag?.moved || drag.index == null) return
 
-    const ordered = applyOrder(drag.targets, drag.row.el, drag.index)
-    this.#emit('vr-tree-reorder', { container: drag.parent, ordered })
+    // 只上报意图，不自己落笔：这一次重排要不要同步到共享元素，
+    // 是面板才知道的事（共享开关和同构兄弟都在它那儿）。
+    // 树自己调 applyOrder 的话，联动开着也只会改眼前这一个容器。
+    this.#emit('vr-tree-reorder', {
+      container: drag.parent,
+      others: drag.targets,
+      dragged: drag.row.el,
+      index: drag.index,
+    })
     this.render()
   }
 }
