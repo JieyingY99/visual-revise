@@ -68,8 +68,10 @@ const tab = async name => {
 ok(await panel('vr-fill').count() === 1, 'Fill 分区用一个填充控件作入口')
 ok(await panel('vr-color[data-prop="background-color"]').count() === 0,
    '背景色不再是独立字段，已并入填充控件')
-ok(await panel('input[data-prop="background-image"]').count() === 1,
-   '背景图文本框保留：url(...) 的去处，也是渐变的原始值视图')
+// 背景图那行文本框已去掉：vr-fill 同时管着 background-color 与
+// background-image，两处编辑同一件事只会让人犹豫该改哪个。属性仍在跟踪。
+ok(await panel('input[data-prop="background-image"]').count() === 0,
+   '背景图不再单独给一行文本框，统一走填充控件')
 
 ok((await panel('vr-fill .label').textContent()).includes('#101014'),
    `触发器显示当前填充：${await panel('vr-fill .label').textContent()}`)
@@ -189,6 +191,19 @@ const md = await page.evaluate(() =>
 ok(md.includes('background-image') && md.includes('gradient'),
    '渐变作为一条 background-image 改动进入提示词')
 ok(md.includes('填充'), '归到「填充」分区名下')
+
+// 背景图不再单独给一行文本框：vr-fill 已经同时管着 background-color 与
+// background-image，两处编辑同一件事只会让人犹豫该改哪个。仍然继续跟踪。
+const fillFields = await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+  return {
+    labels: [...sr.querySelectorAll('label.name')].map(l => l.textContent.trim()),
+    bgInput: !!sr.querySelector('input[data-prop="background-image"]'),
+    hasFill: !!sr.querySelector('vr-fill'),
+  }
+})
+ok(!fillFields.labels.includes('背景图') && !fillFields.bgInput && fillFields.hasFill,
+   `背景图不再单独成行，填充控件仍在（标签：${fillFields.labels.join(' / ')}）`)
 
 await browser.close()
 await close()

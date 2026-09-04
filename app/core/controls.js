@@ -131,7 +131,13 @@ export const CONTROLS = {
 // 只是不渲染，仍然留在 tracked-props 里继续跟踪：那个数组是双重职责
 // （渲染顺序 + 跟踪清单），从那里删掉的话，用户在别处改的 right / bottom
 // 就不会进改动记录、也不会导出到提示词，那是另一回事。
-export const HIDDEN_FIELDS = new Set(['right', 'bottom'])
+export const HIDDEN_FIELDS = new Set([
+  'right', 'bottom',
+  // 背景图不再单独给一行文本框：填充控件（vr-fill）已经同时管着
+  // background-color 与 background-image，两处编辑同一件事只会让人犹豫
+  // 该改哪个。仍然继续跟踪——换图走的就是这条属性。
+  'background-image',
+])
 
 // 一个标签罩住两个字段。Figma 的 Position 面板就是一个「位置」配 X / Y 两个框，
 // 不给每个框单独起名——框里的前缀已经说清楚了谁是谁，再各配一个「左」「上」

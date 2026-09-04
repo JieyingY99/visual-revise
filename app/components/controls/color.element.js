@@ -74,24 +74,57 @@ export class VrColor extends HTMLElement {
           ${CHECKER}
         }
         .swatch i { position: absolute; inset: 0; }
-        .text {
-          flex: 1; min-width: 0; height: 30px; padding: 0 8px;
-          font: 400 11px/1 ui-monospace, Menlo, monospace;
-          color: #fff; background: #383838;
-          border: 1px solid transparent; border-radius: 5px; outline: none;
+        /* 色值与不透明度是两件事，各给一个框：
+           把 alpha 编进色值串（#ff000080）既难读也难改——想把红色调淡一点，
+           得先把十六进制的 80 算出来。分开之后两边都能单独敲。 */
+        .fields {
+          flex: 1; min-width: 0; display: flex; align-items: center;
+          height: 30px; background: #383838; border-radius: 5px;
+          border: 1px solid transparent;
         }
-        .text:hover { background: #444; }
-        .text:focus { border-color: #0d99ff; }
+        .fields:hover { background: #444; }
+        .fields:focus-within { border-color: #0d99ff; background: #383838; }
+        .text, .alpha {
+          min-width: 0; height: 100%; padding: 0 8px;
+          font: 400 11px/1 ui-monospace, Menlo, monospace;
+          color: #fff; background: transparent;
+          border: none; outline: none;
+        }
+        .text { flex: 1; }
+        .alpha { flex: none; width: 38px; text-align: right; padding-right: 2px; }
+        .sep { flex: none; width: 1px; height: 16px; background: #4a4a4a; }
+        .pct { flex: none; padding: 0 8px 0 3px; font-size: 10px; color: #6f6f6f; }
       </style>
       <button class="swatch" title="打开色盘">
         <i style="background:${transparent ? 'transparent' : `rgba(${r},${g},${b},${a})`}"></i>
       </button>
-      <input class="text" value="${transparent ? '' : formatColor(this.#rgba, this.#format)}"
-             placeholder="transparent">`
+      <div class="fields">
+        <input class="text" value="${transparent ? '' : formatColor({ ...this.#rgba, a: 1 }, this.#format)}"
+               placeholder="transparent" title="色值">
+        <i class="sep"></i>
+        <input class="alpha" value="${Math.round(a * 100)}" title="不透明度（%）">
+        <span class="pct">%</span>
+      </div>`
 
+    // 色值框只管颜色，alpha 由旁边那个框决定——否则在色值里敲一个不带 alpha
+    // 的 #ff0000 会把已调好的不透明度悄悄重置回 100%
     this.#shadow.querySelector('.text').addEventListener('change', e => {
-      this.#commit(e.target.value.trim())
+      const next = parseColor(e.target.value.trim())
+      if (!next.valid) return this.#renderTrigger()
+      this.#commitParts(next, this.#rgba.a)
     })
+
+    this.#shadow.querySelector('.alpha').addEventListener('change', e => {
+      const pct = parseFloat(e.target.value)
+      if (!Number.isFinite(pct)) return this.#renderTrigger()
+      this.#commitParts(this.#rgba, clamp(pct, 0, 100) / 100)
+    })
+  }
+
+  // 把颜色和不透明度合成一个 CSS 值再提交。alpha 为 1 时不写 rgba(...)，
+  // 保持 #rrggbb 这种更常见、也更好读的形态。
+  #commitParts({ r, g, b }, a) {
+    this.#commit(formatColor({ r, g, b, a: clamp(a, 0, 1) }, this.#format))
   }
 
   #commit(next) {
@@ -114,11 +147,6 @@ export class VrColor extends HTMLElement {
     document.body.appendChild(panel)
     this.#panel = panel
 
-    const rect = this.getBoundingClientRect()
-    const h = panel.offsetHeight
-    panel.style.left = `${clamp(rect.left - 274, 8, innerWidth - 272)}px`
-    panel.style.top = `${clamp(rect.top, 8, innerHeight - h - 8)}px`
-
     this.#picker = createPicker(panel, {
       format: this.#format,
       onChange: css => {
@@ -126,6 +154,15 @@ export class VrColor extends HTMLElement {
         this.#commit(css)
       },
     })
+
+    // 定位放在 createPicker 之后：它要用 panel.offsetHeight 把弹层夹回视口内，
+    // 而在内容铺开之前那还是个空壳，量出来接近 0，夹了等于没夹——
+    // 弹层就会从屏幕底部漏出去。
+    const rect = this.getBoundingClientRect()
+    const w = panel.offsetWidth || 272
+    const h = panel.offsetHeight
+    panel.style.left = `${clamp(rect.left - w - 2, 8, Math.max(8, innerWidth - w - 8))}px`
+    panel.style.top = `${clamp(rect.top, 8, Math.max(8, innerHeight - h - 8))}px`
     this.#picker.set(this.value)
 
     this.setAttribute('data-open', '')

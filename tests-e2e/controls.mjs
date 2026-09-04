@@ -167,5 +167,75 @@ const math = await page.evaluate(() => {
 })
 ok(math.toLowerCase() === '#3d7fff', `颜色解析与格式化往返一致：${math}`)
 
+// ── 色值与不透明度分开两个框 ────────────────────────────────
+// 把 alpha 编进色值串（#ff000080）既难读也难改：想把红色调淡一点，
+// 得先把十六进制的 80 算出来。
+await page.evaluate(() => {
+  document.getElementById('c-probe')?.remove()
+  const d = document.createElement('div'); d.id = 'c-probe'
+  d.style.cssText = 'position:absolute;left:30px;top:700px;width:120px;height:80px;background:#3355aa;color:#141414;border:3px solid #f00'
+  d.textContent = '色'
+  document.body.appendChild(d)
+})
+await page.keyboard.press('Escape'); await page.waitForTimeout(150)
+await page.locator('#c-probe').click({ position: { x: 60, y: 40 } }); await page.waitForTimeout(500)
+
+const colorParts = () => page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+    .querySelector('vr-color[data-prop="color"]').shadowRoot
+  return { text: sr.querySelector('.text')?.value, alpha: sr.querySelector('.alpha')?.value, pct: sr.querySelector('.pct')?.textContent }
+})
+const probeColor = () => page.evaluate(() => document.getElementById('c-probe').style.color)
+
+const parts0 = await colorParts()
+ok(parts0.text === '#141414' && parts0.alpha === '100' && parts0.pct === '%',
+   `色值与不透明度各占一个框（${JSON.stringify(parts0)}）`)
+
+await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+    .querySelector('vr-color[data-prop="color"]').shadowRoot
+  const a = sr.querySelector('.alpha'); a.value = '40'
+  a.dispatchEvent(new Event('change', { bubbles: true }))
+})
+await page.waitForTimeout(350)
+ok(/0\.4\)/.test(await probeColor()), `只改不透明度那一格就写出 alpha（${await probeColor()}）`)
+
+// 色值框只管颜色：敲一个不带 alpha 的 #ff0000 不该把 40% 悄悄重置回 100%
+await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+    .querySelector('vr-color[data-prop="color"]').shadowRoot
+  const t = sr.querySelector('.text'); t.value = '#ff0000'
+  t.dispatchEvent(new Event('change', { bubbles: true }))
+})
+await page.waitForTimeout(350)
+const kept = await probeColor()
+ok(/rgba\(255, 0, 0, 0\.4\)/.test(kept), `改色值保住已调好的不透明度（${kept}）`)
+
+// ── 弹层不能漏出屏幕 ────────────────────────────────────────
+// 定位要用 offsetHeight 把弹层夹回视口，所以必须等内容铺开之后再算；
+// 打开时是空壳，量出来接近 0，夹了等于没夹。切到「渐变」还会再长高一截。
+const inViewport = id => page.evaluate(i => {
+  const p = document.getElementById(i); if (!p) return null
+  const b = p.getBoundingClientRect()
+  return { top: Math.round(b.top), bottom: Math.round(b.bottom), left: Math.round(b.left),
+           right: Math.round(b.right), h: Math.round(b.height), vh: innerHeight, vw: innerWidth }
+}, id)
+const within = r => r && r.top >= 0 && r.left >= 0 && r.bottom <= r.vh && r.right <= r.vw
+
+await page.locator('visual-revise-panel vr-color[data-prop="color"] .swatch').first().click()
+await page.waitForTimeout(500)
+const cp = await inViewport('visual-revise-color-panel')
+ok(within(cp), `色盘弹层夹在视口内（${JSON.stringify(cp)}）`)
+await page.keyboard.press('Escape'); await page.waitForTimeout(300)
+
+await page.locator('visual-revise-panel vr-fill').click(); await page.waitForTimeout(500)
+const fp1 = await inViewport('visual-revise-fill-panel')
+ok(within(fp1), `填充弹层夹在视口内（高 ${fp1?.h}）`)
+await page.locator('#visual-revise-fill-panel [data-tab="gradient"]').click(); await page.waitForTimeout(600)
+const fp2 = await inViewport('visual-revise-fill-panel')
+ok(within(fp2) && fp2.h > fp1.h,
+   `切到渐变后内容变高（${fp1?.h}→${fp2?.h}），弹层往上让、仍在视口内（bottom ${fp2?.bottom} ≤ ${fp2?.vh}）`)
+await page.keyboard.press('Escape'); await page.waitForTimeout(300)
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

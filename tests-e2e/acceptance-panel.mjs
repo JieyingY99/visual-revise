@@ -166,8 +166,14 @@ await page.evaluate(() => {
   el.dispatchEvent(new CustomEvent('vr-fill', { detail: { color: 'rgb(10, 20, 30)' }, bubbles: true, composed: true }))
 }); await page.waitForTimeout(250)
 AC('AC-6.10a', await inline('background-color') === 'rgb(10, 20, 30)', `填充控件写 background-color（${await inline('background-color')}）`)
-await write('background-image', 'linear-gradient(red, blue)')
-AC('AC-6.10b', /linear-gradient/.test(await inline('background-image')), `背景图输入写 background-image（${(await inline('background-image')).slice(0, 30)}）`)
+// 背景图那行文本框已去掉，走填充控件的对外契约（它同时管着两条属性）
+await page.evaluate(() => {
+  const el = document.querySelector('visual-revise-panel').shadowRoot.querySelector('vr-fill')
+  el.dispatchEvent(new CustomEvent('vr-fill', {
+    detail: { image: 'linear-gradient(red, blue)' }, bubbles: true, composed: true }))
+}); await page.waitForTimeout(250)
+AC('AC-6.10b', /linear-gradient/.test(await inline('background-image')),
+   `填充控件同时写 background-image（${(await inline('background-image')).slice(0, 30)}）`)
 await color('color', 'rgb(1, 2, 3)')
 AC('AC-6.10c', await inline('color') === 'rgb(1, 2, 3)', `文字色写 color（${await inline('color')}）`)
 

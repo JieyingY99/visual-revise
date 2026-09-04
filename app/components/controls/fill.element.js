@@ -203,15 +203,26 @@ export class VrFill extends HTMLElement {
     document.body.appendChild(panel)
     this.#panel = panel
 
-    const rect = this.getBoundingClientRect()
-    panel.style.left = `${clamp(rect.left - 274, 8, innerWidth - 272)}px`
-    panel.style.top = `${clamp(rect.top, 8, Math.max(8, innerHeight - panel.offsetHeight - 8))}px`
-
+    // 先铺内容再定位：定位要用 panel.offsetHeight 把弹层夹回视口内，
+    // 而此刻它还是个空壳，量出来接近 0，夹了等于没夹。
     this.#renderTabs()
     this.#renderBody()
+    this.#place()
 
     this.setAttribute('data-open', '')
     openInstance = this
+  }
+
+  // 内容一变高就得重新夹一次。切到「渐变」会多出一整排色标编辑，
+  // 打开时算好的位置到那时早就把弹层顶出屏幕底部了。
+  #place() {
+    const panel = this.#panel
+    if (!panel) return
+    const rect = this.getBoundingClientRect()
+    const w = panel.offsetWidth || 272
+    const h = panel.offsetHeight
+    panel.style.left = `${clamp(rect.left - w - 2, 8, Math.max(8, innerWidth - w - 8))}px`
+    panel.style.top = `${clamp(rect.top, 8, Math.max(8, innerHeight - h - 8))}px`
   }
 
   #renderTabs() {
@@ -229,6 +240,7 @@ export class VrFill extends HTMLElement {
         this.#renderTabs()
         this.#renderBody()
         this.#applyTab()
+        this.#place()
       }))
   }
 

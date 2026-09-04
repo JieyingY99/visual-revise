@@ -148,7 +148,9 @@
 | AC-6.7 | 裁剪内容：勾上写 `overflow: hidden`，取消是**清掉声明**而不是写 visible |
 | AC-6.8 | Appearance：不透明度写 `opacity`，圆角写 `border-radius` |
 | AC-6.9 | Typography：字体下拉只换栈首；字重下拉、字号、行高、字距各写对应属性；对齐四段写 `text-align`；「更多」展开后 `text-transform` / `text-decoration-line` 可写 |
-| AC-6.10 | Fill：填充控件写 `background-color` / `background-image`；文字色写 `color` |
+| AC-6.10 | Fill：填充控件同时写 `background-color` 与 `background-image`（不再单独给背景图一行文本框）；文字色写 `color` |
+| AC-6.16 | 每个颜色控件都有**色值**和**不透明度**两个独立输入；改色值不会把已调好的不透明度重置回 100% |
+| AC-6.17 | 色盘 / 填充等弹层始终夹在视口内，内容变高（如切到渐变）后重新让位 |
 | AC-6.11 | Stroke：颜色 / 宽度 / 样式各写 `border-*`；box-sizing 分段写 `box-sizing` |
 | AC-6.12 | Effects：`box-shadow` / `filter` / `backdrop-filter` 三个输入各自可写 |
 | AC-6.13 | 以上每一次写入都进改动记录（记录数递增），且面板标签变成"已改"色 |
