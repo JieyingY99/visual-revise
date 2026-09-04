@@ -78,7 +78,13 @@ header:active { cursor: grabbing; }
 .icon-btn {
   flex: none;
   width: 24px; height: 24px;
-  display: grid; place-items: center;
+  /* padding 必须显式归零：<button> 的 UA 默认是 1px 6px，配上 border-box
+     会把 20px 的按钮压成 8px 宽的内容盒。13px 的图标塞不进去，居中在
+     item 溢出时退化成左对齐（safe 行为），图标就贴内容盒左沿、整体右偏 2.5px。
+     竖直方向内容盒还有 18px、装得下，所以只有横向偏——正是这个不对称
+     让它看着像「图标画歪了」。 */
+  padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
   background: transparent;
   border: none;
   border-radius: 4px;
@@ -88,7 +94,7 @@ header:active { cursor: grabbing; }
   line-height: 1;
 }
 /* SVG 默认是行内元素，按基线排版会在下方留出一条行距，
-   于是图标看起来比按钮的方块中心偏上。改成块级，place-items 才真正居中——
+   于是图标看起来比按钮的方块中心偏上。改成块级才真正居中——
    底色一亮（data-on）这点偏移就很显眼。 */
 .icon-btn svg { display: block; }
 .icon-btn:hover { background: var(--vr-field-hi); color: var(--vr-text); }

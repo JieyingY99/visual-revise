@@ -56,7 +56,8 @@ const style = prop => page.evaluate(
 const fillPanel = '#visual-revise-fill-panel'
 const openFill = async () => {
   if (await page.evaluate(id => !!document.getElementById(id), 'visual-revise-fill-panel')) return
-  await panel('vr-fill').click()
+  // 纯色态的触发行是两个输入框，点它们是敲值不是开弹层——色块才是弹层入口
+  await panel('vr-fill .swatch').click()
   await page.waitForTimeout(350)
 }
 const tab = async name => {
@@ -73,8 +74,12 @@ ok(await panel('vr-color[data-prop="background-color"]').count() === 0,
 ok(await panel('input[data-prop="background-image"]').count() === 0,
    '背景图不再单独给一行文本框，统一走填充控件')
 
-ok((await panel('vr-fill .label').textContent()).includes('#101014'),
-   `触发器显示当前填充：${await panel('vr-fill .label').textContent()}`)
+// 纯色态的触发行跟「文字色」（vr-color）长一样：色值一个框、不透明度一个框，
+// 都能直接敲。别的三态没有单一色值可填，才退回只读摘要标签。
+const fillText = await panel('vr-fill .text').inputValue()
+ok(fillText.includes('#101014'), `触发器显示当前填充色值：${fillText}`)
+ok(await panel('vr-fill .alpha').inputValue() === '100', '触发器另给一个不透明度输入框')
+ok(await panel('vr-fill .label').count() === 0, '纯色态不再是只读摘要标签')
 
 await openFill()
 const tabs = await page.locator(`${fillPanel} [data-tab]`).evaluateAll(

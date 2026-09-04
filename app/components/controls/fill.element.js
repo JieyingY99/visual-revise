@@ -114,7 +114,12 @@ export class VrFill extends HTMLElement {
   connectedCallback() {
     this.setAttribute('data-visual-revise-ui', '')
     this.#renderTrigger()
-    this.addEventListener('click', () => this.#toggle())
+    this.addEventListener('click', e => {
+      // 在 host 上监听时 e.target 会被 retarget 成 host 本身，shadow 里到底
+      // 点在哪个元素上要靠 composedPath 才看得到
+      if (e.composedPath().some(n => n?.tagName === 'INPUT')) return
+      this.#toggle()
+    })
   }
 
   disconnectedCallback() { if (openInstance === this) closePanel() }
@@ -155,11 +160,28 @@ export class VrFill extends HTMLElement {
   }
 
   #renderTrigger() {
+    const solid = this.#kind === 'solid'
+    const c = solid ? parseColor(this.color) : null
+
+    // 纯色态下这个控件跟「文字色」（vr-color）表示的是同一种东西——一个颜色，
+    // 就该长一样、也一样能直接敲：色值一个框、不透明度一个框。
+    // 另外三态没有单一色值可填（「无填充」没有值，渐变是一串色标，背景图是张图），
+    // 那时才退回只读摘要，编辑交给点开的弹层。
+    const fields = solid
+      ? `<div class="fields">
+           <input class="text" value="${formatColor({ ...c, a: 1 }, this.#format)}" title="色值">
+           <i class="sep"></i>
+           <input class="alpha" value="${Math.round(c.a * 100)}" title="不透明度（%）">
+           <span class="pct">%</span>
+         </div>`
+      : `<span class="label">${this.#summary()}</span>`
+
     this.#shadow.innerHTML = `
       <style>
         :host { display: flex; gap: 6px; align-items: center; cursor: pointer; }
         .swatch {
-          flex: none; width: 30px; height: 30px; border-radius: 5px; border: 1px solid #3d3d3d;
+          flex: none; box-sizing: border-box;
+          width: 30px; height: 30px; border-radius: 5px; border: 1px solid #3d3d3d;
           position: relative; overflow: hidden; ${CHECKER}
         }
         .swatch i { position: absolute; inset: 0; background-size: cover; }
@@ -170,9 +192,55 @@ export class VrFill extends HTMLElement {
           white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         :host(:hover) .label { background: #444; }
+
+        /* 下面这一段跟 vr-color 的触发行是同一套尺寸和配色，故意逐条对齐：
+           两个控件在面板里上下相邻，差一个像素都看得出来 */
+        .fields {
+          flex: 1; min-width: 0; display: flex; align-items: center;
+          height: 30px; background: #383838; border-radius: 5px;
+          border: 1px solid transparent;
+        }
+        :host(:hover) .fields { background: #444; }
+        .fields:focus-within { border-color: #0d99ff; background: #383838; }
+        .text, .alpha {
+          min-width: 0; height: 100%; padding: 0 8px;
+          font: 400 11px/1 ui-monospace, Menlo, monospace;
+          color: #fff; background: transparent;
+          border: none; outline: none; cursor: text;
+        }
+        .text { flex: 1; }
+        .alpha { flex: none; width: 38px; text-align: right; padding-right: 2px; }
+        .sep { flex: none; width: 1px; height: 16px; background: #4a4a4a; }
+        .pct { flex: none; padding: 0 8px 0 3px; font-size: 10px; color: #6f6f6f; }
       </style>
-      <span class="swatch"><i style="background:${this.#preview()}"></i></span>
-      <span class="label">${this.#summary()}</span>`
+      <span class="swatch" title="打开填充"><i style="background:${this.#preview()}"></i></span>
+      ${fields}`
+
+    if (solid) this.#bindFields(c)
+  }
+
+  #bindFields(c) {
+    const $ = sel => this.#shadow.querySelector(sel)
+
+    // 色值框只管颜色，alpha 由旁边那个框决定——否则在色值里敲一个不带 alpha 的
+    // #ff0000 会把已经调好的不透明度悄悄重置回 100%
+    $('.text').addEventListener('change', e => {
+      const next = parseColor(e.target.value.trim())
+      if (!next.valid) return this.#renderTrigger()
+      this.#commitParts(next, c.a)
+    })
+
+    $('.alpha').addEventListener('change', e => {
+      const pct = parseFloat(e.target.value)
+      if (!Number.isFinite(pct)) return this.#renderTrigger()
+      this.#commitParts(c, clamp(pct, 0, 100) / 100)
+    })
+  }
+
+  // 纯色提交要连带清掉 image：CSS 里 background-image 画在 background-color 上面，
+  // 不清的话刚敲进去的颜色会被原来的渐变或图片整个盖住（见文件顶部那三条规则）
+  #commitParts({ r, g, b }, a) {
+    this.#commit(formatColor({ r, g, b, a: clamp(a, 0, 1) }, this.#format), 'none')
   }
 
   #commit(color, image) {

@@ -40,7 +40,10 @@ export class VrColor extends HTMLElement {
     this.setAttribute('data-visual-revise-ui', '')
     this.#renderTrigger()
     this.addEventListener('click', e => {
-      if (e.target.closest?.('input')) return
+      // 监听器挂在 host 上，事件跨出 shadow 边界时 e.target 会被 retarget 成
+      // host 本身——host 上 closest('input') 永远是 null，于是点色值框也会
+      // 弹出色盘，把刚要敲的框盖住。composedPath 才看得到 shadow 里的真实目标。
+      if (e.composedPath().some(n => n?.tagName === 'INPUT')) return
       this.#toggle()
     })
   }
@@ -68,7 +71,8 @@ export class VrColor extends HTMLElement {
       <style>
         :host { display: flex; gap: 6px; align-items: center; }
         .swatch {
-          flex: none; width: 30px; height: 30px;
+          flex: none; box-sizing: border-box; padding: 0;
+          width: 30px; height: 30px;
           border-radius: 5px; border: 1px solid #3d3d3d;
           position: relative; overflow: hidden; cursor: pointer;
           ${CHECKER}

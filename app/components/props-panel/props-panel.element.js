@@ -90,6 +90,17 @@ const HIDEABLE = {
   effects: { 'box-shadow': 'none', 'filter': 'none', 'backdrop-filter': 'none' },
 }
 
+// 眼睛按钮该关掉什么，跟着这个分区「这次真的渲染出来的字段」走。
+// Fill 对直接承载文字的元素会把字色提到首行（见 #renderGroup 的 fill 特判），
+// 那时字色就是这一层的主填充——只关背景等于什么都没关：链接、标题这类元素
+// 本来就没有背景，点下去画面纹丝不动，看着就是按钮坏了。
+// 反过来纯容器不能动 color：那一行根本没渲染，而 color 还会继承进整棵子树，
+// 关一次背景把满屏文字一起抹掉，比不生效更糟。
+const hideMapFor = (id, el) =>
+  id === 'fill' && el && isTextElement(el) && !isReplacedElement(el)
+    ? { ...HIDEABLE.fill, color: 'transparent' }
+    : HIDEABLE[id]
+
 // 解除尺寸限制时写回的初始值。CSS 里「没有限制」不是空字符串，
 // 而是 min 为 0、max 为 none——样式表里那条声明只能被盖掉，删不掉。
 const LIMIT_RESET = {
@@ -1345,13 +1356,15 @@ export class PropsPanel extends HTMLElement {
         Object.entries(props).forEach(([p, v]) => ChangeStore.applyProp(el, p, v)))
       this.#hiddenSections.delete(id)
     } else {
+      // 每个元素单独求一次 map：联动选中里可能既有文字元素又有容器，
+      // 该关字色的关字色，该只关背景的只关背景
       this.#hiddenSections.set(id, targets.map(el => ({
         el,
         props: Object.fromEntries(
-          Object.keys(map).map(p => [p, el.style.getPropertyValue(p)])),
+          Object.keys(hideMapFor(id, el)).map(p => [p, el.style.getPropertyValue(p)])),
       })))
       targets.forEach(el =>
-        Object.entries(map).forEach(([p, v]) => ChangeStore.applyProp(el, p, v)))
+        Object.entries(hideMapFor(id, el)).forEach(([p, v]) => ChangeStore.applyProp(el, p, v)))
     }
 
     this.render()

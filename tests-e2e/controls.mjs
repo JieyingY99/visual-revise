@@ -228,7 +228,7 @@ const cp = await inViewport('visual-revise-color-panel')
 ok(within(cp), `色盘弹层夹在视口内（${JSON.stringify(cp)}）`)
 await page.keyboard.press('Escape'); await page.waitForTimeout(300)
 
-await page.locator('visual-revise-panel vr-fill').click(); await page.waitForTimeout(500)
+await page.locator('visual-revise-panel vr-fill .swatch').click(); await page.waitForTimeout(500)
 const fp1 = await inViewport('visual-revise-fill-panel')
 ok(within(fp1), `填充弹层夹在视口内（高 ${fp1?.h}）`)
 await page.locator('#visual-revise-fill-panel [data-tab="gradient"]').click(); await page.waitForTimeout(600)

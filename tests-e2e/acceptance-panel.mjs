@@ -231,6 +231,112 @@ const foldState = await page.evaluate(() => {
 AC('AC-6.15', foldState.typography === false,
    `选中文字元素时 Typography 自动展开（${JSON.stringify(foldState)}）`)
 
+// ── 6.18 / 6.19 / 6.20 Fill 分区 ──
+// 用一个「有字色也有背景色」的链接：Fill 分区会同时渲染出文字色和填充两行，
+// 正好是这两条 AC 要比的那一对控件。
+console.log('── 6.18/6.19/6.20 Fill 分区')
+await page.evaluate(() => {
+  const a = document.createElement('a'); a.id = 'lnk'; a.textContent = '一个链接'
+  a.style.cssText = 'position:absolute;left:20px;top:620px;padding:6px;color:#1a0dab;background-color:#c4c4c4'
+  document.body.appendChild(a)
+})
+await page.keyboard.press('Escape'); await page.waitForTimeout(150)
+await page.locator('#lnk').click({ position: { x: 4, y: 4 } }); await page.waitForTimeout(500)
+
+const lnk = prop => page.evaluate(p => document.getElementById('lnk').style.getPropertyValue(p), prop)
+const fillShape = () => page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+  const f = sr.querySelector('section[data-group="fill"] vr-fill')
+  if (!f) return null
+  const fs = f.shadowRoot
+  return {
+    text: fs.querySelector('.text')?.value ?? null,
+    alpha: fs.querySelector('.alpha')?.value ?? null,
+    label: fs.querySelector('.label')?.textContent ?? null,
+  }
+})
+
+const shape0 = await fillShape()
+AC('AC-6.19a', shape0?.text?.toLowerCase() === '#c4c4c4' && shape0?.alpha === '100' && shape0?.label === null,
+   `纯色态填充是可编辑的色值 + 不透明度双输入（${JSON.stringify(shape0)}）`)
+
+// 两个控件在面板里上下相邻，差一个像素都看得出来，所以逐项比而不是只比存在性
+const sameBox = await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+  const sec = sr.querySelector('section[data-group="fill"]')
+  const pick = host => {
+    const g = sel => { const r = host.shadowRoot.querySelector(sel)?.getBoundingClientRect(); return r ? [+r.width.toFixed(1), +r.height.toFixed(1)] : null }
+    return { swatch: g('.swatch'), fields: g('.fields'), alpha: g('.alpha'), sep: g('.sep'), pct: g('.pct') }
+  }
+  const a = pick(sec.querySelector('vr-color')), b = pick(sec.querySelector('vr-fill'))
+  const diff = Object.keys(a).filter(k => JSON.stringify(a[k]) !== JSON.stringify(b[k]))
+  return { diff, a, b }
+})
+AC('AC-6.19b', sameBox.diff.length === 0,
+   `文字色与填充的色块 / 输入框逐项同尺寸${sameBox.diff.length ? `（不同：${sameBox.diff.join(', ')} ${JSON.stringify(sameBox.a)} vs ${JSON.stringify(sameBox.b)}）` : ''}`)
+
+// 双输入要真的能写，否则只是长得像
+const fillAlpha = P('section[data-group="fill"] vr-fill .alpha')
+await fillAlpha.fill('40'); await fillAlpha.press('Enter'); await page.waitForTimeout(300)
+AC('AC-6.19c', (await lnk('background-color')).replace(/\s/g, '') === 'rgba(196,196,196,0.4)',
+   `填充的不透明度框写回 background-color（${await lnk('background-color')}）`)
+
+// 事件跨 shadow 边界会把 target 重定向到 host——不看 composedPath 就会误判成
+// 「点在控件上」，把色盘弹出来盖住刚要敲的框
+const popped = async id => page.evaluate(x => !!document.getElementById(x), id)
+await P('section[data-group="fill"] vr-fill .text').click(); await page.waitForTimeout(250)
+const fillNoPop = !(await popped('visual-revise-fill-panel'))
+await P('section[data-group="fill"] vr-color .text').click(); await page.waitForTimeout(250)
+const colorNoPop = !(await popped('visual-revise-color-panel'))
+AC('AC-6.20a', fillNoPop && colorNoPop,
+   `点色值框是敲值、不弹色盘（填充 ${fillNoPop ? '✓' : '✗'} / 文字色 ${colorNoPop ? '✓' : '✗'}）`)
+await P('section[data-group="fill"] vr-fill .swatch').click(); await page.waitForTimeout(350)
+AC('AC-6.20b', await popped('visual-revise-fill-panel'), '点色块打开填充弹层')
+// Esc 关掉弹层后会继续往下走到「取消选中」，面板跟着收起——重新选一次
+await page.keyboard.press('Escape'); await page.waitForTimeout(250)
+await page.locator('#lnk').click({ position: { x: 4, y: 4 } }); await page.waitForTimeout(500)
+
+// 6.18：文字元素的主填充是字色，关组必须连它一起关。
+// 这条以前空转过——断言只看按钮的 data-on 变没变，没看页面上真的关掉了什么。
+const before = { color: await lnk('color'), bg: await lnk('background-color') }
+await P('.eye[data-eye="fill"]').click(); await page.waitForTimeout(300)
+const off = { color: await lnk('color'), bg: await lnk('background-color') }
+AC('AC-6.18a', off.color === 'transparent' && off.bg === 'transparent',
+   `文字元素关 Fill：字色和背景一起关（color="${off.color}" background-color="${off.bg}"）`)
+AC('AC-6.19d', (await fillShape())?.label === '无填充', '关掉后填充退回只读摘要标签「无填充」')
+await P('.eye[data-eye="fill"]').click(); await page.waitForTimeout(300)
+AC('AC-6.18b', (await lnk('color')) === before.color && (await lnk('background-color')) === before.bg,
+   `再点还原回改稿前（color="${await lnk('color')}" background-color="${await lnk('background-color')}"）`)
+
+// 纯容器不该被动 color：那一行根本没渲染，而 color 会继承进整棵子树
+await page.keyboard.press('Escape'); await page.waitForTimeout(150)
+await page.locator('#rich').click({ position: { x: 4, y: 4 } }); await page.waitForTimeout(500)
+// 字色取点击前的实际值来比：前面的用例已经改过 #rich 的 color，
+// 写死一个期望值只会在无关的改动上炸掉——这里要证的是「关组没碰它」
+const richColor = await inline('color')
+await P('.eye[data-eye="fill"]').click(); await page.waitForTimeout(300)
+AC('AC-6.18c', (await inline('color')) === richColor && (await inline('background-color')) === 'transparent',
+   `容器关 Fill 只关背景、不动字色（color 保持 "${await inline('color')}"）`)
+await P('.eye[data-eye="fill"]').click(); await page.waitForTimeout(300)
+
+// ── 6.21 图标居中 ──
+console.log('── 6.21 图标按钮')
+const offCenter = await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+  const bad = []
+  for (const btn of sr.querySelectorAll('.icon-btn')) {
+    const svg = btn.querySelector('svg'); if (!svg) continue
+    const b = btn.getBoundingClientRect(); if (!b.width) continue
+    const s = svg.getBoundingClientRect()
+    const dx = +((s.x + s.width / 2) - (b.x + b.width / 2)).toFixed(2)
+    const dy = +((s.y + s.height / 2) - (b.y + b.height / 2)).toFixed(2)
+    if (dx || dy) bad.push(`${btn.className} dx=${dx} dy=${dy}`)
+  }
+  return { bad, count: sr.querySelectorAll('.icon-btn').length }
+})
+AC('AC-6.21', offCenter.bad.length === 0,
+   `${offCenter.count} 个图标按钮的图标全部居中${offCenter.bad.length ? `（偏移：${offCenter.bad.join(' / ')}）` : ''}`)
+
 await browser.close(); await close()
 console.log(`\n合计：${passed} 通过 / ${failed} 失败\n`)
 process.exitCode = failed ? 1 : 0
