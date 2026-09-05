@@ -1,13 +1,13 @@
 {
   "name": "visual-revise",
   "version": "0.1.0",
-  "description": "基于 VisBug 的网页可视化改稿扩展",
-  "author": "Adam Argyle",
+  "description": "在任意网页上可视化改稿，一键导出 AI 能精确定位的提示词。基于 Project VisBug (Apache-2.0) 二次开发。",
+  "author": "Jieying Yang",
   "license": "Apache-2.0",
   "main": "app/components/vis-bug/vis-bug.element.js",
   "repository": {
     "type": "git",
-    "url": "https://github.com/GoogleChromeLabs/ProjectVisBug.git"
+    "url": "https://github.com/JieyingY99/visual-revise.git"
   },
   "scripts": {
     "start": "npm run concurrent",
@@ -40,7 +40,8 @@
     "test:ext": "node tests-e2e/extension.mjs",
     "test:live": "node tests-e2e/live.mjs",
     "test:locate": "node tests-e2e/locate.mjs",
-    "zip": "cd extension && zip -r ../visual-revise.zip . -x \"build/*\" && cd .."
+    "zip": "cd extension && zip -r ../visual-revise.zip . -x \"build/*\" && cd ..",
+    "extension:package": "npm run extension:build && bash scripts/package-extension.sh"
   },
   "dependencies": {
     "@ctrl/tinycolor": "^3.0.2",
@@ -75,5 +76,12 @@
     "require": [
       "esm"
     ]
+  },
+  "contributors": [
+    "Adam Argyle (original author of Project VisBug)"
+  ],
+  "homepage": "https://github.com/JieyingY99/visual-revise",
+  "bugs": {
+    "url": "https://github.com/JieyingY99/visual-revise/issues"
   }
 }

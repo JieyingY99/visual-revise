@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 // 分区顺序与命名对齐 Figma 的属性面板：
 //   Position → Layout → Appearance → Typography → Fill → Stroke → Effects
 //

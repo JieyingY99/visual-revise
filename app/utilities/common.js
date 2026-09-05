@@ -1,3 +1,10 @@
+/**
+ * Modified from Project VisBug (https://github.com/GoogleChromeLabs/ProjectVisBug),
+ * Copyright Google LLC and its contributors, licensed under the Apache License 2.0.
+ *
+ * Modifications Copyright 2026 Jieying Yang.
+ * This file has been changed from the original. See NOTICE for details.
+ */
 import $ from 'blingblingjs'
 import { nodeKey } from './strings'
 

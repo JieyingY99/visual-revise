@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 // 自定义下拉：原生 <select> 的弹出层由系统绘制，无法定制样式，
 // 在深色浮层里显示为系统浅色菜单，与整体割裂。
 // 弹出面板挂到 body 而非 shadow 内——面板本身有 overflow: auto，

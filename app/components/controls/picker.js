@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 // 色盘主体：SV 面板 + 色相条 + 透明度条 + 吸管 + 格式与数值输入。
 //
 // 纯色填充和渐变里的每一个色标用的是同一套控件，所以抽出来共用。

@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 // 把参考图落到磁盘，并尽可能拿回**绝对路径**，供提示词内联给 AI。
 //
 // 为什么非要落盘：剪贴板一次只能携带纯文本，或一张图，带不了「文本 + 多张图」。

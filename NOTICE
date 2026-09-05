@@ -1,0 +1,56 @@
+Visual Revise
+Copyright 2026 Jieying Yang
+
+This product includes software developed by Project VisBug
+(https://github.com/GoogleChromeLabs/ProjectVisBug), originally authored by
+Adam Argyle and copyright Google LLC and its contributors, licensed under the
+Apache License, Version 2.0.
+
+A copy of the Apache License, Version 2.0 is included in the LICENSE file
+accompanying this distribution, and may also be obtained at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+--------------------------------------------------------------------------------
+Modifications
+--------------------------------------------------------------------------------
+
+The following changes were made to the original Project VisBug source by
+Jieying Yang in 2026. Files listed under "Modified files" carry an in-file
+modification notice as required by Section 4(b) of the Apache License.
+
+Added capabilities (original work, not derived from Project VisBug):
+  - AI prompt export: converts a visual revision session into a structured
+    prompt that lets an AI coding agent locate the exact elements changed
+  - Revision history: snapshot, diff and change-list panel
+  - Properties panel, layer tree and comment layer
+  - Reference image pipeline: image intake, local persistence and prompt
+    embedding by absolute path
+  - Drag-to-reorder layout editing and JSON import/export of revisions
+  - Local font access integration
+  - Simplified Chinese localization
+
+Modified files:
+  app/components/vis-bug/vis-bug.element.js
+  app/features/selectable.js
+  app/utilities/common.js
+  extension/contextmenu/colormode.js
+  extension/contextmenu/colorscheme.js
+  extension/contextmenu/launcher.js
+  extension/toolbar/inject.js
+  extension/toolbar/restore.js
+  extension/visbug.js
+
+--------------------------------------------------------------------------------
+Third-party dependencies
+--------------------------------------------------------------------------------
+
+This product bundles the following third-party libraries. Their license
+headers are preserved in the distributed bundle.
+
+  blingblingjs                     MIT
+  hotkeys-js                       MIT
+  @ctrl/tinycolor                  MIT
+  colorjs.io                       MIT
+  construct-style-sheets-polyfill  MIT
+  query-selector-shadow-dom        MIT

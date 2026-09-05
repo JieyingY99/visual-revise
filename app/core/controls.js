@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 // 控件规格：决定属性面板里每个 CSS 属性用什么控件呈现。
 // type 说明：
 //   num     数值输入（label 可横向拖动调值）

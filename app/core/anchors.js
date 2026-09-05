@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 const HASHY = /^[a-z]*[-_]?[a-z0-9]{5,}$/i
 const FRAMEWORK_NOISE = /^(ng-|v-|svelte-|jsx-|css-|sc-|emotion-|chakra-|mui-)/i
 

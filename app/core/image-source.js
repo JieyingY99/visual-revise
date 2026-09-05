@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 // 元素身上的「图」在 CSS 里有两个互不相干的来源：<img>/<video> 自己的 src，
 // 和任意元素的 background-image。Figma 里这两者是同一件事——图层的 Fill 是
 // 一张图。面板要一视同仁地把它显示出来，否则用户根本看不出自己选中的是哪张图。

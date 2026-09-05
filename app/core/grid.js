@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 // Grid 轨道模型，对应 Figma 的 Grid 行列设置。
 //
 // Figma 里每条轨道有三种类型：Fill（等分剩余空间）、Fixed（固定尺寸）、

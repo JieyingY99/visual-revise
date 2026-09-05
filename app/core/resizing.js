@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 // W/H 的尺寸模式：对应 Figma 的 Fixed / Hug contents / Fill container。
 
 export const AXES = {

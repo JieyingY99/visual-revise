@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 import { isOffBounds } from '../utilities/common.js'
 
 // 编辑器的选中框、标尺、评论 pin 都浮在页面之上，事件的 path[0]

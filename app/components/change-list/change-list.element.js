@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 import { ChangeStore } from '../../core/change-store.js'
 import { highlight, clearHighlight } from '../../core/highlight.js'
 import { downloadJSON, pickAndImport } from '../../core/json-io.js'

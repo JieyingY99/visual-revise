@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 import { isOffBounds } from '../utilities/common.js'
 import { pageElementAt, isEditorUI } from './dom-utils.js'
 // 与树里的拖拽共用一份：两个入口写出的记录必须一致

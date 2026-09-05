@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 // 共享的弹出菜单。Resizing 的模式切换、Grid 的行列类型、往后的各种「⌄」都用它，
 // 免得每处各写一份定位、点外关闭、滚动关闭的逻辑。
 //

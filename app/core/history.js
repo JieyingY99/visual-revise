@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 // 操作历史：past / future 两个栈，撑起 ⌘Z / ⌘⇧Z。
 //
 // 每条历史是一组 op，用**数据**描述而不是闭包。闭包会悄悄捕获一堆状态，

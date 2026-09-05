@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 // 单色控件：一个色块 + 一个文本框，点开挂在 body 上的色盘弹层。
 // 色盘主体在 picker.js，渐变里的每个色标共用同一套。
 import {

@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 // 在页面元素外面画一圈描边，用于「这一行说的是它」——记录列表和结构树
 // 都要用同一个，两处各画一个的话会同时出现两圈框。
 const OVERLAY_ID = 'visual-revise-locate-overlay'

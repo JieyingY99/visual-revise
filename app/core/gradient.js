@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 // CSS 渐变的解析与序列化。
 //
 // 编辑器内部一律用「百分比色标」表示：

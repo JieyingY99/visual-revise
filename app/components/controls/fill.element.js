@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 // 填充控件：把 background-color 与 background-image 合成一个入口，
 // 点开是带标签栏的弹层 —— 无 / 纯色 / 渐变。
 //

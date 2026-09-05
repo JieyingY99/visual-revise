@@ -2,6 +2,11 @@
 
 在任意网页上用 Figma 式属性面板可视化改稿，一键导出 AI 能**精确定位**的提示词。
 
+> 本项目基于开源项目 [VisBug](https://github.com/GoogleChromeLabs/ProjectVisBug)（原作者 Adam Argyle，版权归 Google LLC 及其贡献者，Apache-2.0 许可）二次开发，
+> 在其网页可视化编辑能力之上，新增了 AI 提示词导出、改动记录、参考图流程等功能。
+> 本项目与 Google 无隶属关系，亦非 VisBug 官方版本。
+> 修改说明见 [NOTICE](./NOTICE)，改动详情见下文[「与 VisBug 的关系」](#与-visbug-的关系)，许可证见 [LICENSE](./LICENSE)。
+
 解决的问题：页面已经做完了，视觉细节不对，但「哪里不对、要改成什么样」用文字说不清。
 以前要开 DevTools 找元素、试值、复制选择器、手写描述给 AI，AI 还得自己去代码里猜是哪个组件。
 
@@ -404,7 +409,12 @@ app/
 
 新增代码全部隔离在 `app/core/` 与 `app/components/{props-panel,change-list,comment-layer}/`，便于日后 rebase 上游。
 
-上游原始说明见 [UPSTREAM-README.md](./UPSTREAM-README.md)，许可证见 [LICENSE](./LICENSE)。
+上游原始说明见 [UPSTREAM-README.md](./UPSTREAM-README.md)，许可证见 [LICENSE](./LICENSE)，
+归属与修改声明见 [NOTICE](./NOTICE)。
+
+按 Apache-2.0 第 4(b) 条，所有改动过的上游文件顶部均带有修改声明；
+新增的原创文件带有本项目的版权声明。分发包（`npm run extension:package`）
+会自动带上 `LICENSE` 与 `NOTICE`。
 
 > 注：macOS 文件系统不区分大小写，本项目的 `README.md` 会覆盖上游的 `readme.md`，
 > 因此上游说明另存为 `UPSTREAM-README.md`。

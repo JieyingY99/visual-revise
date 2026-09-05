@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 // Local Font Access API 仅在安全上下文可用，且需要用户显式授权。
 // 拒绝或不支持时，字体控件退回自由输入。
 export const isSupported = () => typeof window.queryLocalFonts === 'function'

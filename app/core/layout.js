@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 // Layout 分区的模型，对齐 Figma 的 Auto layout 面板。
 //
 // Figma 把「这个容器怎么排子元素」收敛成一个 Flow 选择，然后按 Flow 决定

@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 // 图片资产：把用户从任意入口（选文件 / 拖拽 / 粘贴）给进来的图，规范成
 // 同一种结构，供评论参考图与 Fill 换图共用。
 //
