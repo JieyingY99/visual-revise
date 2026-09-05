@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 import { GROUPS, sameValue } from '../../core/tracked-props.js'
 import {
   CONTROLS, SIDE_GROUPS, FIELD_PAIRS, FIELD_PREFIX, HIDDEN_FIELDS, LABELED_PAIRS,
@@ -5,7 +9,7 @@ import {
   alignSupported, alignPlan, isReplacedElement,
 } from '../../core/controls.js'
 import { ChangeStore } from '../../core/change-store.js'
-import { pinPlacement } from '../../core/placement.js'
+import { moveTo, savePlacement } from '../../core/placement.js'
 import { readComputed, elementId } from '../../core/snapshot.js'
 import { stableClasses } from '../../core/anchors.js'
 import { findSharedElements, describeShared } from '../../core/shared-elements.js'
@@ -259,6 +263,9 @@ export class PropsPanel extends HTMLElement {
     if (next === this.#tab) return
     this.#tab = next
     this.render()
+    // 切到结构：此前树一直是 display:none，那时算的滚动全是 0，
+    // 选中行多半在视口外。露出来之后补滚一次。
+    if (next === 'structure') this.#tree?.reveal()
   }
 
   #scope() {
@@ -1733,17 +1740,15 @@ export class PropsPanel extends HTMLElement {
       const offX = e.clientX - rect.left
       const offY = e.clientY - rect.top
 
-      const move = ev => {
-        // 拖过一次就别再自动摆位了：这是用户明确的意图
-        pinPlacement(this)
-        this.style.left = `${ev.clientX - offX}px`
-        this.style.top = `${ev.clientY - offY}px`
-        this.style.right = 'auto'
-      }
+      // moveTo 顺手把面板夹在视口内，免得标题栏被拖出屏幕后再也抓不回来
+      const move = ev => moveTo(this, ev.clientX - offX, ev.clientY - offY)
       const up = ev => {
         handle.releasePointerCapture(ev.pointerId)
         handle.removeEventListener('pointermove', move)
         handle.removeEventListener('pointerup', up)
+        // 只在松手时落一次盘：pointermove 每帧都触发，
+        // 每帧写一次 localStorage 是同步 I/O，拖起来会顿
+        savePlacement(this)
       }
       handle.addEventListener('pointermove', move)
       handle.addEventListener('pointerup', up)

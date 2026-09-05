@@ -1,8 +1,15 @@
-// 面板摆在哪，取决于你选中了什么。写死在右上角的话，选到页面右侧的元素时
-// 面板正好盖住它——而改属性的全部意义就是看着它变。
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
+// 面板固定出现在一个地方，不跟着选中的元素跑。
+//
+// 早先的版本按元素矩形算左右侧，本意是别盖住正在改的东西。结果每换一个元素
+// 面板就跳一次位置——眼睛每次都得重新找它，比偶尔被挡住更累。现在只有两个
+// 可能的位置：默认那个（样式表里的右上角），或者用户自己拖过去的那个。
 
+const KEY = 'visual-revise:panel-pos'
 const EDGE = 8    // 与视口边缘的最小留白
-const GAP = 12    // 与被避开元素之间的呼吸位
 
 const vw = () => document.documentElement.clientWidth || innerWidth
 const vh = () => document.documentElement.clientHeight || innerHeight
@@ -10,52 +17,54 @@ const vh = () => document.documentElement.clientHeight || innerHeight
 // 可用空间比要摆的东西还小时退回下界，而不是算出一个比下界还小的上界
 const fit = (v, lo, hi) => Math.min(Math.max(v, lo), Math.max(lo, hi))
 
-const overlaps = (a, b) =>
-  a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+// localStorage 在无痕窗口或被站点策略禁掉时会直接抛，读写都得兜住——
+// 记不住位置只是少个便利，不该让整块面板挂掉。
+// 存的是页面自己的 localStorage：bundle 以 <script type="module"> 插进页面、
+// 跑在主世界，够不着 chrome.storage，所以这份记忆是按站点隔离的。
+export const readPlacement = () => {
+  try {
+    const pos = JSON.parse(localStorage.getItem(KEY))
+    return Number.isFinite(pos?.left) && Number.isFinite(pos?.top) ? pos : null
+  } catch { return null }
+}
 
-// 用户自己拖过之后就不再自动摆位：那是他明确的意图，不该被下一次选中覆盖
-export const PINNED_ATTR = 'data-user-placed'
-export const pinPlacement = el => el?.setAttribute(PINNED_ATTR, '')
-export const unpinPlacement = el => el?.removeAttribute(PINNED_ATTR)
+export const savePlacement = panel => {
+  if (!panel) return null
+  const r = panel.getBoundingClientRect()
+  if (!r.width) return null
+  const pos = { left: Math.round(r.left), top: Math.round(r.top) }
+  try { localStorage.setItem(KEY, JSON.stringify(pos)) }
+  catch { /* 记不住就算了 */ }
+  return pos
+}
 
-export const placeBeside = (panel, target, { avoid = [] } = {}) => {
-  if (!panel || panel.hidden || panel.hasAttribute(PINNED_ATTR)) return null
-  if (!target?.isConnected) return null
+export const clearPlacement = () => {
+  try { localStorage.removeItem(KEY) } catch { /* 同上 */ }
+}
 
-  // 尺寸要实测：面板高度随内容变，而 max-height 又跟视口挂钩
-  const p = panel.getBoundingClientRect()
-  const t = target.getBoundingClientRect()
-  if (!p.width || !p.height) return null
+// 视口随时可能比记住位置时更小（换屏、缩窗口、开 devtools），不夹一下
+// 面板就会停在屏幕外面——它是 fixed 的，页面滚不到那里，等于再也拖不回来
+export const moveTo = (panel, left, top) => {
+  if (!panel) return null
+  const r = panel.getBoundingClientRect()
+  const w = r.width || panel.offsetWidth
+  const h = r.height || panel.offsetHeight
 
-  const roomRight = vw() - t.right - GAP - EDGE
-  const roomLeft = t.left - GAP - EDGE
+  const x = fit(left, EDGE, vw() - EDGE - w)
+  const y = fit(top, EDGE, vh() - EDGE - h)
 
-  // 优先右侧；右边塞不下就翻到左边。两边都不够宽时选空间大的那侧，
-  // 剩下的交给夹取——窄视口下少量重叠躲不掉，但总好过整块跑到屏幕外
-  const side = roomRight >= p.width ? 'right'
-    : roomLeft >= p.width ? 'left'
-    : roomRight >= roomLeft ? 'right' : 'left'
-
-  const left = fit(
-    side === 'right' ? t.right + GAP : t.left - GAP - p.width,
-    EDGE, vw() - EDGE - p.width)
-
-  // 纵向对齐元素顶部：面板上半部分是最常改的几项，让它们跟元素平齐
-  let top = fit(t.top, EDGE, vh() - EDGE - p.height)
-
-  // 工具条浮在顶部中间，撞上就压到它下面——不然选中页面上方的元素时，
-  // 面板标题会被工具条盖住
-  for (const box of avoid) {
-    if (!box) continue
-    const rect = { left, top, right: left + p.width, bottom: top + p.height }
-    if (overlaps(rect, box))
-      top = fit(box.bottom + GAP, EDGE, vh() - EDGE - p.height)
-  }
-
-  // CSS 里写的是 right，不清掉的话 left 会被它拉扯
-  panel.style.left = `${Math.round(left)}px`
-  panel.style.top = `${Math.round(top)}px`
+  // 样式表里写的是 right，不清掉的话 left 会被它拉扯
+  panel.style.left = `${Math.round(x)}px`
+  panel.style.top = `${Math.round(y)}px`
   panel.style.right = 'auto'
 
-  return { left, top, side }
+  return { left: x, top: y }
+}
+
+// 把面板放回记住的位置。没有记忆就什么都不做：样式表里的默认位置本身就是
+// 「固定出现的那个地方」，写 inline 只会把那条 right 定位顶掉。
+export const applyPlacement = panel => {
+  const pos = readPlacement()
+  if (!panel || panel.hidden || !pos) return null
+  return moveTo(panel, pos.left, pos.top)
 }

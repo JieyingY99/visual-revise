@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 import hotkeys from 'hotkeys-js'
 import { ChangeStore } from './change-store.js'
 import { copyPrompt } from './prompt-export.js'
@@ -13,7 +17,7 @@ import { exportJSON, importJSON, downloadJSON, pickAndImport } from './json-io.j
 import { fingerprint, findSharedElements } from './shared-elements.js'
 import { loadLocalFonts, isSupported as fontsSupported } from './local-fonts.js'
 import { clearHighlight } from './highlight.js'
-import { placeBeside, unpinPlacement } from './placement.js'
+import { applyPlacement } from './placement.js'
 import { resizeMode, planResize, currentSize, isMainAxis, cssVariables } from './resizing.js'
 import { parseTracks, serializeTracks, readTracks, gridShape } from './grid.js'
 import { flowOf, planFlow, alignmentOf, planAlignment } from './layout.js'
@@ -82,30 +86,25 @@ export const mountVisualRevise = visbug => {
   let stealth = false
   let modeBeforeStealth = 'select'
 
-  // 工具条浮在顶部中间，面板撞上它就得让开
-  const toolbarBox = () => toolbar.hidden ? null : toolbar.getBoundingClientRect()
-
-  // 只在换了元素时重新摆位，不跟随滚动：面板是 fixed 的，
-  // 滚一下就重算会让它一路乱跳，比偶尔挡住元素更难受
-  let placedFor = null
-  const placeFor = (el, panelEl) => {
-    if (!el?.isConnected || el === placedFor) return
-    placedFor = el
-    placeBeside(panelEl, el, { avoid: [toolbarBox()] })
-  }
 
   const onSelected = els => {
     if (interactive) return
 
-    panel.setTargets(els)
-
-    // 工具条是入口，属性面板只在真正选中元素后出现，
-    // 否则一打开就有两块 UI 抢注意力
+    // 先让面板可见，再灌内容：结构树在 display:none 下量不出高度，
+    // 那时做的「滚到选中行」等于没做，选中项会停在视口外看不见
     panel.hidden = !(els && els.length)
-    placeFor(els?.[0], panel)
+    panel.setTargets(els)
+    // 固定位置：默认那个，或者用户自己拖过去的那个。不跟着选中的元素走——
+    // 每换一个元素就跳一次，眼睛每次都得重新找它。
+    applyPlacement(panel)
   }
 
   engine.onSelectedUpdate(onSelected)
+
+  // 窗口变小后，记住的位置可能整块落在视口外——面板是 fixed 的，页面滚不到
+  // 那里，等于再也拖不回来。applyPlacement 会拿记住的坐标重新夹一次：
+  // 窗口缩小时挤回视口内，重新拉大时又回到原来那个位置。
+  addEventListener('resize', () => applyPlacement(panel))
 
   // 交互态：让页面恢复自己的 hover / click 行为，供用户验证真实交互。
   // 选中集在退出时原样恢复，改动记录不受影响（它活在 ChangeStore 里）。
@@ -540,10 +539,7 @@ export const mountVisualRevise = visbug => {
   // × 只收这块面板，不动当前模式——用户多半还想接着选下一个元素，
   // 把他从选择模式踢到浏览模式是自作主张。退出整个编辑器是工具条上那个 × 的事。
   panel.addEventListener('vr-close', () => {
-    // 收起面板等于这一轮结束，把手动拖的位置也一并作废，
-    // 下次选中重新按元素摆
-    unpinPlacement(panel)
-    placedFor = null
+    // 位置不动：关掉再打开还在原处才叫「记住」。
     // 取消选中就够了：onSelected 里 panel.hidden 跟着选中数走，面板自己会收。
     // 只藏面板而不取消选中的话，下次选中同一个元素时 onSelected 认为没变化，
     // 面板不会重新出现，× 看着就像把面板弄坏了。

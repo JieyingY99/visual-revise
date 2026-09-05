@@ -242,11 +242,14 @@ await page.evaluate(() => {
 
 
 // ── 摆位 ────────────────────────────────────────────────────
-// 面板写死在右上角的话，选到页面右侧的元素时正好把它盖住——
-// 而改属性的全部意义就是看着它变。
+// 面板固定在一个地方，位置只由用户决定。早先按选中元素的矩形算左右侧，
+// 结果每换一个元素面板就跳一次——眼睛每次都得重新找它。
 
 await page.evaluate(() => {
-  for (const [id, css] of [['vr-left', 'left:20px'], ['vr-right', 'right:20px']]) {
+  try { localStorage.removeItem('visual-revise:panel-pos') } catch { /* 无痕窗口 */ }
+  // 两个探针都放在默认面板（右上角）盖不到的地方：固定位置的代价就是
+  // 被面板压住的页面区域点不到，那是拖走面板的事，不该由这条用例来验
+  for (const [id, css] of [['vr-left', 'left:20px'], ['vr-mid', 'left:500px']]) {
     const d = document.createElement('div')
     d.id = id
     d.textContent = id
@@ -255,37 +258,30 @@ await page.evaluate(() => {
   }
 })
 
-const placement = async sel => {
+const boxOf = async sel => {
   await page.locator(sel).click()
   await page.waitForTimeout(400)
-  return page.evaluate(s => {
+  return page.evaluate(() => {
     const hit = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
     const p = document.querySelector('visual-revise-panel').getBoundingClientRect()
-    const t = document.querySelector(s).getBoundingClientRect()
     const bar = document.querySelector('visual-revise-toolbar').getBoundingClientRect()
     return {
-      onRightOfTarget: p.left >= t.right,
-      onLeftOfTarget: p.right <= t.left,
       inside: p.left >= -0.5 && p.top >= -0.5
         && p.right <= document.documentElement.clientWidth + 0.5
         && p.bottom <= document.documentElement.clientHeight + 0.5,
-      overlapsTarget: hit(p, t),
       overlapsToolbar: hit(p, bar),
-      left: Math.round(p.left),
+      left: Math.round(p.left), top: Math.round(p.top),
     }
-  }, sel)
+  })
 }
 
-const left = await placement('#vr-left')
-ok(left.onRightOfTarget, `贴左的元素：面板出现在它右边（left=${left.left}）`)
-ok(left.inside && !left.overlapsTarget, '完整落在视口内，且没盖住选中的元素')
-ok(!left.overlapsToolbar, '也没被工具条压住')
+const atLeft = await boxOf('#vr-left')
+const atMid = await boxOf('#vr-mid')
+ok(atLeft.left === atMid.left && atLeft.top === atMid.top,
+   `选左边还是中间的元素，面板都在同一处（${atLeft.left},${atLeft.top} / ${atMid.left},${atMid.top}）`)
+ok(atLeft.inside && !atLeft.overlapsToolbar, '默认位置完整在视口内、不与工具条重叠')
 
-const right = await placement('#vr-right')
-ok(right.onLeftOfTarget, `贴右的元素：面板翻到它左边（left=${right.left}）`)
-ok(right.inside && !right.overlapsTarget, '同样完整在视口内、不盖住元素')
-
-// 手动拖过之后不再自动摆位：那是用户明确的意图
+// 拖过之后位置记在 localStorage，换选元素不再动
 const dragged = await page.evaluate(async () => {
   const panel = document.querySelector('visual-revise-panel')
   const header = panel.shadowRoot.querySelector('header')
@@ -295,22 +291,29 @@ const dragged = await page.evaluate(async () => {
   header.dispatchEvent(new PointerEvent('pointermove', { ...opts, clientX: 300, clientY: 500 }))
   header.dispatchEvent(new PointerEvent('pointerup', { ...opts, clientX: 300, clientY: 500 }))
   await new Promise(r => setTimeout(r, 100))
-  return { pinned: panel.hasAttribute('data-user-placed'), left: Math.round(panel.getBoundingClientRect().left) }
+  let stored = null
+  try { stored = JSON.parse(localStorage.getItem('visual-revise:panel-pos')) } catch { /* 无痕窗口 */ }
+  const box = panel.getBoundingClientRect()
+  return { stored, left: Math.round(box.left), top: Math.round(box.top) }
 })
-ok(dragged.pinned, '拖动后面板被钉住')
+ok(dragged.stored && Math.abs(dragged.stored.left - dragged.left) < 2,
+   `拖动后位置记进 localStorage（${JSON.stringify(dragged.stored)}）`)
 
 await page.locator('#vr-left').click()
 await page.waitForTimeout(400)
-const afterPin = await page.evaluate(() =>
+const afterDrag = await page.evaluate(() =>
   Math.round(document.querySelector('visual-revise-panel').getBoundingClientRect().left))
-ok(afterPin === dragged.left,
-   `钉住之后选别的元素也不再自动移动（${dragged.left} → ${afterPin}）`)
+ok(afterDrag === dragged.left,
+   `换选元素仍停在拖过的位置（${dragged.left} → ${afterDrag}）`)
 
 await page.evaluate(() => {
   document.querySelector('#vr-left')?.remove()
-  document.querySelector('#vr-right')?.remove()
-  const p = document.querySelector('visual-revise-panel')
-  p.removeAttribute('data-user-placed')
+  document.querySelector('#vr-mid')?.remove()
+  try { localStorage.removeItem('visual-revise:panel-pos') } catch { /* 无痕窗口 */ }
+  // 面板现在停在页面中间，会挡住后面用例要点的元素。清掉 inline 定位，
+  // 让它回到样式表里的默认位置（右上角）——位置记忆已经在上面清过了。
+  const panel = document.querySelector('visual-revise-panel')
+  panel.style.left = panel.style.top = panel.style.right = ''
 })
 
 // ── 面板的 × ────────────────────────────────────────────────

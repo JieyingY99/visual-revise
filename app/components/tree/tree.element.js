@@ -1,3 +1,7 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
 import { ChangeStore } from '../../core/change-store.js'
 import { elementId } from '../../core/snapshot.js'
 import { childrenOf, describeNode, pathTo } from '../../core/tree-model.js'
@@ -76,6 +80,10 @@ export class ReviseTree extends HTMLElement {
   }
 
   get target() { return this.#target }
+
+  // 树在 display:none 下算不出滚动（clientHeight 为 0，滚了等于没滚）。
+  // 面板刚显示出来、或刚从属性 tab 切过来时，得由外面补叫一次。
+  reveal() { this.#revealTarget() }
 
   #revealTarget() {
     if (!this.#target) return
@@ -181,19 +189,24 @@ export class ReviseTree extends HTMLElement {
     if (!row?.el || !canReorder(row.el)) return
 
     const list = this.#shadow.querySelector('.list')
-    list.setPointerCapture(e.pointerId)
 
+    // 指针捕获推迟到真的越过 slop 之后（见 #onDragMove）。在 pointerdown 就
+    // 捕获的话，后续 click 的 target 会被重定向到 .list，#rowOf 拿不到那一行，
+    // 「点一下选中」这条路整个失效——而且只在可重排的行上失效（不可重排的行
+    // 压根走不到这里），看起来就像树时灵时不灵。
     this.#drag = {
       row,
       parent: row.el.parentElement,
       startY: e.clientY,
+      pointerId: e.pointerId,
       moved: false,
       index: null,
     }
 
     const move = ev => this.#onDragMove(ev)
     const up = ev => {
-      list.releasePointerCapture?.(ev.pointerId)
+      // 没捕获过就别放：releasePointerCapture 对未捕获的 id 会抛 NotFoundError
+      if (list.hasPointerCapture?.(ev.pointerId)) list.releasePointerCapture(ev.pointerId)
       list.removeEventListener('pointermove', move)
       list.removeEventListener('pointerup', up)
       this.#endDrag()
@@ -209,7 +222,11 @@ export class ReviseTree extends HTMLElement {
     if (!drag.moved) {
       if (Math.abs(e.clientY - drag.startY) < DRAG_SLOP) return
       drag.moved = true
-      this.#shadow.querySelector('.list').setAttribute('data-dragging', '')
+      const list = this.#shadow.querySelector('.list')
+      // 到这里才捕获：从此刻起指针移出树也能继续收到 move，
+      // 而在此之前的单纯点击不会被捕获改写 target
+      list.setPointerCapture(drag.pointerId)
+      list.setAttribute('data-dragging', '')
     }
 
     // 只有同一父节点下的兄弟才是合法落点

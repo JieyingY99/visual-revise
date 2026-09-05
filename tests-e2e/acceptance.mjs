@@ -399,50 +399,94 @@ const rect = sel => page.evaluate(s => { const r = document.querySelector(s).get
 const overlaps = (a, b) => !(a.r <= b.l || a.l >= b.r || a.b <= b.t || a.t >= b.b)
 const vw = () => page.evaluate(() => ({ w: innerWidth, h: innerHeight }))
 
-await card(0).click({ position: { x: 120, y: 12 } }); await page.waitForTimeout(400)
-const p0 = await rect('visual-revise-panel'), c0 = await rect('.curve-card')
-AC('AC-5.1', !overlaps(p0, c0) && p0.l >= c0.r, `贴左的元素：面板出现在它右边、不盖住它（面板 left=${Math.round(p0.l)} ≥ 元素 right=${Math.round(c0.r)}）`)
+const POS_KEY = 'visual-revise:panel-pos'
+const forgetPos = () => page.evaluate(k => { try { localStorage.removeItem(k) } catch {} }, POS_KEY)
+const memPos = () => page.evaluate(k => { try { return localStorage.getItem(k) } catch { return null } }, POS_KEY)
 
+// 从没拖过：面板每次都在同一个默认位置，跟选中的是谁无关
+await forgetPos()
+await card(0).click({ position: { x: 120, y: 12 } }); await page.waitForTimeout(400)
+const p0 = await rect('visual-revise-panel')
 await page.keyboard.press('Escape'); await page.waitForTimeout(150)
 await card(LAST).click({ position: { x: 120, y: 12 } }); await page.waitForTimeout(400)
-const pL = await rect('visual-revise-panel'), cL = await page.evaluate(() => { const r = document.querySelectorAll('.curve-card'); return r[r.length - 1].getBoundingClientRect().left })
+const pL = await rect('visual-revise-panel')
 const v = await vw()
-AC('AC-5.2', pL.r <= v.w, `空间不足时翻到另一侧（面板 right=${Math.round(pL.r)} ≤ 视口 ${v.w}）`)
-AC('AC-5.3', pL.l >= 0 && pL.t >= 0 && pL.r <= v.w && pL.b <= v.h, `面板不超出视口（${Math.round(pL.l)},${Math.round(pL.t)} – ${Math.round(pL.r)},${Math.round(pL.b)}）`)
-AC('AC-5.4', !overlaps(pL, await rect('visual-revise-toolbar')), '面板不盖住工具条')
+AC('AC-5.1', Math.abs(p0.l - pL.l) < 1 && Math.abs(p0.t - pL.t) < 1,
+   `换选元素面板不动（第一张 ${Math.round(p0.l)},${Math.round(p0.t)} → 最后一张 ${Math.round(pL.l)},${Math.round(pL.t)}）`)
+AC('AC-5.4', !overlaps(pL, await rect('visual-revise-toolbar')), '默认位置不与横排工具条重叠')
 
-// 拖动后钉住
+// 拖动 → 记住
 const head = page.locator('visual-revise-panel > #root > header, visual-revise-panel header:not(.tree-head)')
 const hb = await head.boundingBox()
 await page.mouse.move(hb.x + 40, hb.y + 12); await page.mouse.down()
 await page.mouse.move(hb.x - 200, hb.y + 120, { steps: 6 }); await page.mouse.up()
 await page.waitForTimeout(250)
-const pinned = await rect('visual-revise-panel')
+const moved = await rect('visual-revise-panel')
+const stored = JSON.parse(await memPos() || 'null')
+AC('AC-5.2a', stored && Math.abs(stored.left - moved.l) < 2 && Math.abs(stored.top - moved.t) < 2,
+   `拖动后位置记进 localStorage（${JSON.stringify(stored)}）`)
+
 await page.keyboard.press('Escape'); await page.waitForTimeout(100)
 await card(0).click({ position: { x: 120, y: 12 } }); await page.waitForTimeout(400)
 const afterReselect = await rect('visual-revise-panel')
-AC('AC-5.5', Math.abs(afterReselect.l - pinned.l) < 2 && Math.abs(afterReselect.t - pinned.t) < 2,
-   `手动拖过后钉住，换选元素不再自动摆位（${Math.round(pinned.l)},${Math.round(pinned.t)} → ${Math.round(afterReselect.l)},${Math.round(afterReselect.t)}）`)
+AC('AC-5.2b', Math.abs(afterReselect.l - moved.l) < 2 && Math.abs(afterReselect.t - moved.t) < 2,
+   `换选元素仍在拖过的位置（${Math.round(moved.l)},${Math.round(moved.t)} → ${Math.round(afterReselect.l)},${Math.round(afterReselect.t)}）`)
+
+// × 收起面板不再作废位置：关掉再打开还在原处才叫「记住」
 await page.locator('visual-revise-panel .close').click(); await page.waitForTimeout(250)
 await card(LAST).click({ position: { x: 120, y: 12 } }); await page.waitForTimeout(400)
-const unpinned = await rect('visual-revise-panel')
-AC('AC-5.5b', Math.abs(unpinned.l - pinned.l) > 20, `关闭面板后解除钉住，重新按元素摆（${Math.round(unpinned.l)} vs 钉住时 ${Math.round(pinned.l)}）`)
+const afterClose = await rect('visual-revise-panel')
+AC('AC-5.2c', Math.abs(afterClose.l - moved.l) < 2 && Math.abs(afterClose.t - moved.t) < 2,
+   `关掉面板再打开仍在原处（${Math.round(afterClose.l)},${Math.round(afterClose.t)}）`)
 
-// 结构树已并进面板，跟着面板一起摆位，不再单独占一块
-await card(0).click({ position: { x: 120, y: 12 } }); await page.waitForTimeout(400)
+// 窗口缩小：记住的位置可能整块落在视口外，面板是 fixed 的，滚不到那里
+await page.setViewportSize({ width: 900, height: 620 }); await page.waitForTimeout(400)
+const small = await rect('visual-revise-panel'), sv = await vw()
+AC('AC-5.3a', small.l >= 0 && small.t >= 0 && small.r <= sv.w && small.b <= sv.h,
+   `窗口缩小后面板挤回视口内（${Math.round(small.l)},${Math.round(small.t)} – ${Math.round(small.r)},${Math.round(small.b)} 视口 ${sv.w}x${sv.h}）`)
+await page.setViewportSize({ width: 1440, height: 900 }); await page.waitForTimeout(400)
+const back = await rect('visual-revise-panel')
+AC('AC-5.3b', Math.abs(back.l - moved.l) < 2 && Math.abs(back.t - moved.t) < 2,
+   `窗口拉回原尺寸后回到记住的位置（${Math.round(back.l)},${Math.round(back.t)}）`)
+
+// 结构 tab 打开时面板仍在视口内
 await page.locator('visual-revise-panel .tab[data-tab="structure"]').click(); await page.waitForTimeout(400)
 const tp = await rect('visual-revise-panel')
-AC('AC-5.6', tp.l >= 0 && tp.t >= 0 && tp.r <= v.w && tp.b <= v.h && !overlaps(tp, await rect('visual-revise-toolbar')),
-   '结构 tab 打开时面板仍在视口内、不盖工具条')
+AC('AC-5.6', tp.l >= 0 && tp.t >= 0 && tp.r <= v.w && tp.b <= v.h, '结构 tab 打开时面板仍在视口内')
 await page.locator('visual-revise-panel .tab[data-tab="props"]').click(); await page.waitForTimeout(300)
-await page.keyboard.press('Escape'); await page.waitForTimeout(150)
 
-await card(0).click({ position: { x: 120, y: 12 } }); await page.waitForTimeout(400)
 const beforeScroll = await rect('visual-revise-panel')
 await page.mouse.wheel(0, 300); await page.waitForTimeout(400)
 const afterScroll = await rect('visual-revise-panel')
-AC('AC-5.7', Math.abs(afterScroll.t - beforeScroll.t) < 2, `滚动页面时面板不跟着重算位置（top ${Math.round(beforeScroll.t)} → ${Math.round(afterScroll.t)}）`)
-await page.mouse.wheel(0, -300); await page.keyboard.press('Escape'); await page.waitForTimeout(200)
+AC('AC-5.7', Math.abs(afterScroll.t - beforeScroll.t) < 2, `滚动页面时面板不动（top ${Math.round(beforeScroll.t)} → ${Math.round(afterScroll.t)}）`)
+await page.mouse.wheel(0, -300); await page.waitForTimeout(200)
+
+// localStorage 被禁（无痕窗口 / 站点策略）时读写都不该抛
+const survives = await page.evaluate(() => {
+  const proto = Object.getPrototypeOf(localStorage)
+  const realGet = proto.getItem, realSet = proto.setItem
+  proto.getItem = () => { throw new DOMException('denied', 'SecurityError') }
+  proto.setItem = () => { throw new DOMException('denied', 'SecurityError') }
+  try {
+    const panel = document.querySelector('visual-revise-panel')
+    // 走一遍读（换选时的 applyPlacement）和写（拖动松手时的 savePlacement）
+    dispatchEvent(new Event('resize'))
+    panel.shadowRoot.querySelector('header')
+      .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 99, button: 0, clientX: 0, clientY: 0 }))
+    return { ok: true, visible: !panel.hidden }
+  } catch (err) { return { ok: false, err: String(err) } }
+  finally { proto.getItem = realGet; proto.setItem = realSet }
+})
+AC('AC-5.5', survives.ok && survives.visible, `localStorage 被禁时不抛、面板照常可用（${JSON.stringify(survives)}）`)
+
+// 刷新页面重新注入，位置仍在拖过的地方（同 origin，localStorage 还在）
+await page.reload(); await injectVisBug(page, origin); await page.waitForTimeout(300)
+await card(0).click({ position: { x: 120, y: 12 } }); await page.waitForTimeout(500)
+const afterReload = await rect('visual-revise-panel')
+AC('AC-5.2d', Math.abs(afterReload.l - moved.l) < 2 && Math.abs(afterReload.t - moved.t) < 2,
+   `刷新页面重新注入后仍在记住的位置（${Math.round(afterReload.l)},${Math.round(afterReload.t)}）`)
+await forgetPos()
+await page.keyboard.press('Escape'); await page.waitForTimeout(200)
 
 // 5.8–5.11 纵向工具条
 await page.locator('visual-revise-toolbar .layout').click(); await page.waitForTimeout(500)
@@ -461,7 +505,7 @@ AC('AC-5.8', vert.vertical && vert.tall && vert.stored === 'vertical', `工具�
 AC('AC-5.9', vert.labelHidden, '竖排时按钮文字收进 hover 气泡')
 AC('AC-5.10', vert.thumbFits, '竖排时分段滑块沿纵轴贴合当前模式')
 await card(0).click({ position: { x: 120, y: 12 } }); await page.waitForTimeout(400)
-AC('AC-5.11', !overlaps(await rect('visual-revise-panel'), await rect('visual-revise-toolbar')), '竖排时面板同样让开工具条')
+AC('AC-5.4b', !overlaps(await rect('visual-revise-panel'), await rect('visual-revise-toolbar')), '默认位置也不与竖排工具条重叠')
 await page.keyboard.press('Escape')
 await page.locator('visual-revise-toolbar .layout').click(); await page.waitForTimeout(400)
 
