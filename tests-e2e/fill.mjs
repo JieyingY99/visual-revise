@@ -56,6 +56,12 @@ const style = prop => page.evaluate(
 const fillPanel = '#visual-revise-fill-panel'
 const openFill = async () => {
   if (await page.evaluate(id => !!document.getElementById(id), 'visual-revise-fill-panel')) return
+  // 层列表可能是空的（上一步把填充清成了「无」）：没有填充就没有那一行，
+  // 这时分区标题上的加号是唯一入口
+  if (!(await panel('vr-fill .swatch').count())) {
+    await panel('section[data-group="fill"] .add').click()
+    await page.waitForTimeout(350)
+  }
   // 纯色态的触发行是两个输入框，点它们是敲值不是开弹层——色块才是弹层入口
   await panel('vr-fill .swatch').click()
   await page.waitForTimeout(350)
@@ -84,8 +90,10 @@ ok(await panel('vr-fill .label').count() === 0, '纯色态不再是只读摘要�
 await openFill()
 const tabs = await page.locator(`${fillPanel} [data-tab]`).evaluateAll(
   els => els.map(e => e.dataset.tab))
-ok(JSON.stringify(tabs) === JSON.stringify(['none', 'solid', 'gradient']),
-   `弹层三个标签：${tabs.join(' / ')}`)
+// 四格里没有「视频」：CSS 没有视频填充，url(x.mp4) 语法过得去但画面出不来，
+// element() 只有 Firefox 认。硬给一格点了没反应的标签比不给更糟。
+ok(JSON.stringify(tabs) === JSON.stringify(['none', 'solid', 'gradient', 'image']),
+   `弹层四个标签：${tabs.join(' / ')}`)
 ok(await page.evaluate(id => {
   const p = document.getElementById(id)
   return p.parentElement === document.body && p.hasAttribute('data-visual-revise-ui')
@@ -180,9 +188,18 @@ await page.evaluate(() => {
   window.__visualRevise.store.applyProp(el, 'background-image', 'url("data:image/gif;base64,R0lGODlhAQABAAAAACw=")')
 })
 await page.waitForTimeout(300)
-await tab('solid')
+
+// 多层模型下这条 background-image 是新的一层，跟底色各占一行——旧弹层针对的
+// 还是原来那一层，得关掉重开，在图片那一层上打开才谈得上「这层的图会被顶掉」
+await page.keyboard.press('Escape'); await page.waitForTimeout(250)
+await page.locator('.curve-card').nth(1).click({ position: { x: 130, y: 8 } })
+await page.waitForTimeout(400)
+await panel('.layer-row:first-child vr-fill .swatch').click()
+await page.waitForTimeout(350)
+await page.locator(`${fillPanel} [data-tab="solid"]`).click()
+await page.waitForTimeout(350)
 ok((await page.locator(`${fillPanel}`).textContent()).includes('背景图'),
-   '元素上有背景图时，纯色标签会先说明它会被清掉')
+   '在图片那一层上切到纯色标签，会先说明这张图会被颜色顶掉')
 ok((await style('background-image')).startsWith('url('),
    '光是切到纯色标签不动背景图——点进来看看不该把人家的图清掉')
 
@@ -207,8 +224,11 @@ const fillFields = await page.evaluate(() => {
     hasFill: !!sr.querySelector('vr-fill'),
   }
 })
-ok(!fillFields.labels.includes('背景图') && !fillFields.bgInput && fillFields.hasFill,
-   `背景图不再单独成行，填充控件仍在（标签：${fillFields.labels.join(' / ')}）`)
+// 断言的是「没有一个可编辑的 background-image 文本框」。标签里的「背景图」是
+// #renderImageFill 那行只读预览（带换图按钮），跟这条无关——多层模型下背景图
+// 同时也是层列表里的一层，等填充弹层补上图片标签后那行预览就能收掉。
+ok(!fillFields.bgInput && fillFields.hasFill,
+   `背景图不再单独给一行文本框，填充控件仍在（标签：${fillFields.labels.join(' / ')}）`)
 
 await browser.close()
 await close()

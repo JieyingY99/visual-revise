@@ -52,6 +52,11 @@ const ICON = {
       <stop offset="1" stop-color="currentColor" stop-opacity=".15"/>
     </linearGradient></defs>
     <rect x="2.6" y="2.6" width="10.8" height="10.8" rx="2.2" fill="url(#vrg)"/></svg>`,
+  image: `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
+    stroke-width="1.3" stroke-linejoin="round">
+    <rect x="2.4" y="3.4" width="11.2" height="9.2" rx="1.6"/>
+    <path d="M2.6 10.6 5.8 7.8l2.6 2.3 2.2-1.8 2.8 2.4"/>
+    <circle cx="10.4" cy="6.4" r="1" fill="currentColor" stroke="none"/></svg>`,
   swap: `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
     stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
     <path d="M2.5 5.5h11l-2.5-2.5"/><path d="M13.5 10.5h-11l2.5 2.5"/></svg>`,
@@ -61,10 +66,14 @@ const ICON = {
     stroke-width="1.4" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9"/></svg>`,
 }
 
+// 视频这一格 Figma 有、CSS 没有：background-image 收下 url(x.mp4) 的语法但
+// 解不出画面，element() 只有 Firefox 认。要做只能往元素里插 <video> 子层，
+// 那就不是改样式而是改 DOM 结构了，所以这里只有四格里的三格。
 const TABS = [
   ['none', '无', ICON.none],
   ['solid', '纯色', ICON.solid],
   ['gradient', '渐变', ICON.gradient],
+  ['image', '图片', ICON.image],
 ]
 
 const isNone = v => !v || String(v).trim() === 'none'
@@ -339,7 +348,34 @@ export class VrFill extends HTMLElement {
       return this.#commit(color, keepImage ? null : 'none')
     }
 
+    // 切到图片标签不写任何东西：这一层现在是什么就还是什么，
+    // 等用户真的选了一张图再改。跟纯色标签的 keepImage 是同一个道理。
+    if (this.#tab === 'image') return
+
     this.#commit(null, serializeGradient(this.#ensureGradient()))
+  }
+
+  // ── 图片 ────────────────────────────────────────────────
+  #renderImage(body) {
+    const url = !isNone(this.image) && !parseGradient(this.image) ? this.image : ''
+    const preview = url
+      ? `<div style="height:150px;border-radius:8px;overflow:hidden;${CHECKER}">
+           <div style="width:100%;height:100%;background:${url} center/cover no-repeat"></div>
+         </div>`
+      : `<div style="height:150px;border-radius:8px;display:grid;place-items:center;${CHECKER}">
+           <span style="font-size:11px;color:#8a8a8a">还没有图片</span>
+         </div>`
+
+    body.innerHTML = `
+      ${preview}
+      <button class="pick" style="width:100%;margin-top:10px;height:32px;border:none;border-radius:6px;
+        background:#0d99ff;color:#fff;font-size:12px;cursor:pointer">从电脑上传</button>`
+
+    // 选图要读本地文件、还要进改动记录的素材表，那是面板那边的事。
+    // 控件只负责说一句「用户想换图」，具体怎么读、存到哪由外面决定。
+    body.querySelector('.pick').addEventListener('click', () => {
+      this.dispatchEvent(new CustomEvent('vr-fill-pick-image', { bubbles: true, composed: true }))
+    })
   }
 
   #renderBody() {
@@ -353,6 +389,7 @@ export class VrFill extends HTMLElement {
     }
 
     if (this.#tab === 'solid') return this.#renderSolid(body)
+    if (this.#tab === 'image') return this.#renderImage(body)
     this.#renderGradient(body)
   }
 

@@ -188,13 +188,166 @@ await P('button[data-prop="box-sizing"][data-value="content-box"]').click(); awa
 AC('AC-6.11b', await inline('box-sizing') === 'content-box', `box-sizing 分段写 ${await inline('box-sizing')}`)
 
 // ── 6.12 Effects ──
+// 三个直接写 CSS 原值的输入框已经去掉，换成 Figma 那样可增删的效果列表：
+// 一个框里塞着 `rgb(255,255,255) 0 0 0 0, rgba(147,...` 既读不出有几条阴影，
+// 也没法单独关掉其中一条。
 console.log('── 6.12 Effects')
 await unfold('Effects')
-await write('box-shadow', '0 4px 12px rgba(0,0,0,.5)')
-await write('filter', 'blur(2px)')
-await write('backdrop-filter', 'blur(4px)')
-AC('AC-6.12', /12px/.test(await inline('box-shadow')) && await inline('filter') === 'blur(2px)' && await inline('backdrop-filter') === 'blur(4px)',
-   `阴影 ${(await inline('box-shadow')).slice(0, 22)} · 滤镜 ${await inline('filter')} · 背景滤镜 ${await inline('backdrop-filter')}`)
+AC('AC-6.12a', (await P('input[data-prop="box-shadow"]').count()) === 0
+  && (await P('input[data-prop="filter"]').count()) === 0,
+   'Effects 不再有直接写 CSS 原值的输入框')
+
+// #rich 建的时候就带着 box-shadow:0 2px 8px，所以列表一开始就有一条投影，
+// 行数按增量算而不是写死
+const fxRows = () => P('section[data-group="effects"] .effect-row').count()
+const fxBase = await fxRows()
+
+const addFx = async label => {
+  await P('.add[data-add="effects"]').click(); await page.waitForTimeout(300)
+  await page.locator('#visual-revise-menu > div').filter({ hasText: label }).first().click()
+  await page.waitForTimeout(400)
+}
+await addFx('投影'); await addFx('图层模糊'); await addFx('背景模糊')
+AC('AC-6.12b', /4px/.test(await inline('box-shadow'))
+  && (await inline('filter')).includes('blur')
+  && (await inline('backdrop-filter')).includes('blur'),
+   `三种效果各写各的属性：阴影 ${(await inline('box-shadow')).slice(0, 24)} · 滤镜 ${await inline('filter')} · 背景滤镜 ${await inline('backdrop-filter')}`)
+
+AC('AC-6.12c', (await fxRows()) === fxBase + 3, `加三种就多三行（${fxBase} → ${await fxRows()}）`)
+
+// 同一种可以加多条——box-shadow 本来就收多条，顺序影响谁画在上面
+await addFx('投影')
+// 不能按 '),' 切：box-shadow 的写法是 `rgba(...) 0px 4px ...`，右括号后面跟的是
+// 空格不是逗号。数默认投影那组长度出现了几次才准。
+const dropCount = ((await inline('box-shadow')).match(/0px 4px 4px 0px/g) || []).length
+AC('AC-6.12d', (await fxRows()) === fxBase + 4 && dropCount >= 2,
+   `同一种效果能加多条（${await fxRows()} 行，box-shadow 里 ${dropCount} 条默认投影）`)
+
+// 关掉一条：压暗留在列表里，属性里少一条
+await P('section[data-group="effects"] [data-effect-eye="0"]').click(); await page.waitForTimeout(350)
+AC('AC-6.12e', (await P('section[data-group="effects"] .effect-row.off').count()) === 1,
+   '关掉的效果压暗后仍留在列表里')
+await P('section[data-group="effects"] [data-effect-eye="0"]').click(); await page.waitForTimeout(350)
+
+// 参数面板：只列 CSS 真的做得到的几项
+await P('section[data-group="effects"] [data-effect-open="0"]').click(); await page.waitForTimeout(400)
+const fxFields = await page.evaluate(() => {
+  const hosts = [...document.querySelectorAll('[data-visual-revise-ui]')].filter(n => n.querySelector?.('[data-fx]'))
+  const host = hosts[hosts.length - 1]
+  return host ? [...host.querySelectorAll('[data-fx]')].map(i => i.dataset.fx) : []
+})
+AC('AC-6.12f', JSON.stringify(fxFields) === JSON.stringify(['x', 'y', 'blur', 'spread', 'color']),
+   `投影的参数面板：${fxFields.join(' / ')}`)
+
+const fxY = page.locator('[data-visual-revise-ui] input[data-fx="y"]').last()
+await fxY.fill('12'); await fxY.press('Enter'); await page.waitForTimeout(400)
+AC('AC-6.12g', /12px/.test(await inline('box-shadow')),
+   `参数面板改 Y 写回 box-shadow（${(await inline('box-shadow')).slice(0, 30)}）`)
+await page.keyboard.press('Escape'); await page.waitForTimeout(250)
+
+// 拖拽排序。用 pointer 事件而不是 HTML5 draggable：行里铺满了 button，
+// 按在它上面浏览器不发 dragstart；而且原生拖放在自动化里驱动不了——
+// CDP 的鼠标事件不会让浏览器合成拖放。
+const dragRow = async (from, to) => {
+  const A = P(`section[data-group="effects"] [data-effect-row="${from}"]`)
+  const B = P(`section[data-group="effects"] [data-effect-row="${to}"]`)
+  // 面板自己是滚动容器：行在可视区外时 boundingBox 给的坐标点过去会落到别处
+  await A.scrollIntoViewIfNeeded(); await page.waitForTimeout(150)
+  const a = await A.boundingBox(), b = await B.boundingBox()
+  await page.mouse.move(a.x + 20, a.y + a.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(a.x + 20, a.y + a.height / 2 + 8, { steps: 3 })
+  await page.mouse.move(b.x + 20, b.y + b.height / 2, { steps: 8 })
+  await page.mouse.up()
+  await page.waitForTimeout(450)
+}
+const fxNames = () => page.evaluate(() => [...document.querySelector('visual-revise-panel').shadowRoot
+  .querySelectorAll('section[data-group="effects"] .effect-name')].map(n => n.textContent))
+const beforeOrder = await fxNames()
+await dragRow(0, 1)
+const afterOrder = await fxNames()
+AC('AC-6.12h', beforeOrder[0] === afterOrder[1] && beforeOrder[1] === afterOrder[0],
+   `拖拽换位（${beforeOrder.slice(0, 2).join(',')} → ${afterOrder.slice(0, 2).join(',')}）`)
+
+// 收起的分区加了东西也看不见，点下去像是没反应
+await P('section[data-group="effects"] h3 .title').click(); await page.waitForTimeout(300)
+const wasFolded = await page.evaluate(() => document.querySelector('visual-revise-panel').shadowRoot
+  .querySelector('section[data-group="effects"]').hasAttribute('folded'))
+await addFx('背景模糊')
+AC('AC-6.12i', wasFolded && !(await page.evaluate(() => document.querySelector('visual-revise-panel').shadowRoot
+  .querySelector('section[data-group="effects"]').hasAttribute('folded'))),
+   '在收起的分区上点加号会自动展开')
+
+// 变量菜单很长、自带滚动条，在它上面滚动不能把它关掉——一滚就关等于只能选最上面几项
+await P('section[data-group="fill"] .var-btn').click({ force: true }); await page.waitForTimeout(350)
+const menuBox = await page.locator('#visual-revise-menu').boundingBox()
+if (menuBox) {
+  await page.mouse.move(menuBox.x + menuBox.width / 2, menuBox.y + menuBox.height / 2)
+  await page.mouse.wheel(0, 150); await page.waitForTimeout(300)
+  AC('AC-6.24b', await page.evaluate(() => !!document.getElementById('visual-revise-menu')),
+     '在菜单内部滚动不会把菜单关掉')
+  await page.keyboard.press('Escape'); await page.waitForTimeout(200)
+} else AC('AC-6.24b', false, '变量菜单没弹出')
+
+// 绑定态：一整块 chip 代替色块/色值/不透明度三段，hover 出现 unlink
+// 一并放进字体、长度、纯数字，验菜单只列得出颜色那几个
+await page.addStyleTag({ content: ':root{--vr-test-accent:#ff4704;--vr-test-font:Inter, sans-serif;'
+  + '--vr-test-gap:12px;--vr-test-scale:1.25}' })
+await page.waitForTimeout(200)
+// 上一条用 Esc 关的菜单——确认它真的关了，否则 openMenu 会把「再点同一个
+// 按钮」当成关闭它，下面就永远打不开
+AC('AC-6.24b2', !(await page.evaluate(() => !!document.getElementById('visual-revise-menu'))),
+   'Esc 能关掉菜单')
+// 用当前选中的 #rich（容器，主填充是背景色）。#lnk 要到后面 6.18 段才创建
+await P('section[data-group="fill"] .var-btn').click({ force: true }); await page.waitForTimeout(400)
+const varItems = await page.evaluate(() => {
+  const m = document.getElementById('visual-revise-menu')
+  return m ? [...m.children].map(c => c.textContent.trim()) : null
+})
+// 挑颜色时不该看到字体栈和 12px——点了也 apply 不上，只是让人多翻几屏
+const leaked = (varItems || []).filter(t => /--vr-test-(font|gap|scale)/.test(t))
+AC('AC-6.24e', varItems !== null && leaked.length === 0
+  && (varItems || []).some(t => t.includes('--vr-test-accent')),
+   `变量菜单按类型过滤，颜色格里只列颜色变量${leaked.length ? '（混进了：' + leaked.join(',') + '）' : ''}`)
+
+const accentItem = page.locator('#visual-revise-menu > div').filter({ hasText: '--vr-test-accent' }).first()
+if (!varItems || !(await accentItem.count())) {
+  AC('AC-6.24c', false, `变量菜单里找不到测试变量（菜单：${varItems ? varItems.slice(0, 4).join(',') : '没弹出'}）`)
+  AC('AC-6.24d', false, '同上，跳过 unlink')
+} else {
+await accentItem.click()
+await page.waitForTimeout(450)
+
+const boundRow = () => page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+  const chip = sr.querySelector('section[data-group="fill"] .var-chip')
+  const el = document.getElementById('rich')
+  return {
+    name: chip?.querySelector('.var-name')?.textContent ?? null,
+    hasUnlink: !!sr.querySelector('section[data-group="fill"] [data-unlink]'),
+    // 绑定态不该再出现可编辑的色值框
+    hasColorBox: !!sr.querySelector('section[data-group="fill"] .var-chip ~ vr-fill, section[data-group="fill"] .layer-row.bound vr-fill'),
+    inline: el.style.getPropertyValue('background-color'),
+    computed: getComputedStyle(el).backgroundColor,
+  }
+})
+const bound = await boundRow()
+AC('AC-6.24c', bound.name === '--vr-test-accent' && bound.hasUnlink && !bound.hasColorBox
+  && bound.inline === 'var(--vr-test-accent)',
+   `绑定后是变量 chip、不再有可编辑色值框（${JSON.stringify(bound)}）`)
+
+const beforeColor = bound.computed
+await P('section[data-group="fill"] [data-unlink]').click(); await page.waitForTimeout(450)
+const unlinked = await boundRow()
+AC('AC-6.24d', unlinked.name === null && unlinked.inline === beforeColor && unlinked.computed === beforeColor,
+   `unlink 用当前解析值顶替 var()：绑定断了、颜色不变（inline="${unlinked.inline}"）`)
+}
+
+// 删干净，别影响后面的分组用例
+for (let i = await fxRows(); i > 0; i--) {
+  await P('section[data-group="effects"] [data-effect-del="0"]').click()
+  await page.waitForTimeout(300)
+}
 
 // ── 6.13 / 6.14 记录与分组按钮 ──
 console.log('── 6.13 / 6.14 记录 · 分组')
@@ -209,13 +362,10 @@ await undoBtn.click(); await page.waitForTimeout(300)
 // 还原的是元素原本的 inline 值（opacity:.95 / border-radius:8px），不是清空——
 // 「重置」的语义是回到改稿之前，不是抹掉页面自带的样式
 AC('AC-6.14b', (await inline('opacity')) === '0.95' && (await inline('border-radius')) === '8px', `点「重置本组」把 Appearance 还原到改稿前（opacity="${await inline('opacity')}" radius="${await inline('border-radius')}"）`)
-const eye = P('.eye[data-eye="effects"]')
-if (await eye.count()) {
-  await eye.click(); await page.waitForTimeout(250)
-  const on = await eye.getAttribute('data-on')
-  await eye.click(); await page.waitForTimeout(250)
-  AC('AC-6.14c', on !== null && (await eye.getAttribute('data-on')) === null, '「临时关闭本组」可开可关')
-} else AC('AC-6.14c', false, 'Effects 组没有「临时关闭」眼睛钮')
+// Fill / Stroke / Effects 已经改成层列表，可见性下放到每一行，标题上不再有
+// 分区级眼睛。分区眼睛只剩在别的分区上——这里用 Effects 之外的分区来验它还在。
+AC('AC-6.14c', (await P('section[data-group="effects"] .acts .eye').count()) === 0,
+   'Effects 标题上不再有分区级眼睛（可见性下放到每一行）')
 
 // ── 6.15 折叠策略 ──
 console.log('── 6.15 折叠策略')
@@ -269,10 +419,13 @@ const sameBox = await page.evaluate(() => {
     return { swatch: g('.swatch'), fields: g('.fields'), alpha: g('.alpha'), sep: g('.sep'), pct: g('.pct') }
   }
   const a = pick(sec.querySelector('vr-color')), b = pick(sec.querySelector('vr-fill'))
-  const diff = Object.keys(a).filter(k => JSON.stringify(a[k]) !== JSON.stringify(b[k]))
-  return { diff, a, b }
+  // fields 的宽度不该比：两者都在层行里，但填充那行右侧多一个减号（字色删不掉），
+  // 剩余宽度天然差一个按钮。比的是各子件自身的尺寸。
+  const keys = ['swatch', 'alpha', 'sep', 'pct']
+  const diff = keys.filter(k => JSON.stringify(a[k]) !== JSON.stringify(b[k]))
+  return { diff, a, b, 高度一致: a.fields?.[1] === b.fields?.[1] }
 })
-AC('AC-6.19b', sameBox.diff.length === 0,
+AC('AC-6.19b', sameBox.diff.length === 0 && sameBox.高度一致,
    `文字色与填充的色块 / 输入框逐项同尺寸${sameBox.diff.length ? `（不同：${sameBox.diff.join(', ')} ${JSON.stringify(sameBox.a)} vs ${JSON.stringify(sameBox.b)}）` : ''}`)
 
 // 双输入要真的能写，否则只是长得像
@@ -296,28 +449,28 @@ AC('AC-6.20b', await popped('visual-revise-fill-panel'), '点色块打开填充�
 await page.keyboard.press('Escape'); await page.waitForTimeout(250)
 await page.locator('#lnk').click({ position: { x: 4, y: 4 } }); await page.waitForTimeout(500)
 
-// 6.18：文字元素的主填充是字色，关组必须连它一起关。
-// 这条以前空转过——断言只看按钮的 data-on 变没变，没看页面上真的关掉了什么。
+// 6.18：可见性下放到每一行。字色和背景填充各有自己的眼睛，互不影响——
+// 这正是 Figma 的模型：文本图层的 fill 就是字色，它是列表里的一条。
+// 这条以前空转过：断言只看按钮的 data-on 变没变，没看页面上真的关掉了什么。
 const before = { color: await lnk('color'), bg: await lnk('background-color') }
-await P('.eye[data-eye="fill"]').click(); await page.waitForTimeout(300)
-const off = { color: await lnk('color'), bg: await lnk('background-color') }
-AC('AC-6.18a', off.color === 'transparent' && off.bg === 'transparent',
-   `文字元素关 Fill：字色和背景一起关（color="${off.color}" background-color="${off.bg}"）`)
-AC('AC-6.19d', (await fillShape())?.label === '无填充', '关掉后填充退回只读摘要标签「无填充」')
-await P('.eye[data-eye="fill"]').click(); await page.waitForTimeout(300)
-AC('AC-6.18b', (await lnk('color')) === before.color && (await lnk('background-color')) === before.bg,
-   `再点还原回改稿前（color="${await lnk('color')}" background-color="${await lnk('background-color')}"）`)
 
-// 纯容器不该被动 color：那一行根本没渲染，而 color 会继承进整棵子树
-await page.keyboard.press('Escape'); await page.waitForTimeout(150)
-await page.locator('#rich').click({ position: { x: 4, y: 4 } }); await page.waitForTimeout(500)
-// 字色取点击前的实际值来比：前面的用例已经改过 #rich 的 color，
-// 写死一个期望值只会在无关的改动上炸掉——这里要证的是「关组没碰它」
-const richColor = await inline('color')
-await P('.eye[data-eye="fill"]').click(); await page.waitForTimeout(300)
-AC('AC-6.18c', (await inline('color')) === richColor && (await inline('background-color')) === 'transparent',
-   `容器关 Fill 只关背景、不动字色（color 保持 "${await inline('color')}"）`)
-await P('.eye[data-eye="fill"]').click(); await page.waitForTimeout(300)
+await P('section[data-group="fill"] [data-text-eye]').click(); await page.waitForTimeout(300)
+AC('AC-6.18a', (await lnk('color')) === 'transparent' && (await lnk('background-color')) === before.bg,
+   `关字色只关字色，不碰背景（color="${await lnk('color')}" background-color="${await lnk('background-color')}"）`)
+await P('section[data-group="fill"] [data-text-eye]').click(); await page.waitForTimeout(300)
+AC('AC-6.18b', (await lnk('color')) === before.color,
+   `再点原样还原（color="${await lnk('color')}"）`)
+
+await P('section[data-group="fill"] [data-layer-eye="0"]').click(); await page.waitForTimeout(300)
+AC('AC-6.18d', (await lnk('background-color')) === 'transparent' && (await lnk('color')) === before.color,
+   `关填充层只关背景，不碰字色（background-color="${await lnk('background-color')}"）`)
+AC('AC-6.19d', (await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+  return sr.querySelector('section[data-group="fill"] .layer-row.off') !== null
+})), '关掉的层压暗后仍留在列表里——随时能开回来，删掉才是真的没了')
+await P('section[data-group="fill"] [data-layer-eye="0"]').click(); await page.waitForTimeout(300)
+AC('AC-6.18c', (await lnk('background-color')) === before.bg,
+   `再点原样还原（background-color="${await lnk('background-color')}"）`)
 
 // ── 6.21 图标居中 ──
 console.log('── 6.21 图标按钮')

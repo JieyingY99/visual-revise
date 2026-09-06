@@ -65,6 +65,11 @@ await page.waitForTimeout(200)
 // ── 色盘 ──
 // background-color 已经归「填充」控件管（见 fill.mjs），这里用描边色考察
 // vr-color 本身：两者共用 picker.js 的同一套色盘主体
+// 上面那下「点击外部」把选中切到了 body，而 body 没有描边——Stroke 分区
+// 现在是空状态（只剩标题和加号），描边字段根本不渲染。先把选中拉回卡片。
+await page.locator('.curve-card').nth(1).click({ position: { x: 130, y: 8 } })
+await page.waitForTimeout(400)
+
 const swatch = panel('vr-color[data-prop="border-color"] .swatch')
 
 // 色盘可能因为值更新等原因被关掉，每步操作前确保它开着

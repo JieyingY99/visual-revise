@@ -65,7 +65,25 @@ document.addEventListener('pointerdown', e => {
   closeMenu()
 }, true)
 
-addEventListener('scroll', () => closeMenu(), true)
+// 页面或面板滚动时关掉：锚点跟着走了，菜单留在原地就成了孤儿。
+// 但菜单自己内部的滚动不算——CSS 变量那种列表有几十项、自带滚动条，
+// 一滚就关等于永远只能选到最上面几项。
+// Esc 关掉菜单。面板那边的 Esc 分支只是「有弹层时把这一下让给弹层」，
+// 让完之后并没有人接手——结果 Esc 对菜单毫无作用，只能靠点别处关掉。
+// stopPropagation 是必须的：不拦住的话这一下会继续走到「取消选中」，
+// 菜单关了、选中的元素也一起没了。
+addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || !isMenuOpen()) return
+  e.preventDefault()
+  e.stopPropagation()
+  closeMenu()
+}, true)
+
+addEventListener('scroll', e => {
+  const menu = document.getElementById(MENU_ID)
+  if (menu && e.target instanceof Node && menu.contains(e.target)) return
+  closeMenu()
+}, true)
 addEventListener('resize', () => closeMenu())
 
 const CHECK = `<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor"

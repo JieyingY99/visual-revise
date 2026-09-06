@@ -10,11 +10,16 @@ import { nodeKey } from './strings'
 
 export const deepElementFromPoint = (x, y) => {
   const el = document.elementFromPoint(x, y)
+  // 坐标落在视口外时 elementFromPoint 返回 null。拖动到面板边缘、或者鼠标
+  // 甩出窗口的那一帧就会走到这里，不挡住的话下一行直接读 null.shadowRoot。
+  if (!el) return null
 
   const crawlShadows = node => {
     if (node.shadowRoot) {
       const potential = node.shadowRoot.elementFromPoint(x, y)
-
+      // shadow 里同样可能什么都没命中（点落在 host 的 padding 上），
+      // 这时就用 host 自己
+      if (!potential)                 return node
       if (potential == node)          return node
       else if (potential.shadowRoot)  return crawlShadows(potential)
       else                            return potential

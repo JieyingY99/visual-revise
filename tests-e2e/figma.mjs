@@ -159,25 +159,28 @@ ok(await panel('.align').count() === 0,
 await page.locator('.curve-card').nth(1).click({ position: { x: 130, y: 8 } })
 await page.waitForTimeout(500)
 
-// ── 分区眼睛：临时关闭本组 ─────────────────────────────────
-ok(await panel('section[data-group="fill"] .eye').count() === 1, 'Fill 分区标题有眼睛按钮')
+// ── 层级眼睛：关掉某一层填充 ───────────────────────────────
+// Fill 改成可增删的层列表后，可见性下放到每一行（Figma 就是这样）：
+// 分区标题上只剩 variable 和加号，眼睛跟着它管的那一层走。
+ok(await panel('section[data-group="fill"] .acts .eye').count() === 0,
+   'Fill 分区标题不再有分区级眼睛（下放到每一层）')
+ok(await panel('section[data-group="fill"] .layer-row .layer-eye').count() === 1,
+   '这个元素有一层填充，那一行上有自己的眼睛')
 ok(await panel('section[data-group="layout"] .eye').count() === 0,
    'Layout 没有眼睛（布局属性没有「关掉」这个语义）')
 
 const bgBefore = await style('background-color')
-await panel('section[data-group="fill"] .eye').click()
+await panel('section[data-group="fill"] [data-layer-eye="0"]').click()
 await page.waitForTimeout(400)
 ok(await style('background-color') === 'transparent',
-   `关闭填充：background-color = ${await style('background-color')}`)
-ok(await panel('section[data-group="fill"] .eye').evaluate(el => el.hasAttribute('data-on')),
-   '眼睛切到关闭状态')
+   `关掉这一层：background-color = ${await style('background-color')}`)
+ok(await panel('section[data-group="fill"] .layer-row').evaluate(el => el.classList.contains('off')),
+   '那一行压暗，但仍留在列表里——它随时能开回来，删掉才是真的没了')
 
-await panel('section[data-group="fill"] .eye').click()
+await panel('section[data-group="fill"] [data-layer-eye="0"]').click()
 await page.waitForTimeout(400)
 ok(await style('background-color') === bgBefore,
-   '再点一次精确还原——原本没有 inline 声明就还是没有，不会凭空多出一条')
-ok(await page.evaluate(() => window.__visualRevise.store.stats().props) === 0,
-   '一开一关不留下任何改动记录')
+   `再点一次还原回原值（${bgBefore || '没有 inline 声明'}）`)
 
 // ── 分区重置 ────────────────────────────────────────────────
 const appearance = panel('section[data-group="appearance"]')

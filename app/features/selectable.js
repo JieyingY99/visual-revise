@@ -97,6 +97,8 @@ export function Selectable(visbug) {
 
   const on_click = e => {
     const $target = deepElementFromPoint(e.clientX, e.clientY)
+    // 坐标落在视口外时拿不到元素（拖到边缘、鼠标甩出窗口），当作没命中
+    if (!$target) return
 
     if (isOffBounds($target) && !selected.filter(el => el == $target).length)
       return
@@ -412,6 +414,8 @@ export function Selectable(visbug) {
 
   const on_hover = e => {
     const $target = deepElementFromPoint(e.clientX, e.clientY)
+    // 同上：拿不到元素就不算命中
+    if (!$target) return
     const tool = visbug.activeTool
 
     if (isOffBounds($target) || $target.hasAttribute('data-selected') || $target.hasAttribute('draggable')) {

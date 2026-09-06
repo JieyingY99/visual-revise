@@ -36,6 +36,8 @@ export function Accessibility(visbug) {
 
 const mouseMove = e => {
   const target = deepElementFromPoint(e.clientX, e.clientY)
+  // 坐标落在视口外时拿不到元素（拖到边缘、鼠标甩出窗口），当作没命中
+  if (!target) return
 
   if (isOffBounds(target) || target.nodeName.toUpperCase() === 'SVG' || target.nodeName === 'VISBUG-ALLYTIP' || target.hasAttribute('data-allytip')) { // aka: mouse out
     if (state.active.tip) {

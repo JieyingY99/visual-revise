@@ -1,0 +1,178 @@
+/**
+ * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
+ * Part of Visual Revise, built on Project VisBug. See NOTICE.
+ */
+// 效果列表：把 Figma 的 Effects 面板映射到 CSS。
+//
+// 七种里有四种是一一对应的（两种阴影 + 两种模糊），另外三种 CSS 没有原生对应，
+// 只能拼出近似的：
+//   噪点 / 纹理 —— SVG 的 feTurbulence 生成一张图，当成 background-image 的
+//     一层铺在最上面。它跟 Fill 共用 background-image，所以两边必须讲好谁写
+//     哪几层：这里生成的层在 data URI 里带一个记号（vr-noise / vr-texture），
+//     fills.js 解析时按记号跳过，面板写回时把效果层放在填充层前面（画在上面）。
+//   玻璃 —— backdrop-filter 的模糊加饱和，再补一道 inset 高光。Figma 的
+//     Refraction / Depth / Dispersion / Frost / Splay 是它自己渲染器里的折射
+//     运算，CSS 里没有任何东西对得上，所以那几个滑块这里没有，不做假的。
+//
+// Figma 的 Shader 需要 WebGL 或 Houdini paint worklet，不在这一层的能力范围内。
+
+import { splitTopLevel } from './gradient.js'
+
+export const EFFECTS = [
+  { type: 'inner-shadow',    label: '内阴影',  channel: 'box-shadow' },
+  { type: 'drop-shadow',     label: '投影',    channel: 'box-shadow' },
+  { type: 'layer-blur',      label: '图层模糊', channel: 'filter' },
+  { type: 'background-blur', label: '背景模糊', channel: 'backdrop-filter' },
+  { type: 'noise',           label: '噪点',    channel: 'background-image' },
+  { type: 'texture',         label: '纹理',    channel: 'background-image' },
+  { type: 'glass',           label: '玻璃',    channel: 'backdrop-filter' },
+]
+
+export const EFFECT_LABEL = Object.fromEntries(EFFECTS.map(e => [e.type, e.label]))
+
+const DEFAULTS = {
+  'inner-shadow':    { x: 0, y: 4, blur: 4, spread: 0, color: 'rgba(0, 0, 0, 0.25)' },
+  'drop-shadow':     { x: 0, y: 4, blur: 4, spread: 0, color: 'rgba(0, 0, 0, 0.25)' },
+  'layer-blur':      { blur: 4 },
+  'background-blur': { blur: 4 },
+  'noise':           { size: 0.5, density: 100, color: 'rgba(0, 0, 0, 0.25)' },
+  'texture':         { size: 4, radius: 4 },
+  'glass':           { blur: 12, saturate: 180, highlight: 40 },
+}
+
+export const defaultsFor = type => ({ ...DEFAULTS[type] })
+
+// ── 噪点 / 纹理 ────────────────────────────────────────────
+// baseFrequency 越大颗粒越细。噪点走高频（细密的沙），纹理走低频（粗颗粒）。
+const turbulence = (mark, { freq, opacity, color }) => {
+  const tint = color
+    ? `<feFlood flood-color='${color}' result='t'/><feComposite in='t' in2='n' operator='in'/>`
+    : ''
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' id='${mark}'>` +
+    `<filter id='f'><feTurbulence type='fractalNoise' baseFrequency='${freq}' result='n'/>${tint}</filter>` +
+    `<rect width='100%' height='100%' filter='url(%23f)' opacity='${opacity}'/></svg>`
+  return `url("data:image/svg+xml,${svg.replace(/#/g, '%23').replace(/"/g, "'")}")`
+}
+
+export const isEffectLayer = v => /vr-noise|vr-texture/.test(String(v || ''))
+
+// ── 序列化 ────────────────────────────────────────────────
+const shadowCss = ({ x, y, blur, spread, color }, inset) =>
+  `${inset ? 'inset ' : ''}${x}px ${y}px ${blur}px ${spread}px ${color}`
+
+/**
+ * 效果列表 → 各条 CSS 属性。backgroundLayers 单独返回：它要跟填充层拼在一起，
+ * 由调用方决定顺序（效果层在前，画在填充上面）。
+ */
+export const serializeEffects = list => {
+  const on = (list || []).filter(e => !e.hidden)
+  const shadows = []
+  const filters = []
+  const backdrops = []
+  const backgroundLayers = []
+
+  for (const e of on) {
+    const p = { ...DEFAULTS[e.type], ...e }
+    switch (e.type) {
+      case 'inner-shadow': shadows.push(shadowCss(p, true)); break
+      case 'drop-shadow':  shadows.push(shadowCss(p, false)); break
+      case 'layer-blur':   filters.push(`blur(${p.blur}px)`); break
+      case 'background-blur': backdrops.push(`blur(${p.blur}px)`); break
+      case 'noise':
+        backgroundLayers.push(turbulence('vr-noise', {
+          freq: (1.2 / Math.max(0.1, p.size)).toFixed(2),
+          opacity: (p.density / 100).toFixed(2),
+          color: p.color,
+        }))
+        break
+      case 'texture':
+        backgroundLayers.push(turbulence('vr-texture', {
+          freq: (1 / Math.max(1, p.size)).toFixed(2),
+          opacity: Math.min(1, p.radius / 10).toFixed(2),
+          color: null,
+        }))
+        break
+      case 'glass':
+        backdrops.push(`blur(${p.blur}px)`, `saturate(${p.saturate}%)`)
+        // 顶部一道内高光，玻璃的厚度感基本来自这条
+        shadows.push(`inset 0 1px 0 rgba(255, 255, 255, ${(p.highlight / 100).toFixed(2)})`)
+        break
+    }
+  }
+
+  return {
+    'box-shadow': shadows.length ? shadows.join(', ') : 'none',
+    'filter': filters.length ? filters.join(' ') : 'none',
+    'backdrop-filter': backdrops.length ? backdrops.join(' ') : 'none',
+    backgroundLayers,
+  }
+}
+
+// ── 解析 ──────────────────────────────────────────────────
+const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0 }
+
+const parseShadow = raw => {
+  const inset = /(^|\s)inset(\s|$)/.test(raw)
+  const body = raw.replace(/(^|\s)inset(\s|$)/, ' ').trim()
+  // 颜色可能在前也可能在后，先摘掉它再读剩下的长度
+  const colorMatch = body.match(/(rgba?\([^)]*\)|#[0-9a-f]{3,8}|\b[a-z]+\b(?!\s*\())/i)
+  const color = colorMatch ? colorMatch[0] : 'rgba(0, 0, 0, 0.25)'
+  const lens = body.replace(color, ' ').trim().split(/\s+/).filter(Boolean).map(num)
+  const [x = 0, y = 0, blur = 0, spread = 0] = lens
+  // 只有一条 inset、零偏移、极短模糊的，是玻璃那道高光，不当成内阴影读回来
+  const isHighlight = inset && x === 0 && y === 1 && blur === 0 && spread === 0
+  return { type: isHighlight ? 'glass-highlight' : (inset ? 'inner-shadow' : 'drop-shadow'), x, y, blur, spread, color }
+}
+
+// 读回的顺序按 CSS 属性分组，不是用户当初添加的顺序：七种效果分散在
+// box-shadow / filter / backdrop-filter / background-image 四条属性里，
+// 跨属性的先后关系在 CSS 里根本没有记录，也就还原不出来。同一条属性内部的
+// 顺序是保留的（两条阴影谁在上、两个 filter 谁先算），而那正是顺序真正影响
+// 渲染结果的地方——跨属性之间本来就互不干扰。
+export const parseEffects = (computed = {}) => {
+  const list = []
+
+  const shadow = (computed['box-shadow'] || '').trim()
+  if (shadow && shadow !== 'none') {
+    for (const raw of splitTopLevel(shadow)) {
+      const s = parseShadow(raw.trim())
+      if (s.type === 'glass-highlight') continue    // 玻璃那条由 backdrop 侧统一还原
+      list.push(s)
+    }
+  }
+
+  const blur = (computed['filter'] || '').match(/blur\(([^)]+)\)/)
+  if (blur) list.push({ type: 'layer-blur', blur: num(blur[1]) })
+
+  const bd = (computed['backdrop-filter'] || '')
+  const bdBlur = bd.match(/blur\(([^)]+)\)/)
+  const bdSat = bd.match(/saturate\(([^)]+)\)/)
+  // computed 会把 saturate(180%) 归一化成 saturate(1.8)，读回来要还原成百分数，
+  // 否则面板上会显示「饱和 1.8%」——一个用户从来没输入过的数
+  const pct = raw => { const n = num(raw); return String(raw).includes('%') ? n : n * 100 }
+  if (bdBlur && bdSat) list.push({ type: 'glass', blur: num(bdBlur[1]), saturate: Math.round(pct(bdSat[1])), highlight: 40 })
+  else if (bdBlur) list.push({ type: 'background-blur', blur: num(bdBlur[1]) })
+
+  const image = computed['background-image'] || ''
+  if (image && image !== 'none') {
+    for (const raw of splitTopLevel(image)) {
+      if (/vr-noise/.test(raw)) list.push({ type: 'noise', ...DEFAULTS.noise })
+      else if (/vr-texture/.test(raw)) list.push({ type: 'texture', ...DEFAULTS.texture })
+    }
+  }
+
+  return list
+}
+
+// 每种效果在参数面板里有哪几格。只列 CSS 真的做得到的——
+// 给一个调了没反应的滑块，比不给更糟。
+export const FIELDS = {
+  'inner-shadow':    [['x', 'X', 'px'], ['y', 'Y', 'px'], ['blur', '模糊', 'px'], ['spread', '扩展', 'px'], ['color', '颜色', 'color']],
+  'drop-shadow':     [['x', 'X', 'px'], ['y', 'Y', 'px'], ['blur', '模糊', 'px'], ['spread', '扩展', 'px'], ['color', '颜色', 'color']],
+  'layer-blur':      [['blur', '模糊', 'px']],
+  'background-blur': [['blur', '模糊', 'px']],
+  'noise':           [['size', '颗粒', ''], ['density', '密度', '%'], ['color', '颜色', 'color']],
+  'texture':         [['size', '尺寸', ''], ['radius', '强度', '']],
+  'glass':           [['blur', '模糊', 'px'], ['saturate', '饱和', '%'], ['highlight', '高光', '%']],
+}

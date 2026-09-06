@@ -4,7 +4,10 @@ const SUITES = ['smoke', 'core', 'toolbar', 'controls', 'panel', 'figma', 'typog
   // PRD 验收：按 docs/PRD.md 的 AC 编号逐条走，排在最后——
   // 上面那些按技术模块组织、跟着实现一路加，天然偏向「已实现的那条路径」；
   // 这四个按用户目标组织，专门用来暴露「功能存在但没人真的走过这条路」。
-  'acceptance', 'acceptance-panel', 'acceptance-content', 'acceptance-export']
+  'acceptance', 'acceptance-panel', 'acceptance-content', 'acceptance-export',
+  // 只问「长得对不对」：间距、等高、图标比例、有没有被挤出边界。
+  // 功能全绿的界面照样可以是歪的，这些单看功能断言永远发现不了。
+  'acceptance-ui']
 const results = []
 
 for (const suite of SUITES) {

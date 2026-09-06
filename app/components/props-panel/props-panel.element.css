@@ -5,7 +5,10 @@
   --vr-border:    #3d3d3d;
   --vr-divider:   #202020;
   --vr-text:      #fff;
-  --vr-label:     #9b9b9b;
+  /* #9b9b9b 在字段底色 #383838 上只有 4.22:1，差一点到 WCAG AA 的 4.5:1
+     （分段控件未选中项的文字就落在这个组合上）。#a6a6a6 在两种底色上分别是
+     4.81:1 和 5.64:1，都过线。 */
+  --vr-label:     #a6a6a6;
   --vr-mute:      #6f6f6f;
   --vr-accent:    #0d99ff;
   --vr-danger:    #ff6b6b;
@@ -97,6 +100,26 @@ header:active { cursor: grabbing; }
    于是图标看起来比按钮的方块中心偏上。改成块级才真正居中——
    底色一亮（data-on）这点偏移就很显眼。 */
 .icon-btn svg { display: block; }
+
+/* ── 同一行并排的控件与按钮等高 ──
+   图标按钮默认 24px，跟旁边 30/32px 的输入框并排时矮一截，看着就是没对齐。
+   拉伸的是按钮的点击区域，图标本身仍在里面居中（.icon-btn 是 inline-flex 居中）。
+   一处一处改高度会漏，也会在下次加新行时重新长出来，所以按「行容器」批量声明。
+   注意只管并排的兄弟：输入框内部的前缀图标（.prefix）和模式按钮（.mode）是框内
+   装饰，它们本来就该在框里居中，拉伸只会把图标撑变形。 */
+.layer-row,
+.dims,
+.side-pair,
+.limits,
+.with-action,
+.flow-row { align-items: stretch; }
+
+.layer-row > .icon-btn,
+.dims > .icon-btn,
+.side-pair > .icon-btn,
+.limits > .icon-btn,
+.with-action > .icon-btn,
+.flow-row > .icon-btn { height: auto; align-self: stretch; }
 .icon-btn:hover { background: var(--vr-field-hi); color: var(--vr-text); }
 .icon-btn[data-on] { background: var(--vr-accent); color: #fff; }
 
@@ -184,8 +207,82 @@ h3 .title { flex: 1; min-width: 0; }
 
 /* 「重置本组」只在这一组真的改过时才出现，平时不占视觉噪音 */
 .acts .undo { display: none; }
-section[data-dirty] .acts .undo { display: grid; }
+section[data-dirty] .acts .undo { display: inline-flex; }
 section[data-dirty] > h3 .title { color: var(--vr-accent); }
+
+/* ── 可增删的层列表（Fill / Stroke）──
+   Figma 的这三个分区标题右侧默认只有一个加号，鼠标进去才多出「绑定变量」。
+   加号常驻是因为它是空状态下添加第一条的唯一入口——元素本来没有填充时，
+   整个分区只剩标题这一行，加号一藏用户就无从下手了。 */
+/* 「绑定变量」常驻。Figma 是 hover 才显形，但它那儿标题栏本来就没有别的按钮；
+   这里藏起来只会在加号左边留一个等宽的空洞，看着像图标没加载出来。
+   平时压暗，鼠标进标题栏再提亮。 */
+/* .55 合成下来只有 2.78:1，低于 WCAG 对图标的 3:1——压暗到看不清就失去意义了。
+   .7 是 3.52:1，既留出层次又看得见。 */
+.acts .var-btn { opacity: .7; }
+h3:hover .acts .var-btn { opacity: 1; }
+.icon-btn[disabled] { opacity: .3; cursor: not-allowed; }
+.icon-btn[disabled]:hover { background: transparent; color: var(--vr-label); }
+
+.layers { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.layer-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+/* 填充控件和颜色控件自己都是 flex 容器（色块 + 输入区）。这一条 min-width: 0
+   缺不得：flex 子项默认按内容算最小宽度，色值框里的等宽字体会把整行顶宽，
+   把右边的眼睛和减号挤出面板——按钮还在，只是画到了看不见的地方。 */
+.layer-row > vr-fill,
+.layer-row > vr-color { flex: 1 1 auto; min-width: 0; }
+.layer-row > .icon-btn { flex: none; }
+/* 关掉的层留在列表里但压暗：它随时能开回来，删掉才是真的没了 */
+.layer-row.off > vr-fill,
+.layer-row.off > vr-color { opacity: .4; }
+
+/* 层列表分区空着时只剩标题一行，下面那块 padding 会显得莫名其妙 */
+section[data-layered] .rows:empty { display: none; }
+
+/* ── 绑定了 CSS 变量的行 ──
+   一整块 chip 代替「色块 + 色值 + 不透明度」三段：绑了变量，色值就不该在这里
+   改，要改是去改那个变量。unlink 平时藏着，鼠标进这一行才出现——跟 Figma 一致。 */
+.var-chip {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; align-items: center; gap: 8px;
+  height: 32px; padding: 0 10px; box-sizing: border-box;
+  background: var(--vr-field); border-radius: 5px;
+  cursor: default;
+}
+.var-chip:hover { background: var(--vr-field-hi); }
+.var-dot {
+  flex: none; width: 16px; height: 16px; border-radius: 50%;
+  border: 1px solid rgb(255 255 255 / .18);
+}
+.var-name {
+  flex: 1; min-width: 0;
+  font: 400 11px/1 ui-monospace, Menlo, monospace; color: var(--vr-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* unlink 常驻。藏起来只会让人以为「绑上就解不开了」——解绑是这一行唯一
+   能做的操作，没有理由要先猜到把鼠标放上去。 */
+
+/* ── 效果行 ── */
+.effect-row, .layer-row[data-fill-row] { cursor: grab; }
+.effect-row[data-drop],
+.layer-row[data-drop] { box-shadow: 0 -2px 0 var(--vr-accent); }
+.effect-open {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 8px;
+  /* 32 而不是 30：填充层那行是 32，两个列表上下相邻，差 2px 一眼看得出来 */
+  height: 32px; padding: 0 10px;
+  background: var(--vr-field); border: 1px solid transparent; border-radius: 5px;
+  color: var(--vr-text); font-size: 11px; text-align: left; cursor: pointer;
+}
+.effect-open:hover { background: var(--vr-field-hi); }
+/* 这个按钮铺满整行，不让它也可拖的话，整行的 draggable 就形同虚设——
+   按下去落在 button 上，浏览器根本不发 dragstart */
+.effect-open { cursor: grab; }
+.effect-open:active { cursor: grabbing; }
+.effect-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.effect-sum {
+  flex: none; font: 400 10px/1 ui-monospace, Menlo, monospace; color: var(--vr-mute);
+}
 
 .chev {
   flex: none;

@@ -32,6 +32,8 @@ export function Guides(visbug) {
 
 const on_hover = e => {
   const target = deepElementFromPoint(e.clientX, e.clientY)
+  // 坐标落在视口外时拿不到元素（拖到边缘、鼠标甩出窗口），当作没命中
+  if (!target) return
   if (isOffBounds(target)) return
   showGridlines(target)
 }

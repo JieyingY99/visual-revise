@@ -2,6 +2,8 @@
  * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
  * Part of Visual Revise, built on Project VisBug. See NOTICE.
  */
+import { parseFills } from './fills.js'
+
 // 控件规格：决定属性面板里每个 CSS 属性用什么控件呈现。
 // type 说明：
 //   num     数值输入（label 可横向拖动调值）
@@ -333,10 +335,16 @@ const NEEDS_TEXT = new Set([
   'letter-spacing', 'text-align', 'text-transform', 'text-decoration-line', 'color',
 ])
 
-export const hasBackgroundImage = computed => {
-  const v = computed?.['background-image']
-  return !!v && v !== 'none'
-}
+// 「有没有背景图」不能只看 background-image 非 none。多层填充下纯色层会被
+// 写成 linear-gradient(c, c)（那一栏只收 <image>，颜色进不去），噪点和纹理
+// 也占着同一条属性——它们都不是图片，铺法无从谈起。只有真的出现 url() 才算。
+// 「有没有可以调铺法的背景」不能只看 background-image 非 none。多层填充下
+// 纯色层会被写成 linear-gradient(c, c)（那一栏只收 <image>，颜色进不去），
+// 噪点和纹理也占着同一条属性——它们都不是「一张图」，铺法无从谈起。
+// 真渐变和 url() 都算：渐变一样吃 background-size / position。
+// parseFills 已经把效果层滤掉、把伪装的纯色还原成 solid，直接用它的结论。
+export const hasBackgroundImage = computed =>
+  parseFills(computed).some(l => l.kind !== 'solid')
 
 export const isRelevant = (prop, computed, el) => {
   if (REPLACED_ONLY.has(prop)) return isReplacedElement(el)
