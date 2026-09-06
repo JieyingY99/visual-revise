@@ -116,10 +116,23 @@ await page.keyboard.press('End'); await page.keyboard.type('X'); await page.wait
 await page.evaluate(() => { const img = document.createElement('img'); img.id = 'pic'; img.src = 'data:image/gif;base64,R0lGODlhAQABAAAAACw='; img.style.cssText = 'position:absolute;left:300px;top:700px;width:60px;height:40px'; document.body.appendChild(img) })
 await deselect(); await page.locator('#pic').click({ position: { x: 30, y: 20 } }); await page.waitForTimeout(400)
 await page.locator('visual-revise-panel .swap-image').click(); await page.waitForTimeout(600)
+await page.evaluate(() => {
+  const w = document.createElement('div')
+  w.id = 'mw'
+  w.style.cssText = 'position:absolute;left:400px;top:700px'
+  w.innerHTML = '<div id="mw-a"><p class="mm">搬走的段落</p></div><div id="mw-b"></div>'
+  document.body.appendChild(w)
+  window.__visualRevise.store.moveElement(w.querySelector('.mm'), document.getElementById('mw-b'), null)
+})
+await page.waitForTimeout(300)
 const md = await page.evaluate(() => window.__visualRevise.lib.buildPrompt(window.__visualRevise.store.read()))
 const has = t => md.includes(t)
-AC('AC-8.6', has('文案改动') && has('删除的元素') && has('图片替换') && /改动：/.test(md) && has('要删的段落'),
-   `提示词含文案 / 删除 / 图片替换段落与摘要（${md.length} 字符；${['文案改动', '删除的元素', '图片替换'].map(t => `${t}:${has(t) ? '✓' : '✗'}`).join(' ')}）`)
+AC('AC-8.6', has('文案改动') && has('删除的元素') && has('图片替换') && has('移动的元素')
+   && /改动：/.test(md) && has('要删的段落'),
+   `提示词含文案 / 删除 / 图片替换 / 移动段落与摘要（${md.length} 字符；${['文案改动', '删除的元素', '图片替换', '移动的元素'].map(t => `${t}:${has(t) ? '✓' : '✗'}`).join(' ')}）`)
+const moveBlock = md.slice(md.indexOf('## 移动的元素'))
+AC('AC-8.6b', /- 从：.*mw-a/.test(moveBlock) && /- 到：.*mw-b/.test(moveBlock) && /处移动/.test(md),
+   `移动段落里 from / to 两头都能定位（${moveBlock.split('\n').filter(l => l.startsWith('- 从：') || l.startsWith('- 到：')).join(' ／ ')}）`)
 
 // ── 8.7 JSON ──
 console.log('── 8.7 JSON')
@@ -136,8 +149,38 @@ const mid = await stats()
 await page.evaluate(d => window.__visualRevise.lib.importJSON(d), data); await page.waitForTimeout(500)
 const after = await stats()
 const applied = await inline(0, 'border-radius')
-AC('AC-8.7', data.schema === 2 && mid.total === 0 && after.total === before.total && applied === '22px',
+AC('AC-8.7', data.schema === 3 && mid.total === 0 && after.total === before.total && applied === '22px',
    `导出 schema v${data.schema}；清空后导入，记录回到 ${after.total} 条（导出时 ${before.total}）且样式重新应用（radius=${applied}）`)
+
+// 移动只出不进的话，「导入后记录数一致」就是假的
+await page.evaluate(() => {
+  window.__visualRevise.store.undoEverything()
+  window.__visualRevise.store.history?.clear?.()
+  document.getElementById('ez')?.remove()
+  const z = document.createElement('div')
+  z.id = 'ez'
+  z.style.cssText = 'position:absolute;left:560px;top:700px'
+  z.innerHTML = '<div id="ez-a"><p class="ee">搬我一次</p></div><div id="ez-b"></div>'
+  document.body.appendChild(z)
+  window.__visualRevise.store.moveElement(z.querySelector('.ee'), document.getElementById('ez-b'), null)
+})
+await page.waitForTimeout(300)
+const withMove = await page.evaluate(() => window.__visualRevise.lib.exportJSON())
+await page.evaluate(() => window.__visualRevise.store.undoEverything()); await page.waitForTimeout(300)
+const backHome = await page.evaluate(() => document.getElementById('ez-a').textContent.trim())
+const imported = await page.evaluate(d => {
+  const r = window.__visualRevise.lib.importJSON(d)
+  return { moves: r.moves, b: document.getElementById('ez-b').textContent.trim(),
+           recorded: window.__visualRevise.store.stats().moves }
+}, withMove)
+AC('AC-8.7b', Array.isArray(withMove.moves) && withMove.moves.length === 1
+   && backHome === '搬我一次' && imported.moves === 1 && imported.b === '搬我一次' && imported.recorded === 1,
+   `JSON 带 moves，导入后元素重新搬到位（${JSON.stringify(imported)}）`)
+await page.evaluate(() => {
+  window.__visualRevise.store.undoEverything()
+  document.getElementById('ez')?.remove()
+  window.__visualRevise.store.clear()
+})
 
 // ── 8.8 跨重渲染 ──
 console.log('── 8.8 重渲染重锚')
@@ -152,10 +195,21 @@ AC('AC-8.8', healed.props === 1 && healed.radius === '33px' && healed.twin === '
 
 // ── 8.9 重置 ──
 console.log('── 8.9 重置')
+await page.evaluate(() => {
+  document.getElementById('rz')?.remove()
+  const z = document.createElement('div')
+  z.id = 'rz'
+  z.style.cssText = 'position:absolute;left:700px;top:700px'
+  z.innerHTML = '<div id="rz-a"><p class="rr">回来</p></div><div id="rz-b"></div>'
+  document.body.appendChild(z)
+  window.__visualRevise.store.moveElement(z.querySelector('.rr'), document.getElementById('rz-b'), null)
+})
+await page.waitForTimeout(300)
 await page.locator('visual-revise-toolbar .list').click(); await page.waitForTimeout(300)
 await page.locator('visual-revise-list .reset').click(); await page.waitForTimeout(400)
-AC('AC-8.9', (await stats()).total === 0 && (await inline(0, 'border-radius')) === '',
-   `重置清掉全部记录并恢复页面（total=${(await stats()).total}，inline radius="${await inline(0, 'border-radius')}"）`)
+const homed = await page.evaluate(() => document.getElementById('rz-a').textContent.trim())
+AC('AC-8.9', (await stats()).total === 0 && (await inline(0, 'border-radius')) === '' && homed === '回来',
+   `重置清掉全部记录、恢复页面并把搬走的元素放回原位（total=${(await stats()).total}，inline radius="${await inline(0, 'border-radius')}"，#rz-a = ${homed}）`)
 
 await browser.close(); await close()
 console.log(`\n合计：${passed} 通过 / ${failed} 失败\n`)

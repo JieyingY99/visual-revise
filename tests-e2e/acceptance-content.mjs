@@ -80,47 +80,88 @@ const order = await page.evaluate(() => [...document.querySelectorAll('.dm')].ma
 AC('AC-7.3b', order === '甲乙丙' && (await stats()).removals === 0, `${viaButton ? '列表里的恢复钮' : 'restoreRemoval'} 把元素放回原位（顺序 ${order}，removals=${(await stats()).removals}）`)
 await page.locator('visual-revise-toolbar .list').click(); await deselect()
 
-// ── 7.4 页面拖拽重排 ──
+// ── 7.4 页面拖拽移动 ──
 console.log('── 7.4 页面拖拽')
-await page.evaluate(() => { const z = document.createElement('div'); z.id = 'dz'; z.style.cssText = 'position:absolute;left:30px;top:780px;display:flex;gap:8px'; z.innerHTML = '<div class="k" style="width:90px;height:40px;background:#a55">k0</div><div class="k" style="width:90px;height:40px;background:#5a5">k1</div><div class="k" style="width:90px;height:40px;background:#55a">k2</div>'; document.body.appendChild(z) })
-const orders = () => page.evaluate(() => [...document.querySelectorAll('#dz .k')].map(k => k.style.order))
-// setReorderMode 会清选中并切到结构 tab，面板宽度随之变化——
-// 坐标必须在它稳定之后再量，否则拖拽落点整体偏掉
-await page.evaluate(() => window.__visualRevise.setReorderMode(true)); await page.waitForTimeout(500)
-// 从干净的起点测「取消不留痕」。清零必须在 setReorderMode 之后：
-// 它会清选中、切 tab、开拖拽，这几步本身可能带出一次重绘与写入。
-await page.evaluate(() => {
-  window.__visualRevise.store.clear(); window.__visualRevise.store.history?.clear?.()
-  document.querySelectorAll('#dz .k').forEach(k => k.style.removeProperty('order'))
-}); await page.waitForTimeout(300)
-const clean = await orders()
-AC('AC-7.4-pre', clean.every(o => o === ''), `拖拽前 order 已清零（${JSON.stringify(clean)}）`)
-const k2 = await page.locator('#dz .k').nth(2).boundingBox(), k0 = await page.locator('#dz .k').nth(0).boundingBox()
-// 中途取消
-await page.mouse.move(k2.x + 45, k2.y + 8); await page.mouse.down(); await page.mouse.move(k0.x + 10, k0.y + 8, { steps: 6 })
-await page.keyboard.press('Escape'); await page.mouse.up(); await page.waitForTimeout(250)
-AC('AC-7.4a', (await orders()).every(o => o === ''), `拖到一半 Esc 取消，不留任何 order（${JSON.stringify(await orders())}）`)
-await page.evaluate(() => window.__visualRevise.setReorderMode(true)); await page.waitForTimeout(350)
-// 上一步取消拖拽后位置可能有变，重新量一次
-const k2b = await page.locator('#dz .k').nth(2).boundingBox(), k0b = await page.locator('#dz .k').nth(0).boundingBox()
-await page.mouse.move(k2b.x + 45, k2b.y + 8); await page.mouse.down(); await page.mouse.move(k0b.x + 10, k0b.y + 8, { steps: 8 }); await page.mouse.up(); await page.waitForTimeout(350)
-const o = await orders()
-AC('AC-7.4b', o.every(x => x !== '') && +o[2] < +o[0], `把 k2 拖到最前，落点写 order（${JSON.stringify(o)}）`)
-AC('AC-7.4c', (await stats()).props >= 1, `重排进了改动记录（props=${(await stats()).props}）`)
+const buildZone = async () => {
+  await page.evaluate(() => {
+    document.getElementById('dz')?.remove()
+    const z = document.createElement('div')
+    z.id = 'dz'
+    z.style.cssText = 'position:absolute;left:30px;top:780px;display:flex;gap:24px'
+    z.innerHTML = '<div id="dz-a" style="display:flex;gap:8px;padding:8px;background:#181820">'
+      + '<div class="k" style="width:90px;height:40px;background:#a55">k0</div>'
+      + '<div class="k" style="width:90px;height:40px;background:#5a5">k1</div>'
+      + '<div class="k" style="width:90px;height:40px;background:#55a">k2</div></div>'
+      + '<div id="dz-b" style="width:140px;height:56px;background:#22222a"></div>'
+    document.body.appendChild(z)
+    window.__visualRevise.store.clear()
+    window.__visualRevise.store.history?.clear?.()
+  })
+  await page.waitForTimeout(300)
+}
+const kids = id => page.evaluate(x =>
+  [...document.getElementById(x).children].map(n => n.textContent.trim()).join(','), id)
+const boxOf = n => page.locator('#dz .k').nth(n).boundingBox()
 
-// ── 7.5 结构树重排（树→页面契约；拖拽手势由 tree.mjs 覆盖）──
+await deselect()
+await buildZone()
+AC('AC-7.4-pre', await kids('dz-a') === 'k0,k1,k2' && (await stats()).moves === 0,
+   `拖拽前的基线（#dz-a = ${await kids('dz-a')}，moves=${(await stats()).moves}）`)
+
+// 属性 tab 下按下不动松开：仍然是选中，不是拖拽
+const b0 = await boxOf(0)
+await page.mouse.move(b0.x + 45, b0.y + 20); await page.mouse.down(); await page.mouse.up()
+await page.waitForTimeout(400)
+const tapped = await page.evaluate(() => ({
+  sel: document.querySelector('[data-selected]')?.textContent.trim(),
+  tab: document.querySelector('visual-revise-panel').tab,
+  moves: window.__visualRevise.store.stats().moves,
+}))
+AC('AC-7.4a', tapped.sel === 'k0' && tapped.tab === 'props' && tapped.moves === 0,
+   `属性 tab 下按下不动松开仍是选中（选中「${tapped.sel}」，tab=${tapped.tab}）`)
+
+// 拖到一半按 Esc 取消
+const c2 = await boxOf(2), c0 = await boxOf(0)
+await page.mouse.move(c2.x + 45, c2.y + 20); await page.mouse.down()
+await page.mouse.move(c0.x + 10, c0.y + 20, { steps: 8 })
+await page.keyboard.press('Escape'); await page.mouse.up(); await page.waitForTimeout(300)
+AC('AC-7.4b', await kids('dz-a') === 'k0,k1,k2' && (await stats()).moves === 0,
+   `拖到一半 Esc 取消，DOM 与记录都不留痕（#dz-a = ${await kids('dz-a')}）`)
+
+// 同容器内换位：拖到目标的左 1/3 → 插到它前面
+const d2 = await boxOf(2), d0 = await boxOf(0)
+await page.mouse.move(d2.x + 45, d2.y + 20); await page.mouse.down()
+await page.mouse.move(d0.x + 10, d0.y + 20, { steps: 10 }); await page.mouse.up()
+await page.waitForTimeout(400)
+AC('AC-7.4c', await kids('dz-a') === 'k2,k0,k1',
+   `把 k2 拖到最前，真的搬了 DOM 节点（#dz-a = ${await kids('dz-a')}）`)
+AC('AC-7.4d', (await stats()).moves === 1 && (await stats()).props === 0,
+   `移动进了改动记录，且不写 CSS order（moves=${(await stats()).moves} props=${(await stats()).props}）`)
+
+// 跨容器：搬进旁边那个空容器
+await buildZone(); await deselect()
+const e0 = await boxOf(0)
+const zb = await page.locator('#dz-b').boundingBox()
+await page.mouse.move(e0.x + 45, e0.y + 20); await page.mouse.down()
+await page.mouse.move(zb.x + zb.width / 2, zb.y + zb.height / 2, { steps: 10 })
+await page.mouse.up(); await page.waitForTimeout(400)
+AC('AC-7.4e', await kids('dz-b') === 'k0' && await kids('dz-a') === 'k1,k2',
+   `跨容器拖进另一个容器（#dz-b = ${await kids('dz-b')}，#dz-a = ${await kids('dz-a')}）`)
+
+// ── 7.5 结构树移动（树→页面契约；拖拽手势由 tree.mjs 覆盖）──
 console.log('── 7.5 结构树')
-await page.evaluate(() => { document.querySelectorAll('#dz .k').forEach(k => k.style.order = ''); window.__visualRevise.store.clear(); window.__visualRevise.store.history?.clear?.() })
-// 树的拖拽落点最终就是这一句（tree.element.js:251 先 applyOrder 再 emit —
-// 事件只是通知，重排在此之前已经发生）。拖拽手势本身由 tree.mjs 覆盖，
-// 这里验的是「树给出的新顺序确实落到页面 order 上」这个契约。
+await buildZone(); await deselect()
+// 树的落点最终就是这一句：它只上报 { el, toParent, toNext }，
+// 真正落笔的是 ChangeStore.moveElement。手势本身由 tree.mjs 覆盖，
+// 这里验的是「树给出的落点确实搬动了 DOM」这个契约。
 await page.evaluate(() => {
   const ks = [...document.querySelectorAll('#dz .k')]
-  window.__visualRevise.lib.applyOrder([ks[0], ks[2]], ks[1], 0)   // k1 移到最前
-}); await page.waitForTimeout(350)
-const o5 = await orders()
-AC('AC-7.5', o5.every(x => x !== '') && +o5[1] < +o5[0] && +o5[0] < +o5[2],
-   `树里给出的新顺序落到页面 order（${JSON.stringify(o5)}，期望 k1 最前）`)
+  window.__visualRevise.lib.moveElement(ks[1], document.getElementById('dz-a'), ks[0])
+})
+await page.waitForTimeout(350)
+AC('AC-7.5', await kids('dz-a') === 'k1,k0,k2' && (await stats()).moves === 1,
+   `树给出的落点落到页面 DOM 上（#dz-a = ${await kids('dz-a')}）`)
+await page.evaluate(() => { document.getElementById('dz')?.remove(); window.__visualRevise.store.clear() })
 await deselect()
 
 // ── 7.6 共享元素 ──

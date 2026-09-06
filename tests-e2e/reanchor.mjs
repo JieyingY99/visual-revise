@@ -135,6 +135,55 @@ ok(!cascade.includes('删我') && cascade.includes('别删我'),
 
 await page.evaluate(() => document.querySelector('#vr-rows')?.remove())
 
+// ── 移动：源容器被重渲染后，搬过家的元素要跟着重放 ────────────
+// 这里和删除的模型不一样：框架把源容器 innerHTML 重写后，被移动的元素会在
+// 原位置重新出现一份，而我们先前搬过去的那一份还留在目标容器里——页面上
+// 两份。重放必须是「认出新的那份、丢掉旧的、把新的搬过去」。
+await page.evaluate(() => {
+  document.getElementById('vr-move')?.remove()
+  const host = document.createElement('div')
+  host.id = 'vr-move'
+  host.innerHTML = '<div id="mv-src"><p class="mv-item">搬我</p><p class="mv-other">别动我</p></div>'
+    + '<div id="mv-dst"></div>'
+  document.body.append(host)
+  window.__visualRevise.store.moveElement(
+    host.querySelector('.mv-item'), document.getElementById('mv-dst'), null)
+})
+await settle()
+ok(await page.evaluate(() => document.getElementById('mv-dst').textContent.trim()) === '搬我',
+   '起点：元素已搬进目标容器')
+
+await page.evaluate(() => {
+  // 框架重渲染：源容器整块重写，被搬走的元素又长回来了
+  document.getElementById('mv-src').innerHTML =
+    '<p class="mv-item">搬我</p><p class="mv-other">别动我</p>'
+})
+await settle()
+const replayed = await page.evaluate(() => ({
+  dst:    document.getElementById('mv-dst').textContent.trim(),
+  src:    [...document.getElementById('mv-src').children].map(n => n.textContent.trim()).join(','),
+  copies: document.querySelectorAll('.mv-item').length,
+  moves:  window.__visualRevise.store.stats().moves,
+}))
+ok(replayed.dst === '搬我' && replayed.src === '别动我',
+   `重渲染后移动被重放（目标容器 = ${replayed.dst}，源容器 = ${replayed.src}）`)
+ok(replayed.copies === 1, `页面上只剩一份，没有留下重影（${replayed.copies} 份）`)
+ok(replayed.moves === 1, `记录仍是一条，没有裂成两条（moves=${replayed.moves}）`)
+
+// 目标容器整个没了：记录留着并标成失联，而不是静默丢弃
+await page.evaluate(() => document.getElementById('mv-dst').remove())
+await page.evaluate(() => {
+  document.getElementById('mv-src').innerHTML =
+    '<p class="mv-item">搬我</p><p class="mv-other">别动我</p>'
+})
+await settle()
+ok((await page.evaluate(() => window.__visualRevise.store.stats().moves)) === 1,
+   '目标容器失联时记录仍在（提示词照常导出）')
+
+// 只收走 DOM，记录留给下面那组「重置」用例——它要的正是一堆失联记录
+await page.evaluate(() => document.getElementById('vr-move')?.remove())
+await settle()
+
 
 // ── 重置要连失联记录一起清 ──────────────────────────────────
 // 失联记录的改动冻结在 frozen 里、不跟着 DOM 走，页面还原了它们也不会消失。

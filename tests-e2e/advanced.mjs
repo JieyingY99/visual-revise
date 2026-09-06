@@ -4,7 +4,7 @@ const { port, close } = await serve()
 const origin = `http://127.0.0.1:${port}`
 const { browser, page } = await launch({ headless: true })
 
-console.log('\n[批次 3 测试] 共享元素 / 拖拽重排 / JSON / 本地字体\n')
+console.log('\n[批次 3 测试] 共享元素 / 拖拽移动 / JSON / 本地字体\n')
 await page.goto(origin)
 await injectVisBug(page, origin)
 
@@ -50,57 +50,60 @@ const opacities = await page.evaluate(() =>
   Array.from(document.querySelectorAll('.curve-card')).map(c => c.style.opacity || ''))
 ok(opacities.filter(Boolean).length === 1, `关闭共享后只改选中元素（${opacities.length - opacities.filter(Boolean).length} 个未受影响）`)
 
-// ── 拖拽重排 ──
+// ── 拖拽移动 ──
 await page.evaluate(() => window.__visualRevise.store.undoEverything())
-await page.evaluate(() => window.__visualRevise.setReorderMode(true))
+await page.keyboard.press('Escape')
 await page.waitForTimeout(200)
-ok(await page.evaluate(() => window.__visualRevise.layoutDrag.active), '拖拽重排模式已开启')
+ok(await page.evaluate(() => window.__visualRevise.layoutDrag.active), '选择模式下页面拖拽可用')
 
-// 落点取上边中点：卡片有 18px 圆角，角落 4px 处会穿透命中到父容器
+const titles = () => page.evaluate(() =>
+  [...document.querySelectorAll('.cards > .curve-card .card-title')].map(t => t.textContent.trim()))
+const before = await titles()
+
+// 落点取上边缘偏左：卡片有 18px 圆角，角落 4px 处会穿透命中到父容器；
+// 横排容器按 x 分三段，左 1/3 就是「插到它前面」
 const box0 = await page.locator('.curve-card').nth(0).boundingBox()
 const box2 = await page.locator('.curve-card').nth(2).boundingBox()
 await page.mouse.move(box2.x + box2.width / 2, box2.y + 8)
 await page.mouse.down()
-// 停在 card0 左侧（而非正中点）才明确表示"插到它前面"
 await page.mouse.move(box0.x + 24, box0.y + 8, { steps: 12 })
 await page.waitForTimeout(200)
 const indicatorShown = await page.evaluate(() =>
   document.getElementById('visual-revise-drop-indicator')?.style.display)
 ok(indicatorShown === 'block', '拖拽时显示插入位置指示线')
 await page.mouse.up()
-await page.waitForTimeout(300)
+await page.waitForTimeout(350)
 
-const orders = await page.evaluate(() =>
-  Array.from(document.querySelectorAll('.curve-card')).map(c => c.style.order))
-ok(orders.every(o => o !== ''), `重排写入 order：[${orders.join(', ')}]`)
-ok(orders[2] === '0', `被拖动的第 3 张卡片排到最前（order=${orders[2]}）`)
+const moved = await titles()
+ok(moved[0] === before[2], `被拖的第 3 张卡片排到最前（${before[0]} → ${moved[0]}）`)
+ok(await page.evaluate(() =>
+  [...document.querySelectorAll('.curve-card')].every(c => !c.style.order)),
+   '移动改的是 DOM 顺序，不写 CSS order')
+ok((await page.evaluate(() => window.__visualRevise.store.stats().moves)) === 1,
+   '移动被记入改动列表（可导出给 AI）')
 
-const orderRecorded = await page.evaluate(() =>
-  window.__visualRevise.store.read().edits.some(e => e.changes.some(c => c.prop === 'order')))
-ok(orderRecorded, 'order 改动被记入改动列表（可导出给 AI）')
-
-// 回归：向后拖。索引若算在含被拖元素的序列上会整体偏一位。
+// 回归：向后拖。落点取的是「目标行的下一个元素」，取成目标本身会整体偏一位。
 await page.evaluate(() => window.__visualRevise.store.undoEverything())
-await page.waitForTimeout(200)
+await page.waitForTimeout(250)
+const base = await titles()
 const boxes = []
 for (let i = 0; i < 3; i++) boxes.push(await page.locator('.curve-card').nth(i).boundingBox())
 
-// 把第 1 张拖到第 2 张与第 3 张之间：落点在两者中点之间
-const between = (boxes[1].x + boxes[1].width / 2 + boxes[2].x + boxes[2].width / 2) / 2
+// 把第 1 张拖到第 2 张的右 1/3：插到第 2 张之后、第 3 张之前
 await page.mouse.move(boxes[0].x + boxes[0].width / 2, boxes[0].y + 8)
 await page.mouse.down()
-await page.mouse.move(between, boxes[0].y + 8, { steps: 12 })
+await page.mouse.move(boxes[1].x + boxes[1].width - 20, boxes[1].y + 8, { steps: 12 })
 await page.waitForTimeout(200)
 await page.mouse.up()
-await page.waitForTimeout(300)
+await page.waitForTimeout(350)
 
-const backward = await page.evaluate(() =>
-  Array.from(document.querySelectorAll('.curve-card')).map(c => c.style.order))
-ok(backward.join(',') === '1,0,2',
-   `向后拖落在期望位置：order = [${backward.join(', ')}]（期望 1,0,2）`)
+const backward = await titles()
+ok(backward.join(' | ') === [base[1], base[0], base[2]].join(' | '),
+   `向后拖落在期望位置：${backward.join(' | ')}（期望 ${[base[1], base[0], base[2]].join(' | ')}）`)
 
 await page.evaluate(() => window.__visualRevise.store.undoEverything())
 await page.evaluate(() => window.__visualRevise.setReorderMode(false))
+await page.waitForTimeout(200)
 
 // ── JSON 导出 / 导入 ──
 await page.evaluate(() => window.__visualRevise.store.undoEverything())
@@ -115,9 +118,10 @@ const exported = await page.evaluate(() => {
   return exportJSON({ url: 'http://example.test', viewport: '1440 × 900' })
 })
 
-ok(exported.schema === 2, `JSON 含 schema 版本：${exported.schema}`)
+ok(exported.schema === 3, `JSON 含 schema 版本：${exported.schema}`)
 ok(Array.isArray(exported.assets),
    'v2 带 assets 字段（图片 base64 内嵌，导入方才拿得到换图用的那张图）')
+ok(Array.isArray(exported.moves), 'v3 带 moves 字段（移动只出不进的话导入端记录数会对不上）')
 ok(exported.edits.length === 1 && exported.edits[0].changes.length === 2, 'JSON 含改动记录')
 ok(exported.comments.length === 1, 'JSON 含评论')
 ok(!!exported.edits[0].anchors.text?.length, 'JSON 含文本锚点（供跨环境匹配）')

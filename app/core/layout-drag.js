@@ -2,23 +2,25 @@
  * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
  * Part of Visual Revise, built on Project VisBug. See NOTICE.
  */
-import { isOffBounds } from '../utilities/common.js'
 import { pageElementAt, isEditorUI } from './dom-utils.js'
-// 与树里的拖拽共用一份：两个入口写出的记录必须一致
-import { applyOrder } from './reorder.js'
+import { canDrag, orderedChildren } from './reorder.js'
+// 与树里的拖拽共用同一套落点模型与写入口：两个入口写出的记录必须一致
+import { ChangeStore } from './change-store.js'
 
 const INDICATOR_ID = 'visual-revise-drop-indicator'
 const HINT_STYLE_ID = 'visual-revise-drag-hints'
 
-// 用属性 + 全局样式表标记可拖区域，而不是写 inline style——
+// 按下多少像素才算拖拽。没有阈值的话，pointerdown 那一刻就得抢走事件，
+// 页面上的「点一下选中」就再也点不动了——这正是重排只能待在结构 tab 里的原因。
+const DRAG_SLOP = 4
+
+// 用属性 + 全局样式表标记落点容器，而不是写 inline style——
 // 后者会被快照 diff 当成用户改动记进提示词。
+//
+// 只标当前悬停的那一个。早先是拖拽一开始就把全页的 flex/grid 容器都描上虚线，
+// 放开跨容器限制后那等于给几千个节点一起加 outline，整页闪成一团。
 const HINT_CSS = `
-  [data-vr-droppable] {
-    outline: 1px dashed rgba(13, 153, 255, .5) !important;
-    outline-offset: 3px !important;
-  }
-  [data-vr-draggable] { cursor: grab !important; }
-  [data-vr-draggable]:hover {
+  [data-vr-drop-target] {
     outline: 2px solid rgba(13, 153, 255, .85) !important;
     outline-offset: 1px !important;
   }`
@@ -33,34 +35,16 @@ const ensureHintStyle = () => {
   document.head.appendChild(style)
 }
 
-// 扫描整页开销不小，设上限并跳过不可见元素；
-// 真实页面里可重排的容器通常只有个位数
-const SCAN_LIMIT = 4000
-
-const markDroppables = () => {
-  ensureHintStyle()
-
-  let scanned = 0
-  for (const el of document.querySelectorAll('body *')) {
-    if (++scanned > SCAN_LIMIT) break
-    if (el.children.length < 2 || isOffBounds(el)) continue
-
-    const cs = getComputedStyle(el)
-    if (!/flex|grid/.test(cs.display)) continue
-    if (cs.visibility === 'hidden' || cs.display === 'none') continue
-
-    el.setAttribute('data-vr-droppable', '')
-    Array.from(el.children).forEach(child => {
-      if (!isOffBounds(child)) child.setAttribute('data-vr-draggable', '')
-    })
-  }
+const markDropTarget = el => {
+  document.querySelectorAll('[data-vr-drop-target]').forEach(node => {
+    if (node !== el) node.removeAttribute('data-vr-drop-target')
+  })
+  el?.setAttribute('data-vr-drop-target', '')
 }
 
-const clearDroppables = () => {
-  document.querySelectorAll('[data-vr-droppable]').forEach(el => el.removeAttribute('data-vr-droppable'))
-  document.querySelectorAll('[data-vr-draggable]').forEach(el => el.removeAttribute('data-vr-draggable'))
-  document.getElementById(HINT_STYLE_ID)?.remove()
-}
+const clearDropTarget = () =>
+  document.querySelectorAll('[data-vr-drop-target]')
+    .forEach(el => el.removeAttribute('data-vr-drop-target'))
 
 const indicator = () => {
   let el = document.getElementById(INDICATOR_ID)
@@ -77,37 +61,69 @@ const indicator = () => {
   return el
 }
 
+// 横排容器按 x 判前后，其余按 y。非 flex/grid 的容器 flexDirection 恒为
+// 'row'，直接读它会把块级容器也当成横排，插入线就画在了左右两侧。
 const isRow = container => {
   const cs = getComputedStyle(container)
-  return !/column/.test(cs.flexDirection || 'row')
+  return /flex|grid/.test(cs.display) && !/column/.test(cs.flexDirection || 'row')
 }
 
-const siblingsOf = el =>
-  Array.from(el.parentElement?.children || []).filter(node => !isOffBounds(node))
+// 能不能把东西放进去。跟树里的中段判定同一条规则，两个入口的手感才一样。
+const canHold = el =>
+  orderedChildren(el).length > 0
+  || /^(block|flex|grid|inline-flex|inline-grid)$/.test(getComputedStyle(el).display)
 
-// 索引一律相对「移除被拖元素后的序列」计算。
-// 若在含被拖元素的数组上取索引、却 splice 到移除后的数组，
-// 向后拖会整体偏移一位，落点也对不上用户看到的指示线。
-const dropIndexAt = (others, x, y, row) => {
-  for (let i = 0; i < others.length; i++) {
-    const r = others[i].getBoundingClientRect()
-    const mid = row ? r.left + r.width / 2 : r.top + r.height / 2
+// 指针底下那个元素分三段：靠前 1/3 插到它前面、靠后 1/3 插到它后面、
+// 中间 1/3 放进它里面。和结构树完全一致，用户在哪边拖都是同一套心智模型。
+const dropTargetAt = (x, y, dragged) => {
+  // 被拖元素还留在文档流里（只是压暗），不让开的话命中的永远是它自己
+  const kept = dragged.style.getPropertyValue('pointer-events')
+  dragged.style.setProperty('pointer-events', 'none')
+  let hit = pageElementAt(x, y)
+  kept ? dragged.style.setProperty('pointer-events', kept)
+       : dragged.style.removeProperty('pointer-events')
 
-    if ((row ? x : y) < mid) return i
+  // 命中被拖元素的后代（它们自己还收事件）时往上退出这棵子树
+  while (hit && (hit === dragged || dragged.contains(hit))) hit = hit.parentElement
+  if (!hit || hit === document.documentElement) return null
+
+  const rect = hit.getBoundingClientRect()
+  const parent = hit.parentElement
+
+  // <body> 没有可用的父级，只能往它里面放
+  const holdOnly = !parent || parent === document.documentElement || hit === document.body
+
+  const row = isRow(holdOnly ? hit : parent)
+  const pos = row ? x - rect.left : y - rect.top
+  const size = row ? rect.width : rect.height
+  const third = size / 3
+
+  if (!holdOnly && pos < third)
+    return { toParent: parent, toNext: hit, edge: 'before', ref: hit, row }
+  if (!holdOnly && pos > size - third) {
+    const kids = orderedChildren(parent)
+    return { toParent: parent, toNext: kids[kids.indexOf(hit) + 1] || null, edge: 'after', ref: hit, row }
   }
+  if (canHold(hit)) return { toParent: hit, toNext: null, edge: 'inside', ref: hit, row }
+  if (holdOnly) return null
 
-  return others.length
+  const kids = orderedChildren(parent)
+  return pos < size / 2
+    ? { toParent: parent, toNext: hit, edge: 'before', ref: hit, row }
+    : { toParent: parent, toNext: kids[kids.indexOf(hit) + 1] || null, edge: 'after', ref: hit, row }
 }
 
-const showIndicator = (others, index, row) => {
+const showIndicator = drop => {
   const bar = indicator()
-  if (!others.length) return
+  markDropTarget(drop.toParent)
 
-  const after = index >= others.length
-  const ref = after ? others[others.length - 1] : others[index]
-  const r = ref.getBoundingClientRect()
+  // 放进容器里：整个容器描边就是指示，再画一条线反而看不出放哪儿
+  if (drop.edge === 'inside') { bar.style.display = 'none'; return }
 
-  Object.assign(bar.style, row ? {
+  const r = drop.ref.getBoundingClientRect()
+  const after = drop.edge === 'after'
+
+  Object.assign(bar.style, drop.row ? {
     display: 'block',
     top:    `${r.top + scrollY}px`,
     left:   `${(after ? r.right : r.left) + scrollX - 1}px`,
@@ -141,9 +157,9 @@ const createGhost = (el, clientX, clientY) => {
 
   ghost.id = GHOST_ID
   ghost.setAttribute('data-visual-revise-ui', '')
-  ghost.removeAttribute?.('data-vr-draggable')
-  ghost.querySelectorAll?.('[data-vr-draggable]')
-    .forEach(n => n.removeAttribute('data-vr-draggable'))
+  ghost.removeAttribute?.('data-vr-drop-target')
+  ghost.querySelectorAll?.('[data-vr-drop-target]')
+    .forEach(n => n.removeAttribute('data-vr-drop-target'))
 
   ghost.style.cssText = `
     position: fixed;
@@ -176,68 +192,120 @@ const moveGhost = (ghost, offX, offY, clientX, clientY) => {
 
 const removeGhost = () => document.getElementById(GHOST_ID)?.remove()
 
-export const createLayoutDrag = ({ onDone } = {}) => {
+export const createLayoutDrag = ({ onDone, onDragStart } = {}) => {
   let active = false
-  let drag = null
+  let armed = null    // 已按下、还没越过 slop
+  let drag = null     // 真的在拖了
+
+  // 去掉 pointerdown 的 preventDefault 之后，浏览器会开始原生的文本拖选。
+  // 越过 slop 才拦：在此之前用户可能只是想选中一段文字。
+  const onSelectStart = e => { if (drag) e.preventDefault() }
+
+  // 松手后浏览器通常还会补一次 click，而 VisBug 的选中就挂在 click 上
+  // （selectable.js 在 body 的捕获阶段）。它会拿松手处的坐标重新命中——
+  // 跨容器之后那多半是别的元素，用户眼看着自己刚搬完的东西被取消选中。
+  // 挂在 document 上才抢得到：同一阶段按注册顺序触发，document 早于 body。
+  const swallowClick = e => {
+    e.preventDefault()
+    e.stopPropagation()
+    disarmClickSwallow()
+  }
+
+  // 「通常」不等于「一定」：click 的目标是按下与松开两个节点的共同祖先，
+  // 而我们恰恰在松开的那一刻把按下的那个节点搬走了——Chrome 于是干脆不派发。
+  // 只靠 click 自己摘钩子的话，这个钩子会一直挂着，把用户**下一次**点击吃掉，
+  // 表现成「搬完一次之后页面就点不动了」。所以下一次按下也要摘。
+  const disarmClickSwallow = () => {
+    document.removeEventListener('click', swallowClick, true)
+    document.removeEventListener('pointerdown', disarmClickSwallow, true)
+  }
+
+  const armClickSwallow = () => {
+    document.addEventListener('click', swallowClick, true)
+    document.addEventListener('pointerdown', disarmClickSwallow, true)
+  }
+
+  const disarm = () => {
+    document.removeEventListener('pointermove', onPointerMove, true)
+    document.removeEventListener('pointerup', onPointerUp, true)
+    document.removeEventListener('selectstart', onSelectStart, true)
+    armed = null
+  }
 
   const onPointerDown = e => {
     if (!active || e.button !== 0) return
-
     if (isEditorUI(e)) return
 
     // 不能用 path[0]：选中框等覆盖层会挡在页面元素前面
     const el = pageElementAt(e.clientX, e.clientY)
-    if (!el || el === document.body || el === document.documentElement) return
+    if (!el || el === document.body || !canDrag(el)) return
 
-    const parent = el.parentElement
-    if (!parent) return
-    if (!/flex|grid/.test(getComputedStyle(parent).display)) return
-
-    const siblings = siblingsOf(el)
-    if (siblings.length < 2) return
-
-    e.preventDefault()
-    e.stopPropagation()
-
-    const others = siblings.filter(node => node !== el)
-    const { ghost, offX, offY } = createGhost(el, e.clientX, e.clientY)
-
-    drag = { el, parent, others, row: isRow(parent), index: others.indexOf(el), ghost, offX, offY }
-    el.style.opacity = '0.25'
+    // 这里不抢事件：抢了页面就点不动了。等越过 slop 再说。
+    armed = { el, startX: e.clientX, startY: e.clientY }
     document.addEventListener('pointermove', onPointerMove, true)
     document.addEventListener('pointerup', onPointerUp, true)
+    document.addEventListener('selectstart', onSelectStart, true)
+  }
+
+  const beginDrag = e => {
+    const { el } = armed
+    // 选中框（visbug-handles）上的缩放把手浮在元素四角并拦指针，
+    // 留着选中会让接下来的拖动手感很怪；这一步交给宿主去清。
+    onDragStart?.(el)
+
+    const { ghost, offX, offY } = createGhost(el, e.clientX, e.clientY)
+    drag = { el, ghost, offX, offY, drop: null }
+    el.style.opacity = '0.25'
+    ensureHintStyle()
+    armClickSwallow()
   }
 
   const onPointerMove = e => {
-    if (!drag) return
+    if (!armed) return
 
+    if (!drag) {
+      if (Math.abs(e.clientX - armed.startX) < DRAG_SLOP
+        && Math.abs(e.clientY - armed.startY) < DRAG_SLOP) return
+      beginDrag(e)
+    }
+
+    e.preventDefault()
     moveGhost(drag.ghost, drag.offX, drag.offY, e.clientX, e.clientY)
-    drag.index = dropIndexAt(drag.others, e.clientX, e.clientY, drag.row)
-    showIndicator(drag.others, drag.index, drag.row)
+
+    const drop = dropTargetAt(e.clientX, e.clientY, drag.el)
+    drag.drop = drop
+
+    if (drop) showIndicator(drop)
+    else { hideIndicator(); clearDropTarget() }
   }
 
-  // 拖拽的收尾必须与「是否提交重排」分开：中途取消（Esc、模式关闭、
-  // destroy）同样要解绑这两个捕获阶段的监听，否则每次中断都留下一对，
+  // 拖拽的收尾必须与「是否提交移动」分开：中途取消（Esc、模式关闭、
+  // destroy）同样要解绑那几个捕获阶段的监听，否则每次中断都留下一组，
   // 此后每个 pointermove 都会白跑一遍，且 destroy 也清不掉。
   const endDrag = ({ commit } = { commit: false }) => {
-    document.removeEventListener('pointermove', onPointerMove, true)
-    document.removeEventListener('pointerup', onPointerUp, true)
+    disarm()
     hideIndicator()
+    clearDropTarget()
     removeGhost()
 
     if (!drag) return
 
-    drag.el.style.opacity = ''
+    drag.el.style.removeProperty('opacity')
     const pending = drag
     drag = null
 
-    if (!commit) return
+    if (!commit || !pending.drop) return
 
-    const ordered = applyOrder(pending.others, pending.el, pending.index)
-    onDone?.({ container: pending.parent, ordered })
+    const { toParent, toNext } = pending.drop
+    if (ChangeStore.moveElement(pending.el, toParent, toNext))
+      onDone?.({ el: pending.el, toParent, toNext })
   }
 
-  const onPointerUp = () => endDrag({ commit: true })
+  const onPointerUp = () => {
+    // 没越过 slop：什么都没发生过，VisBug 的 click 照常选中
+    if (!drag) { disarm(); return }
+    endDrag({ commit: true })
+  }
 
   return {
     get active() { return active },
@@ -249,22 +317,17 @@ export const createLayoutDrag = ({ onDone } = {}) => {
     setActive(on) {
       active = on
       if (on) {
-        markDroppables()
+        ensureHintStyle()
         document.addEventListener('pointerdown', onPointerDown, true)
       } else {
         document.removeEventListener('pointerdown', onPointerDown, true)
-        endDrag()   // 取消而非提交：模式被关掉时不应落下一次重排
-        clearDroppables()
+        endDrag()   // 取消而非提交：模式被关掉时不应落下一次移动
+        document.getElementById(HINT_STYLE_ID)?.remove()
       }
-    },
-
-    // 页面结构变化后重新标记（例如重排完成、或 SPA 切换了视图）
-    refresh() {
-      if (active) markDroppables()
     },
     destroy() {
       this.setActive(false)
-      clearDroppables()
+      disarmClickSwallow()
       removeGhost()
       document.getElementById(INDICATOR_ID)?.remove()
     },

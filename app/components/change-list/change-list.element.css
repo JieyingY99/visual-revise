@@ -143,7 +143,10 @@ footer button {
 
 /* 删除项：红色徽标，与样式改动、评论一眼区分开 */
 .badge[data-kind="removal"] { background: #4a2b2b; color: #ff8a8a; }
-.icon-btn.restore:disabled { opacity: .35; cursor: not-allowed; }
+/* 移动项：蓝色徽标。它和删除一样是结构改动，但可逆得多，不该用警示色 */
+.badge[data-kind="move"] { background: #1e3a52; color: #6fc0ff; }
+.icon-btn.restore:disabled,
+.icon-btn.move-back:disabled { opacity: .35; cursor: not-allowed; }
 
 /* ── 元素失联 ──
    记录仍然有效，只是它指向的元素已经不在页面上了。压暗但不隐藏：

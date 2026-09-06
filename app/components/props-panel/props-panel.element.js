@@ -16,7 +16,7 @@ import { moveTo, savePlacement } from '../../core/placement.js'
 import { readComputed, elementId } from '../../core/snapshot.js'
 import { stableClasses } from '../../core/anchors.js'
 import { findSharedElements, describeShared } from '../../core/shared-elements.js'
-import { applyOrder, orderedChildren } from '../../core/reorder.js'
+import { orderedChildren } from '../../core/reorder.js'
 import { loadLocalFonts, isSupported as fontsSupported,
   primaryFont, withPrimaryFont, COMMON_FONTS } from '../../core/local-fonts.js'
 import { containScroll, isTextElement } from '../../core/dom-utils.js'
@@ -48,12 +48,16 @@ const svg = (body, size = 14) =>
 const ICON = {
   // 两层菱形只占了上半部分（墨迹 y 1.5~11.5，中心 6.5），整体往下推 1.5 才居中。
   // 直接改路径要动六对坐标，一处手滑就又偏了，包一层 translate 更稳。
-  shared:   svg('<g transform="translate(0 1.5)"><path d="M8 1.5 14.5 5 8 8.5 1.5 5 8 1.5Z"/><path d="M1.5 8 8 11.5 14.5 8"/></g>'),
-  collapse: svg('<path d="M4 6.5 8 10.5l4-4"/>'),
-  close:    svg('<path d="M3.5 3.5 12.5 12.5M12.5 3.5 3.5 12.5"/>'),
+  // 原来 13 宽画满 81%，缩到 11/16 ≈ 69%，坐标直接按 (8,8) 居中重算，不再套 translate
+  shared:   svg('<path d="M8 3.5 13.5 6.5 8 9.5 2.5 6.5 8 3.5Z"/><path d="M2.5 9.5 8 12.5 13.5 9.5"/>'),
+  // 下面这几个原来墨迹只占 viewBox 的 50–56%，跟眼睛（88%）并排时小一号。
+  // 统一放大到 10/16 ≈ 63%，所有图标的视觉重量才在一个档上。
+  collapse: svg('<path d="M3 6 8 11l5-5"/>'),
+  close:    svg('<path d="M3 3 13 13M13 3 3 13"/>'),
   undo:     svg('<path d="M2.5 6.5h7.5a3.5 3.5 0 0 1 0 7H6.5"/><path d="M5.5 3.5 2.5 6.5l3 3"/>', 13),
-  eye:      svg('<path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8Z"/><circle cx="8" cy="8" r="1.9"/>', 13),
-  eyeOff:   svg('<path d="M2.5 2.5 13.5 13.5"/><path d="M6.6 6.7a2 2 0 0 0 2.8 2.7"/><path d="M4.4 4.7C2.4 5.9 1 8 1 8s2.6 4.5 7 4.5c1.2 0 2.2-.2 3.1-.7"/><path d="M6.9 3.7A7 7 0 0 1 8 3.5c4.4 0 7 4.5 7 4.5a13 13 0 0 1-2.1 2.6"/>', 13),
+  // 眼睛原来画满 88%，缩到 12/16 = 75%
+  eye:      svg('<path d="M2 8s2.3-4 6-4 6 4 6 4-2.3 4-6 4-6-4-6-4Z"/><circle cx="8" cy="8" r="1.7"/>', 13),
+  eyeOff:   svg('<path d="M3 3 13 13"/><path d="M6.8 6.9a1.7 1.7 0 0 0 2.4 2.3"/><path d="M4.8 5C3.2 6 2 8 2 8s2.3 4 6 4c1 0 1.9-.2 2.6-.6"/><path d="M7 4.1c.3 0 .7-.1 1-.1 3.7 0 6 4 6 4a11 11 0 0 1-1.8 2.2"/>', 13),
   link:     svg('<path d="M6.6 9.4a2.8 2.8 0 0 0 4 0l2-2a2.8 2.8 0 1 0-4-4l-.8.8"/><path d="M9.4 6.6a2.8 2.8 0 0 0-4 0l-2 2a2.8 2.8 0 1 0 4 4l.8-.8"/>', 13),
   // 用 link 那两段（它们本来就关于 (8,8) 点对称）再加一条同样对称的斜杠。
   // 上一版是自己另画的，墨迹落在 2.5~15.3，中心偏到 (8.9, 8.9)，在 24px 的
@@ -61,14 +65,15 @@ const ICON = {
   unlink:   svg('<path d="M6.6 9.4a2.8 2.8 0 0 0 4 0l2-2a2.8 2.8 0 1 0-4-4l-.8.8"/><path d="M9.4 6.6a2.8 2.8 0 0 0-4 0l-2 2a2.8 2.8 0 1 0 4 4l.8-.8"/><path d="M4.6 4.6l6.8 6.8"/>', 13),
   download: svg('<path d="M8 2v8"/><path d="M4.5 7 8 10.5 11.5 7"/><path d="M2.5 13.5h11"/>', 13),
   swap:     svg('<path d="M2.5 5.5h11l-2.5-2.5"/><path d="M13.5 10.5h-11l2.5 2.5"/>', 13),
-  wrap:     svg('<path d="M2.5 4.5h9a2.5 2.5 0 0 1 0 5H4"/><path d="M6 7.5 4 9.5l2 2"/>', 13),
+  // 14 而不是 13：它跟 flow 分段控件并排在同一行，那四个是 14
+  wrap:     svg('<path d="M2.5 4.5h9a2.5 2.5 0 0 1 0 5H4"/><path d="M6 7.5 4 9.5l2 2"/>'),
   expand:   svg('<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M6 6h4v4H6z"/>', 13),
   collapse2: svg('<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M4.5 8h7"/>', 13),
-  more:     svg('<circle cx="5" cy="5" r="1.2" fill="currentColor" stroke="none"/><circle cx="11" cy="5" r="1.2" fill="currentColor" stroke="none"/><circle cx="5" cy="11" r="1.2" fill="currentColor" stroke="none"/><circle cx="11" cy="11" r="1.2" fill="currentColor" stroke="none"/>', 13),
-  plus:     svg('<path d="M8 3.5v9M3.5 8h9"/>', 13),
-  minus:    svg('<path d="M3.5 8h9"/>', 13),
+  more:     svg('<circle cx="4.5" cy="4.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="11.5" cy="4.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="4.5" cy="11.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="11.5" cy="11.5" r="1.5" fill="currentColor" stroke="none"/>', 13),
+  plus:     svg('<path d="M8 3v10M3 8h10"/>', 13),
+  minus:    svg('<path d="M3 8h10"/>', 13),
   // Figma 用四个点表示「绑定变量」，这里绑的是页面上已定义的 CSS 自定义属性
-  variable: svg('<circle cx="5" cy="5" r="1.5" fill="currentColor" stroke="none"/><circle cx="11" cy="5" r="1.5" fill="currentColor" stroke="none"/><circle cx="5" cy="11" r="1.5" fill="currentColor" stroke="none"/><circle cx="11" cy="11" r="1.5" fill="currentColor" stroke="none"/>', 13),
+  variable: svg('<circle cx="4.5" cy="4.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="11.5" cy="4.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="4.5" cy="11.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="11.5" cy="11.5" r="1.5" fill="currentColor" stroke="none"/>', 13),
 }
 
 // 这三个分区改用 Figma 的「可增删的层列表」交互：标题右侧是 variable + 加号，
@@ -163,18 +168,20 @@ const RERENDER_ON = new Set(['position', 'display'])
 
 // 少数几个前缀用图形比用字符清楚：行高的「↕」和字距的「AV」摆在框里
 // 都认不出是什么，Figma 那边这两个位置也是图标。
+// 输入框前缀图标统一 12，跟内外边距那组（SIDE_ICON）同一档——它们是框里的辅助标记，
+// 不该比按钮里的图标还大
 const PREFIX_ICON = {
   // 尺寸限制：min 是两个箭头挤向中线，max 是两条边界线夹着一个双向箭头；
   // 高度版本是同一组图形转 90°
-  'min-width':  svg('<path d="M2 4l3 4-3 4"/><path d="M8 3v10"/><path d="M14 4l-3 4 3 4"/>', 13),
-  'max-width':  svg('<path d="M2 3v10M14 3v10"/><path d="M4 8h8"/><path d="M6.5 5.5 4 8l2.5 2.5M9.5 5.5 12 8l-2.5 2.5"/>', 13),
-  'min-height': svg('<path d="M4 2l4 3 4-3"/><path d="M3 8h10"/><path d="M4 14l4-3 4 3"/>', 13),
-  'max-height': svg('<path d="M3 2h10M3 14h10"/><path d="M8 4v8"/><path d="M5.5 6.5 8 4l2.5 2.5M5.5 9.5 8 12l2.5-2.5"/>', 13),
+  'min-width':  svg('<path d="M2 4l3 4-3 4"/><path d="M8 3v10"/><path d="M14 4l-3 4 3 4"/>', 12),
+  'max-width':  svg('<path d="M2 3v10M14 3v10"/><path d="M4 8h8"/><path d="M6.5 5.5 4 8l2.5 2.5M9.5 5.5 12 8l-2.5 2.5"/>', 12),
+  'min-height': svg('<path d="M4 2l4 3 4-3"/><path d="M3 8h10"/><path d="M4 14l4-3 4 3"/>', 12),
+  'max-height': svg('<path d="M3 2h10M3 14h10"/><path d="M8 4v8"/><path d="M5.5 6.5 8 4l2.5 2.5M5.5 9.5 8 12l2.5-2.5"/>', 12),
   'line-height': svg(
-    '<path d="M2.5 3.5v9"/><path d="M1 5 2.5 3.5 4 5"/><path d="M1 11l1.5 1.5L4 11"/>' +
-    '<path d="M6.5 4h8M6.5 8h8M6.5 12h8"/>', 14),
+    '<path d="M3.5 3.5v9"/><path d="M2 5 3.5 3.5 5 5"/><path d="M2 11l1.5 1.5L5 11"/>' +
+    '<path d="M7 4h6.5M7 8h6.5M7 12h6.5"/>', 12),
   'letter-spacing': svg(
-    '<path d="M2 3v10M14 3v10"/><path d="M5.6 11.5 8 5l2.4 6.5M6.4 9.6h3.2"/>', 14),
+    '<path d="M2 3v10M14 3v10"/><path d="M5.6 11.5 8 5l2.4 6.5M6.4 9.6h3.2"/>', 12),
 }
 
 // 这些属性的编辑界面在分区的 widget 里，不再单独渲染成一行字段。
@@ -529,27 +536,44 @@ export class PropsPanel extends HTMLElement {
 
   // 结构树只建一次，在两个 tab 之间来回切时保留它自己的展开 / 滚动状态。
   // 每次重建的话，改一个属性面板重绘一次，树就会跟着收回顶层，没法用。
-  // 树只上报意图，写入在这里：共享开着时，同一个顺序要落到每一个同构容器上。
+  // 树只上报意图，写入在这里：共享开着时，同一次移动要落到每一个同构容器上。
   // 「把第 3 个孩子挪到最前」这件事在结构相同的兄弟容器里是同一件事，
   // 按下标映射过去即可——不能按元素引用找，那些是不同的节点。
-  #applyReorder({ container, dragged, index } = {}) {
-    if (!container || !dragged) return
+  //
+  // 联动只覆盖「同一个父级里换位」。跨容器时另一个副本里对应的目标容器是谁，
+  // 靠下标推不出来，猜错就是把元素搬到毫不相干的地方，宁可只动当前这一个。
+  #applyMove({ el, toParent, toNext } = {}) {
+    if (!el || !toParent) return
 
-    const from = orderedChildren(container).indexOf(dragged)
-    const containers = this.#shared
-      ? [container, ...findSharedElements(container).filter(c => c !== container)]
-      : [container]
+    const crossed = el.parentElement !== toParent
+    const peers = this.#shared && !crossed
+      ? findSharedElements(toParent).filter(c => c !== toParent)
+      : []
 
-    this.#batch('重排', () => {
-      for (const c of containers) {
-        const kids = orderedChildren(c)
+    const kids = orderedChildren(toParent)
+    const from = kids.indexOf(el)
+    // -1 表示放到末尾。用「第几个孩子」而不是元素引用来映射：
+    // 同构容器里的是另一批节点。
+    const to = toNext ? kids.indexOf(toNext) : -1
+
+    this.#batch('移动', () => {
+      ChangeStore.moveElement(el, toParent, toNext)
+
+      for (const c of peers) {
+        const ckids = orderedChildren(c)
         // 同构容器的孩子数可能因内容不同而略有出入，越界就跳过这一个，
-        // 而不是把顺序写歪
-        if (from < 0 || from >= kids.length || index > kids.length - 1) continue
-        const moved = kids[from]
-        applyOrder(kids.filter(k => k !== moved), moved, index)
+        // 而不是把顺序搬歪
+        if (from < 0 || from >= ckids.length) continue
+        ChangeStore.moveElement(ckids[from], c, to < 0 ? null : ckids[to] || null)
       }
     })
+
+    if (crossed && this.#shared)
+      this.#toast('跨容器移动只作用于当前元素')
+    // 页面自己用 CSS order 排过版时，DOM 顺序和眼睛看到的顺序不是一回事。
+    // 移动改的是 DOM，落点却是按视觉算的——这一句是提醒，不是错误。
+    else if (Array.from(toParent.children).some(k => (parseInt(getComputedStyle(k).order, 10) || 0) !== 0))
+      this.#toast('此容器用了 CSS order，视觉顺序可能与 DOM 顺序不同')
 
     this.dispatchEvent(new CustomEvent('vr-change', { bubbles: true, composed: true }))
   }
@@ -562,7 +586,7 @@ export class PropsPanel extends HTMLElement {
       this.#tree.setAttribute('embedded', '')
       // 绑在树自己身上而不是走 #bind：那里是渲染完立刻扫 shadow，
       // 而树是渲染之后才挂进去的，那时还不存在，扫不到。
-      this.#tree.addEventListener('vr-tree-reorder', e => this.#applyReorder(e.detail))
+      this.#tree.addEventListener('vr-tree-move', e => this.#applyMove(e.detail))
     }
     if (this.#tree.parentNode !== slot) slot.appendChild(this.#tree)
     // 整页结构，当前选中项高亮——和 DevTools 一致
@@ -2418,12 +2442,6 @@ export class PropsPanel extends HTMLElement {
 
   setCommentMode(on) {
     const btn = this.#shadow.querySelector('.comment')
-    if (!btn) return
-    on ? btn.setAttribute('data-on', '') : btn.removeAttribute('data-on')
-  }
-
-  setReorderMode(on) {
-    const btn = this.#shadow.querySelector('.reorder')
     if (!btn) return
     on ? btn.setAttribute('data-on', '') : btn.removeAttribute('data-on')
   }

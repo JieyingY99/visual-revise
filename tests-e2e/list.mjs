@@ -170,5 +170,57 @@ ok(stability.tabText.includes('1'), `计数同步更新：${stability.tabText.tr
 
 await page.evaluate(() => window.__visualRevise.store.undoEverything())
 
+// ── 移动记录：列表里要看得见、点得到、搬得回 ──────────────
+await page.evaluate(() => {
+  window.__visualRevise.store.undoEverything()
+  window.__visualRevise.store.history.clear()
+  document.getElementById('lz')?.remove()
+  const z = document.createElement('div')
+  z.id = 'lz'
+  z.style.cssText = 'position:absolute;left:30px;top:640px'
+  z.innerHTML = '<div id="lz-a"><p class="ll">搬我</p></div><div id="lz-b"></div>'
+  document.body.appendChild(z)
+  window.__visualRevise.store.moveElement(z.querySelector('.ll'), document.getElementById('lz-b'), null)
+  const list = window.__visualRevise.list
+  list.hidden = false
+  list.render()
+})
+await page.waitForTimeout(400)
+
+const moveRow = page.locator('visual-revise-list .item[data-kind="move"]')
+ok(await moveRow.count() === 1, `列表里出现一条「移动」记录（${await moveRow.count()} 条）`)
+ok((await moveRow.textContent()).includes('移动到'),
+   `记录写明搬到哪儿了：「${(await moveRow.textContent()).replace(/\s+/g, ' ').trim()}」`)
+
+const counts = (await page.locator('visual-revise-list .tabs').textContent()).replace(/\s+/g, ' ').trim()
+ok(/全部\s*1/.test(counts) && /配置\s*1/.test(counts),
+   `移动计入「全部」与「配置」两个计数（${counts}）`)
+
+// 点整行定位到页面上那个元素
+await moveRow.first().scrollIntoViewIfNeeded()
+await moveRow.first().click({ position: { x: 30, y: 26 } })
+await page.waitForTimeout(400)
+ok(await page.evaluate(() =>
+  document.querySelector('[data-selected]')?.textContent.trim()) === '搬我',
+   '点这条记录能定位并选中被移动的元素')
+
+// 单独搬回去：记录随之消失
+await page.locator('visual-revise-list .move-back').first().scrollIntoViewIfNeeded()
+await page.locator('visual-revise-list .move-back').first().click()
+await page.waitForTimeout(400)
+const backHome = await page.evaluate(() => ({
+  a: document.getElementById('lz-a').textContent.trim(),
+  b: document.getElementById('lz-b').children.length,
+  moves: window.__visualRevise.store.stats().moves,
+}))
+ok(backHome.a === '搬我' && backHome.b === 0 && backHome.moves === 0,
+   `「搬回」把元素放回原位，记录也随之消失（${JSON.stringify(backHome)}）`)
+ok(await moveRow.count() === 0, '列表里那一行没了')
+
+await page.evaluate(() => {
+  window.__visualRevise.store.undoEverything()
+  document.getElementById('lz')?.remove()
+})
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

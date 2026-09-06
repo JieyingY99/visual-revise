@@ -119,6 +119,108 @@ ok(backTitles.length === beforeDel && backTitles[1] === 'Thinking Five',
 ok((await page.evaluate(() => window.__visualRevise.store.stats())).removals === 0,
    '删除记录也一并撤销，不会留下一条「已删除」的幽灵')
 
+// ── 移动元素：撤销 / 重做 / 守卫 ────────────────────────────
+// 重排不再写 CSS order，而是真的搬 DOM 节点。历史栈必须整条整条地退，
+// 且任何一个非法落点都不能让 insertBefore 抛出去——history 的重放循环
+// 一旦抛错就会跳过这条历史剩下的 op，栈从此和页面对不上。
+await page.evaluate(() => {
+  window.__visualRevise.store.undoEverything()
+  window.__visualRevise.store.history.clear()
+  document.getElementById('mv')?.remove()
+  const box = document.createElement('div')
+  box.id = 'mv'
+  box.innerHTML = '<div id="mv-a"><i class="mv-x">x1</i><i class="mv-y">y1</i></div><div id="mv-b"></div>'
+  document.querySelector('.hero').appendChild(box)
+})
+const where = () => page.evaluate(() => ({
+  a: [...document.querySelectorAll('#mv-a > i')].map(n => n.className).join(','),
+  b: [...document.querySelectorAll('#mv-b > i')].map(n => n.className).join(','),
+}))
+
+await page.evaluate(() => {
+  const x = document.querySelector('.mv-x')
+  window.__visualRevise.store.moveElement(x, document.getElementById('mv-b'), null)
+})
+await page.waitForTimeout(250)
+ok((await where()).b === 'mv-x', `跨容器移动真的改了 DOM（#mv-b 里现在是 ${(await where()).b}）`)
+ok((await page.evaluate(() => window.__visualRevise.store.stats().moves)) === 1,
+   '移动记入 moves 一条')
+ok((await hist()).depth === 1, `一次移动压一条历史：depth=${(await hist()).depth}`)
+
+await undo()
+ok((await where()).a === 'mv-x,mv-y' && (await where()).b === '',
+   `⌘Z 一次撤回整次移动（#mv-a = ${(await where()).a}）`)
+ok((await page.evaluate(() => window.__visualRevise.store.stats().moves)) === 0,
+   '撤销后移动记录也消失')
+
+await redo()
+ok((await where()).b === 'mv-x', '⌘⇧Z 重做移动')
+ok((await page.evaluate(() => window.__visualRevise.store.stats().moves)) === 1,
+   '重做后记录回来')
+
+// 移回原位 → 这条记录该消失，而不是留下一条「从 A 到 A」
+await page.evaluate(() => {
+  const x = document.querySelector('.mv-x')
+  window.__visualRevise.store.moveElement(x, document.getElementById('mv-a'),
+    document.querySelector('.mv-y'))
+})
+await page.waitForTimeout(250)
+ok((await where()).a === 'mv-x,mv-y', '手动移回原位')
+ok((await page.evaluate(() => window.__visualRevise.store.stats().moves)) === 0,
+   '移回原位后改动记录里那条消失')
+
+// 守卫：拖进自己 / 拖进自己的后代 / 拖到 <html> 下，一律拒绝且不抛错
+const guards = await page.evaluate(() => {
+  const s = window.__visualRevise.store
+  const a = document.getElementById('mv-a')
+  const x = document.querySelector('.mv-x')
+  return {
+    self:  s.moveElement(a, a, null),
+    child: s.moveElement(a, x, null),
+    root:  s.moveElement(a, document.documentElement, null),
+    noop:  s.moveElement(x, a, document.querySelector('.mv-y')),   // 已经就在这儿
+  }
+})
+ok(!guards.self && !guards.child && !guards.root,
+   `拒绝非法落点（自己=${guards.self} 后代=${guards.child} <html>=${guards.root}）`)
+ok(!guards.noop, '原地放下不记一条移动')
+
+// toNext 失联时退化成 append，不能抛 NotFoundError
+const orphanNext = await page.evaluate(() => {
+  const s = window.__visualRevise.store
+  const b = document.getElementById('mv-b')
+  const ghost = document.createElement('i')      // 从来没进过 #mv-b
+  try {
+    const ok = s.moveElement(document.querySelector('.mv-y'), b, ghost)
+    return { ok, b: [...b.children].map(n => n.className).join(',') }
+  } catch (err) { return { error: err.message } }
+})
+ok(orphanNext.b === 'mv-y', `toNext 不是目标容器的孩子时退化成 append（${JSON.stringify(orphanNext)}）`)
+
+// 「重置全部」之后 ⌘Z 要能把移动一起救回来
+await page.evaluate(() => window.__visualRevise.store.history.clear())
+await page.evaluate(() => {
+  const s = window.__visualRevise.store
+  s.moveElement(document.querySelector('.mv-x'), document.getElementById('mv-b'), null)
+})
+await page.waitForTimeout(250)
+await page.evaluate(() => window.__visualRevise.store.undoEverything())
+await page.waitForTimeout(300)
+ok((await where()).a.startsWith('mv-x') && (await page.evaluate(() =>
+  window.__visualRevise.store.stats().moves)) === 0, '「重置全部」把移动过的元素放回原位')
+
+await undo()
+ok((await where()).b.split(',').includes('mv-x'),
+   `⌘Z 撤销「重置全部」后移动也回来了（#mv-b = ${(await where()).b}）`)
+
+await page.evaluate(() => {
+  window.__visualRevise.store.undoEverything()
+  window.__visualRevise.store.history.clear()
+  document.getElementById('mv')?.remove()
+})
+await page.keyboard.press('Escape')
+await page.waitForTimeout(200)
+
 // ── 「重置全部」可撤回 ──────────────────────────────────────
 await page.evaluate(() => window.__visualRevise.store.history.clear())
 await page.keyboard.press('Escape')

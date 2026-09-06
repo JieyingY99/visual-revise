@@ -23,8 +23,12 @@ const createStore = () => {
   // 被删掉的元素。el 引用在移出 DOM 后仍在内存里，整棵子树都跟着，
   // 所以「恢复」是把同一个节点插回去，而不是照着记录重建。
   const removals   = new Map()   // id      → { el, parent, nextSibling, ... }
+  // 被搬过家的元素。跟 removals 一样按 id 存一条，记的是「从哪儿到哪儿」：
+  // 同一个元素反复拖只留一条（from 取第一次、to 取最后一次），拖回原位就删掉。
+  const moves      = new Map()   // id      → { el, fromParent, fromNext, toParent, toNext, ... }
   let commentSeq  = 0
   let removalSeq  = 0
+  let moveSeq     = 0
 
   const notify = () => listeners.forEach(fn => fn(read()))
 
@@ -45,11 +49,19 @@ const createStore = () => {
 
   const putBack = ({ el, parent, nextSibling }) => {
     if (!parent?.isConnected) return false
-    nextSibling?.isConnected && nextSibling.parentElement === parent
+    nextSibling?.isConnected && nextSibling.parentElement === parent && nextSibling !== el
       ? parent.insertBefore(el, nextSibling)
       : parent.appendChild(el)
     return true
   }
+
+  // 移动的三道执行前守卫。缺任何一条都会让 insertBefore 抛异常，
+  // 而 history.js 的重放循环一旦抛错就会跳过这条历史剩下的 op、
+  // entry 却照样进 future——历史栈从此对不上页面。
+  const canMoveInto = (el, parent) =>
+    el?.nodeType === 1 && parent?.nodeType === 1 && parent.isConnected
+    && el !== parent && !el.contains(parent)
+    && parent !== document.documentElement
 
   // 「重置全部」这类大动作不适合逐条记：它一次动到所有被跟踪的元素。
   // 存一份整体快照，撤销就是整体写回。低频操作，这点开销值得。
@@ -61,6 +73,13 @@ const createStore = () => {
     commentSeq,
     removals:   Array.from(removals.values()).map(r => ({ ...r })),
     removalSeq,
+    moves:      Array.from(moves.values()).map(m => ({ ...m })),
+    moveSeq,
+    // 记录里的 to 是「当初移到哪儿」，而元素此刻实际在哪儿可能又变过。
+    // 撤销「重置全部」要还原的是此刻这个位置，不是记录里的那个。
+    positions:  Array.from(moves.values())
+                  .filter(m => m.el?.isConnected)
+                  .map(m => ({ el: m.el, parent: m.el.parentElement, nextSibling: m.el.nextElementSibling })),
     // 被删掉的元素此刻不在 DOM 上，恢复时要按记录插回去
     detached:   Array.from(removals.values()).filter(r => !r.el.isConnected).map(r => r.id),
     // 失联记录不在 styles 里（那里只收还连着的），单独存一份，
@@ -90,6 +109,13 @@ const createStore = () => {
     state.comments.forEach(c => comments.set(c.id, { ...c, images: (c.images || []).slice() }))
     commentSeq = state.commentSeq
 
+    // 移动先于删除还原：删除那一步要把元素插回记录里的父节点，
+    // 而那个父节点自己也可能是被搬过家的，得先回到该在的地方
+    moves.clear()
+    ;(state.moves || []).forEach(m => moves.set(m.id, { ...m }))
+    moveSeq = state.moveSeq || 0
+    for (const p of state.positions || []) putBack(p)
+
     removals.clear()
     state.removals.forEach(r => removals.set(r.id, { ...r }))
     removalSeq = state.removalSeq
@@ -102,10 +128,14 @@ const createStore = () => {
     }
   }
 
+  // 位置也算「这个元素的状态」：元素被拖到别处之后，「还原此元素全部改动」
+  // 不把它放回去的话，页面上它还留在新家，而记录里已经一干二净。
   const captureElement = el => ({
-    cssText:   el.getAttribute('style'),
-    attrs:     readAttrs(el),
-    textNodes: textNodesOf(el).map(n => n.nodeValue),
+    cssText:     el.getAttribute('style'),
+    attrs:       readAttrs(el),
+    textNodes:   textNodesOf(el).map(n => n.nodeValue),
+    parent:      el.parentElement,
+    nextSibling: el.nextElementSibling,
   })
 
   // 一条历史怎么落回 DOM。dir='undo' 取 before，'redo' 取 after。
@@ -136,7 +166,18 @@ const createStore = () => {
         break
       }
 
-      // 整个元素的样式 / 属性 / 文案一并回到某个状态（「撤销此元素全部改动」）
+      // 元素在 DOM 里的位置，以及它在 moves 里的登记
+      case 'move': {
+        const parent = dir === 'undo' ? op.fromParent : op.toParent
+        const next   = dir === 'undo' ? op.fromNext   : op.toNext
+        if (canMoveInto(op.el, parent)) putBack({ el: op.el, parent, nextSibling: next })
+
+        const record = dir === 'undo' ? op.beforeRecord : op.afterRecord
+        record ? moves.set(op.id, { ...record }) : moves.delete(op.id)
+        break
+      }
+
+      // 整个元素的样式 / 属性 / 文案 / 位置一并回到某个状态（「撤销此元素全部改动」）
       case 'element': {
         const st = value
         st.cssText === null ? op.el.removeAttribute('style') : op.el.setAttribute('style', st.cssText)
@@ -146,6 +187,13 @@ const createStore = () => {
           if (nodes.length === st.textNodes.length)
             nodes.forEach((n, i) => { n.nodeValue = st.textNodes[i] })
         }
+        // 位置没变就别动 DOM：白搬一次会惊动重锚观察器
+        if (st.parent && (op.el.parentElement !== st.parent
+          || op.el.nextElementSibling !== st.nextSibling))
+          putBack({ el: op.el, parent: st.parent, nextSibling: st.nextSibling })
+
+        const mv = dir === 'undo' ? op.beforeMove : op.afterMove
+        if (op.id) mv ? moves.set(op.id, { ...mv }) : moves.delete(op.id)
         break
       }
 
@@ -283,6 +331,106 @@ const createStore = () => {
 
     notify()
     return true
+  }
+
+  // ── 移动 ────────────────────────────────────────────────────
+  // 重排以前写的是 CSS order：纯视觉，跨不了父级，导出给 AI 也只能是下策
+  // （DOM 顺序不变，Tab 与读屏顺序会和眼睛看到的对不上）。现在真的搬 DOM 节点。
+  const moveElement = (el, toParent, toNext = null) => {
+    if (!el?.isConnected || !canMoveInto(el, toParent)) return false
+
+    // 落点归一化：不再是 toParent 的孩子就当「放到末尾」；指向自己等于原地不动
+    const next = toNext === el ? el.nextElementSibling
+      : toNext?.isConnected && toNext.parentElement === toParent ? toNext
+      : null
+
+    // 值没变就不记。比的必须是 nextElementSibling 而不是 nextSibling：
+    // 后者会命中元素之间的空白文本节点，原地放下也会被记成一次真实移动。
+    if (toParent === el.parentElement && next === el.nextElementSibling) return false
+
+    track(el)
+    const id = elementId(el)
+    const prev = moves.get(id)
+    const beforeRecord = prev ? { ...prev } : null
+
+    const fromParent = el.parentElement
+    const fromNext   = el.nextElementSibling
+
+    // 同一个元素移动多次只留一条：起点取第一次，终点取最后一次
+    const from = prev ? {
+      fromParent:        prev.fromParent,
+      fromNext:          prev.fromNext,
+      fromAnchors:       prev.fromAnchors,
+      fromParentAnchors: prev.fromParentAnchors,
+      fromNextAnchors:   prev.fromNextAnchors,
+      fromAtEnd:         prev.fromAtEnd,
+    } : {
+      fromParent,
+      fromNext,
+      fromAnchors:       collectAnchors(el),
+      fromParentAnchors: collectAnchors(fromParent),
+      fromNextAnchors:   fromNext ? collectAnchors(fromNext) : null,
+      fromAtEnd:         !fromNext,
+    }
+
+    // 目标那两份锚点必须在移动之前采。选择器里带 :nth-of-type，一次移动会
+    // 改变两个容器下所有同类兄弟的下标，事后再采就指向顶替上来的那个邻居了。
+    const to = {
+      toParent,
+      toNext:          next,
+      toParentAnchors: collectAnchors(toParent),
+      toNextAnchors:   next ? collectAnchors(next) : null,
+      toAtEnd:         !next,
+    }
+
+    putBack({ el, parent: toParent, nextSibling: next })
+
+    // 又回到原位就不再是一次移动，那条记录该消失
+    const home = toParent === from.fromParent
+      && (from.fromAtEnd ? !el.nextElementSibling : el.nextElementSibling === from.fromNext)
+
+    let afterRecord = null
+    if (home) {
+      moves.delete(id)
+    } else {
+      const record = {
+        id,
+        seq:      prev?.seq ?? ++moveSeq,
+        el,
+        ...from,
+        ...to,
+        // el 自己的锚点在移动之后刷新：重锚定要靠它认出「还是这个元素」
+        anchors:  collectAnchors(el),
+        identity: identityOf(el),
+        tag:      el.tagName.toLowerCase(),
+        text:     readText(el).slice(0, 80),
+        orphaned: false,
+      }
+      moves.set(id, record)
+      afterRecord = { ...record }
+    }
+
+    history.push({
+      kind: 'move', id, el,
+      fromParent, fromNext,
+      toParent, toNext: next,
+      beforeRecord, afterRecord,
+    }, '移动元素')
+
+    notify()
+    return true
+  }
+
+  // 元素后来被删掉、或被页面换掉了，这条记录依然是用户的意图，留在列表里
+  const moveList = () =>
+    Array.from(moves.values()).sort((a, b) => a.seq - b.seq)
+
+  const canMoveBack = rec => !!rec?.el && !!rec?.fromParent?.isConnected
+
+  const moveBack = id => {
+    const rec = moves.get(id)
+    if (!canMoveBack(rec)) return false
+    return moveElement(rec.el, rec.fromParent, rec.fromNext)
   }
 
   const commentList = () =>
@@ -450,6 +598,55 @@ const createStore = () => {
     return true
   }
 
+  // 移动的重放和删除不是一回事。框架把源容器的 innerHTML 重写之后，被移动的
+  // 元素会在**原位置**重新出现一份，而我们先前搬过去的那一份还留在目标容器里
+  // ——页面上于是有两份。所以重放不是「再插一次」，而是：认出刚出现的那一份、
+  // 丢掉旧的那一份、把新的搬到目标容器去。
+  const reapplyMove = (rec, taken) => {
+    const exclude = new Set(taken)
+    if (rec.el) exclude.add(rec.el)
+
+    const fresh = resolveElement({ anchors: rec.fromAnchors }, { exclude }).el
+    // 只认「刚刚重新出现」的节点，而且身份要对得上。光看选择器的话，源容器里
+    // 顶替上来的那个邻居正好也能命中（nth-of-type 会整体前移一位），
+    // 于是把隔壁那个元素搬走——那比不重放糟得多。
+    if (!fresh || !reappeared(fresh) || !sameIdentity(fresh, rec)) return false
+
+    const toParent = rec.toParent?.isConnected
+      ? rec.toParent
+      : resolveElement({ anchors: rec.toParentAnchors }, { exclude }).el
+
+    // 目标容器也没了：记录留着并标成失联，提示词照常导出，跟删除失联一个待遇
+    if (!toParent || !canMoveInto(fresh, toParent)) {
+      rec.orphaned = true
+      return false
+    }
+
+    // 一次移动同时产生 removedNodes 和 addedNodes，比删除更容易惹出下一轮
+    // reconcile。没有预算就会跟框架无限拉锯，页面闪成一团、CPU 跑满。
+    if (overBudget(rec)) return false
+
+    if (rec.el?.isConnected && rec.el !== fresh) rec.el.remove()
+
+    const next = rec.toNext?.isConnected && rec.toNext.parentElement === toParent
+      ? rec.toNext
+      : rec.toNextAnchors
+        ? resolveElement({ anchors: rec.toNextAnchors }, { exclude }).el
+        : null
+
+    putBack({ el: fresh, parent: toParent, nextSibling: next })
+
+    // 过继 id，免得同一个元素在 moves 里冒出第二条记录
+    adoptId(fresh, rec.id)
+    rec.el = fresh
+    rec.toParent = toParent
+    rec.toNext = fresh.nextElementSibling
+    rec.anchors = collectAnchors(fresh)
+    rec.orphaned = false
+    taken.add(fresh)
+    return true
+  }
+
   const reconcile = () => {
     if (replaying) return 0
     replaying = true
@@ -466,11 +663,20 @@ const createStore = () => {
       // 不做失败退避：应用可能在下一帧就把元素渲染回来，退避会正好错过它。
       // 成本本来就有两道闸——观察器只在有增删时才排一轮，rAF 又把一帧内的
       // 多次变动合并成一次。
-      if (scanning.appeared.size)
+      if (scanning.appeared.size) {
         for (const rec of removals.values()) {
           if (rec.fighting) continue
           if (reapplyRemoval(rec)) changed++
         }
+
+        // 移动排在删除之后、改绑之前：被移动的元素同时也有一条样式快照，
+        // 快照要是先把重新出现的节点认领走，移动重放就找不到目标了。
+        const takenMoves = claimedBy(moves)
+        for (const rec of moves.values()) {
+          if (rec.fighting) continue
+          if (reapplyMove(rec, takenMoves)) changed++
+        }
+      }
 
       const takenSnaps = claimedBy(snapshots)
       for (const snap of snapshots.values()) {
@@ -554,6 +760,7 @@ const createStore = () => {
     edits:    styleEdits(),
     comments: commentList(),
     removals: removalList(),
+    moves:    moveList(),
   })
 
   const applyProp = (el, prop, value) => {
@@ -705,8 +912,21 @@ const createStore = () => {
     if (!snap) return
 
     const before = captureElement(snap.el)
+    const beforeMove = moves.get(id) ? { ...moves.get(id) } : null
     revertAll(snap)
-    history.push({ kind: 'element', el: snap.el, before, after: captureElement(snap.el) }, '还原元素')
+
+    // 「撤销此元素全部改动」也包括它被搬到过别处。只清记录不搬回去的话，
+    // 页面上它还留在新家，列表里却已经一干二净——用户会以为工具漏了一步。
+    if (beforeMove) {
+      putBack({ el: snap.el, parent: beforeMove.fromParent, nextSibling: beforeMove.fromNext })
+      moves.delete(id)
+    }
+
+    history.push({
+      kind: 'element', id, el: snap.el,
+      before, after: captureElement(snap.el),
+      beforeMove, afterMove: null,
+    }, '还原元素')
     refreeze(snap)
     notify()
   }
@@ -722,6 +942,14 @@ const createStore = () => {
       .forEach(r => { if (canRestore(r)) putBack(r) })
     removals.clear()
     removalSeq = 0
+
+    // 搬过家的元素回到最初的位置。排在删除恢复之后：被移进某个已删容器的
+    // 元素，得等那个容器先回到页面上才放得回去。
+    Array.from(moves.values())
+      .sort((a, b) => b.seq - a.seq)
+      .forEach(m => putBack({ el: m.el, parent: m.fromParent, nextSibling: m.fromNext }))
+    moves.clear()
+    moveSeq = 0
 
     snapshots.forEach(revertAll)
 
@@ -751,13 +979,15 @@ const createStore = () => {
     // 只丢记录，不把元素放回去——clear 的语义是「忘掉这些改动」，
     // 不是「撤销它们」，那是 undoEverything 的事
     removals.clear()
+    moves.clear()
     commentSeq = 0
     removalSeq = 0
+    moveSeq = 0
     notify()
   }
 
   const stats = () => {
-    const { edits, comments: cs, removals: rm } = read()
+    const { edits, comments: cs, removals: rm, moves: mv } = read()
     const props = edits.reduce((n, e) => n + e.changes.length, 0)
     const texts = edits.filter(e => e.text).length
     const attrs  = edits.reduce((n, e) => n + (e.attrs?.length || 0), 0)
@@ -772,7 +1002,8 @@ const createStore = () => {
       refImages,
       comments: cs.length,
       removals: rm.length,
-      total:    props + texts + attrs + cs.length + rm.length,
+      moves:    mv.length,
+      total:    props + texts + attrs + cs.length + rm.length + mv.length,
     }
   }
 
@@ -781,6 +1012,7 @@ const createStore = () => {
     addAsset, getAsset, assetForUrl, allAssets,
     addComment, updateComment, removeComment, setCommentImages,
     recordRemoval, removeElements, restoreRemoval, canRestore,
+    moveElement, moveBack, canMoveBack,
     undoProp, undoText, undoAttr, undoElement, undoEverything, clear,
     read, stats, touch, reconcile, observe, unobserve,
     snapshots,

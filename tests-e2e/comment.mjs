@@ -88,11 +88,11 @@ await page.waitForTimeout(300)
 const typed = await page.evaluate(() => ({
   value: document.querySelector('#vr-typing-probe').value,
   comment: window.__visualRevise.comments.active,
-  reorder: window.__visualRevise.layoutDrag.active,
+  dragging: window.__visualRevise.layoutDrag.dragging,
 }))
 ok(typed.value === 'correct', `输入框内容完整：「${typed.value}」`)
-ok(!typed.comment && !typed.reorder,
-   `输入过程中未误触模式（评论=${typed.comment}, 重排=${typed.reorder}）`)
+ok(!typed.comment && !typed.dragging,
+   `输入过程中未误触模式、也没起拖（评论=${typed.comment}, 拖拽中=${typed.dragging}）`)
 
 // contenteditable 同样要让路
 const editable = page.locator('#vr-editable-probe')
@@ -102,9 +102,9 @@ await page.waitForTimeout(300)
 const ce = await page.evaluate(() => ({
   text: document.querySelector('#vr-editable-probe').textContent,
   comment: window.__visualRevise.comments.active,
-  reorder: window.__visualRevise.layoutDrag.active,
+  dragging: window.__visualRevise.layoutDrag.dragging,
 }))
-ok(ce.text === 'rc' && !ce.comment && !ce.reorder,
+ok(ce.text === 'rc' && !ce.comment && !ce.dragging,
    `contenteditable 内输入正常：「${ce.text}」，未误触模式`)
 
 // 焦点离开输入控件后，快捷键恢复正常

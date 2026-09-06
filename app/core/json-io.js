@@ -8,13 +8,14 @@ import { resolveElement } from './anchors.js'
 // v2 起带上图片：换图的属性改动与图片资产本身（base64 内嵌）。
 // 内嵌而不是只存文件名，是因为这份 JSON 的用途就是交给别人导入——
 // 图丢了，换图那条记录也就没意义了。
-export const SCHEMA_VERSION = 2
+// v3 起带上移动：重排从写 CSS order 换成了真的搬 DOM 节点。
+export const SCHEMA_VERSION = 3
 
-// v1 没有 attrs / assets 字段，缺了也能正常导入，所以照收
-const SUPPORTED = new Set([1, 2])
+// 老版本导出的文件缺字段也能正常导入，所以照收
+const SUPPORTED = new Set([1, 2, 3])
 
 export const exportJSON = (meta = {}) => {
-  const { edits, comments, removals } = ChangeStore.read()
+  const { edits, comments, removals, moves } = ChangeStore.read()
 
   return {
     schema:     SCHEMA_VERSION,
@@ -34,6 +35,18 @@ export const exportJSON = (meta = {}) => {
       anchors:  c.anchors,
       text:     c.text,
       images:   (c.images || []).map(i => i.id),
+    })),
+    // 移动存三方锚点：元素自己、原容器与后邻、新容器与后邻。
+    // 主锚点用移动**之前**那一份——导入方页面上的元素还在原位，
+    // 拿移动后的选择器去找必然落空。
+    moves: moves.map(m => ({
+      seq:      m.seq,
+      selector: (m.fromAnchors || m.anchors).selector,
+      anchors:  m.fromAnchors || m.anchors,
+      tag:      m.tag,
+      text:     m.text,
+      from: { anchors: m.fromParentAnchors, next: m.fromNextAnchors, atEnd: m.fromAtEnd },
+      to:   { anchors: m.toParentAnchors,   next: m.toNextAnchors,   atEnd: m.toAtEnd },
     })),
     // 删除只存定位信息：DOM 节点本身带不走，导入方要按锚点重新找到它再删
     removals: removals.map(r => ({
@@ -77,7 +90,7 @@ export const importJSON = (data, { apply = true } = {}) => {
 
   const report = {
     ok: true, matched: [], missing: [], failed: [],
-    comments: 0, viaText: 0, images: 0, attrs: 0, removals: 0,
+    comments: 0, viaText: 0, images: 0, attrs: 0, removals: 0, moves: 0,
   }
 
   // 资产要先入库：后面的换图记录与评论都按 id 引用它们
@@ -119,7 +132,31 @@ export const importJSON = (data, { apply = true } = {}) => {
     }
   }
 
-  // 删除放在样式之后、评论之前：先把该改的改完，再动结构。
+  // 移动排在删除之前：先把元素搬到位，再删该删的。
+  // 反过来的话，被搬进某个已删容器的元素就再也放不进去了。
+  for (const record of data.moves || []) {
+    try {
+      const { el } = resolveElement(record)
+      if (!el) { report.missing.push(record.selector); continue }
+
+      const parent = record.to?.anchors ? resolveElement({ anchors: record.to.anchors }).el : null
+      if (!parent) { report.missing.push(record.to?.anchors?.selector || record.selector); continue }
+
+      // atEnd 时本来就没有后邻。不看这个标志的话，「放到末尾」和
+      // 「后邻没找着」分不出来，只能一律 append——两者恰好同解，但换成
+      // 中间位置就会静默落错地方。
+      const next = record.to?.atEnd || !record.to?.next
+        ? null
+        : resolveElement({ anchors: record.to.next }).el
+
+      if (apply) ChangeStore.moveElement(el, parent, next?.parentElement === parent ? next : null)
+      report.moves++
+    } catch (err) {
+      report.failed.push({ selector: record.selector, reason: err?.message || String(err) })
+    }
+  }
+
+  // 删除放在样式与移动之后、评论之前：先把该改的改完，再动结构。
   // 顺序反了的话，样式记录会去找一个已经被删掉的元素。
   for (const record of data.removals || []) {
     try {

@@ -105,13 +105,13 @@ export class ChangeList extends HTMLElement {
     if (!this.#built) return
 
     const shadow = this.#shadow
-    const { edits, comments, removals } = ChangeStore.read()
+    const { edits, comments, removals, moves } = ChangeStore.read()
     const stats = ChangeStore.stats()
 
     // 「配置」这一栏原本漏算了换图与删除，数字对不上列表里的条数
     const label = {
       all:     `全部 ${stats.total}`,
-      style:   `配置 ${stats.props + stats.texts + stats.attrs + stats.removals}`,
+      style:   `配置 ${stats.props + stats.texts + stats.attrs + stats.removals + stats.moves}`,
       comment: `评论 ${stats.comments}`,
     }
     shadow.querySelectorAll('.tabs button').forEach(btn => {
@@ -128,7 +128,8 @@ export class ChangeList extends HTMLElement {
 
     const items = [
       ...(showStyles ? edits.map(e => this.#renderEdit(e)) : []),
-      // 删除是结构改动，归在「配置」这一栏
+      // 移动和删除都是结构改动，归在「配置」这一栏
+      ...(showStyles ? moves.map(m => this.#renderMove(m)) : []),
       ...(showStyles ? removals.map(r => this.#renderRemoval(r)) : []),
       ...(showComments ? comments.map(c => this.#renderComment(c)) : []),
     ]
@@ -201,6 +202,25 @@ export class ChangeList extends HTMLElement {
     </div>`
   }
 
+  #renderMove(m) {
+    const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
+    // 「搬到哪儿了」才是用户要认的东西——一条只写元素名的记录，
+    // 和它旁边那条样式改动长得一模一样
+    const to = m.toParentAnchors ? shortSelector(m.toParentAnchors) : '（容器已失联）'
+    const back = ChangeStore.canMoveBack(m)
+
+    return `<div class="item" data-id="${esc(m.id)}" data-kind="move"${m.orphaned ? ' data-orphaned' : ''}>
+      <div class="item-head">
+        <span class="sel" title="${esc(m.anchors.selector)}">${shortSelector(m.anchors)}</span>
+        ${GONE_BADGE(m)}
+        <span class="badge" data-kind="move">已移动</span>
+        <button class="icon-btn move-back" data-id="${esc(m.id)}"${back ? '' : ' disabled'}
+          title="${back ? '搬回原来的位置' : '原来的容器已不在页面上，搬不回去'}">↺</button>
+      </div>
+      <div class="comment-text">移动到 ${esc(to)} 里</div>
+    </div>`
+  }
+
   #renderComment(c) {
     const n = c.images?.length || 0
     const imageTag = n
@@ -220,10 +240,11 @@ export class ChangeList extends HTMLElement {
   }
 
   #elementOf(id, kind) {
-    const { edits, comments, removals } = ChangeStore.read()
+    const { edits, comments, removals, moves } = ChangeStore.read()
     if (kind === 'comment') return comments.find(c => c.id === id)?.el
     // 已删除的元素不在 DOM 上，高亮与回跳都会因 isConnected 为假而自然跳过
     if (kind === 'removal') return removals.find(r => r.id === id)?.el
+    if (kind === 'move') return moves.find(m => m.id === id)?.el
     return edits.find(e => e.id === id)?.el
   }
 
@@ -252,6 +273,7 @@ export class ChangeList extends HTMLElement {
       const report = await pickAndImport()
       const message = report.ok
         ? `导入 ${report.matched.length} 处改动` +
+          (report.moves ? ` + ${report.moves} 处移动` : '') +
           (report.removals ? ` + ${report.removals} 处删除` : '') +
           (report.comments ? ` + ${report.comments} 条评论` : '') +
           (report.viaText ? `（${report.viaText} 处靠文本特征匹配）` : '') +
@@ -315,6 +337,15 @@ export class ChangeList extends HTMLElement {
       if (!ok) this.dispatchEvent(new CustomEvent('vr-toast', {
         bubbles: true, composed: true,
         detail: { message: '父元素已不在页面上，这个元素放不回去了', kind: 'error' },
+      }))
+    })
+
+    on('.move-back', 'click', e => {
+      e.stopPropagation()
+      const ok = ChangeStore.moveBack(e.currentTarget.dataset.id)
+      if (!ok) this.dispatchEvent(new CustomEvent('vr-toast', {
+        bubbles: true, composed: true,
+        detail: { message: '原来的容器已不在页面上，这个元素搬不回去了', kind: 'error' },
       }))
     })
 

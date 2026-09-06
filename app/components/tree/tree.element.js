@@ -5,7 +5,7 @@
 import { ChangeStore } from '../../core/change-store.js'
 import { elementId } from '../../core/snapshot.js'
 import { childrenOf, describeNode, pathTo } from '../../core/tree-model.js'
-import { canReorder } from '../../core/reorder.js'
+import { canDrag, orderedChildren } from '../../core/reorder.js'
 import { highlight, clearHighlight } from '../../core/highlight.js'
 import { containScroll } from '../../core/dom-utils.js'
 import { default as tree_css } from './tree.element.css'
@@ -43,13 +43,13 @@ export class ReviseTree extends HTMLElement {
       <style>${tree_css}</style>
       <div class="tree-head">
         <span class="title">结构</span>
-        <span class="hint">拖动行可排序</span>
+        <span class="hint">拖动行可移动</span>
         <button class="tree-close" title="关闭">×</button>
       </div>
       <div class="list"><div class="drop-line" hidden></div></div>`
 
     this.#bind()
-    // 排序落在 order 上，改完顺序会变，树得跟着重画
+    // 移动改的是 DOM 结构，改完树得跟着重画
     this.#unsubscribe = ChangeStore.subscribe(() => this.schedule())
     this.#untrap = containScroll(this, () => this.#shadow.querySelector('.list'))
     this.render()
@@ -179,28 +179,27 @@ export class ReviseTree extends HTMLElement {
     list.addEventListener('pointerdown', e => this.#startDrag(e))
   }
 
-  // ── 拖动排序 ──
-  // 只在同一个父节点内换位。重排写的是 CSS order，跨父节点搬家得真的动
-  // DOM 结构，那是另一回事，改动模型也记录不了。
+  // ── 拖动移动 ──
+  // 落点可以是任意一行：插到它前面、插到它后面、或者放进它里面。
+  // 移动改的是 DOM 结构本身，不再受「同一个 flex 父级」的限制。
   #startDrag(e) {
     if (e.button !== 0 || e.target.closest?.('.twist')) return
 
     const row = this.#rowOf(e.target)
-    if (!row?.el || !canReorder(row.el)) return
+    if (!row?.el || !canDrag(row.el)) return
 
     const list = this.#shadow.querySelector('.list')
 
     // 指针捕获推迟到真的越过 slop 之后（见 #onDragMove）。在 pointerdown 就
     // 捕获的话，后续 click 的 target 会被重定向到 .list，#rowOf 拿不到那一行，
-    // 「点一下选中」这条路整个失效——而且只在可重排的行上失效（不可重排的行
+    // 「点一下选中」这条路整个失效——而且只在可拖的行上失效（不可拖的行
     // 压根走不到这里），看起来就像树时灵时不灵。
     this.#drag = {
       row,
-      parent: row.el.parentElement,
       startY: e.clientY,
       pointerId: e.pointerId,
       moved: false,
-      index: null,
+      drop: null,
     }
 
     const move = ev => this.#onDragMove(ev)
@@ -229,30 +228,75 @@ export class ReviseTree extends HTMLElement {
       list.setAttribute('data-dragging', '')
     }
 
-    // 只有同一父节点下的兄弟才是合法落点
-    const targets = this.#rows.filter(r =>
-      r.el && r.el !== drag.row.el && r.el.parentElement === drag.parent)
+    this.#updateDrop(drag, e.clientY)
+  }
 
+  // 一行分三段：上 1/3 插到它前面，下 1/3 插到它后面，中间 1/3 放进它里面。
+  // 中段只对容器成立——把一段文字塞进另一段文字里没有意义。
+  #dropAt(drag, clientY) {
+    for (const row of this.#rows) {
+      if (!row.el) continue
+      // 不能拖进自己或自己的后代：DOM 会抛错，语义上也是个死结
+      if (row.el === drag.row.el || drag.row.el.contains(row.el)) continue
+
+      const node = this.#shadow.querySelector(`.row[data-id="${CSS.escape(row.id)}"]`)
+      if (!node) continue
+
+      const r = node.getBoundingClientRect()
+      if (clientY < r.top || clientY >= r.bottom) continue
+
+      const third = r.height / 3
+      const inside = clientY >= r.top + third && clientY < r.bottom - third
+        && (row.hasChildren || /^(block|flex|grid|inline-flex|inline-grid)$/.test(getComputedStyle(row.el).display))
+
+      if (inside) return { row, where: 'inside' }
+      return clientY < r.top + r.height / 2
+        ? { row, where: 'before', y: r.top }
+        : { row, where: 'after',  y: r.bottom }
+    }
+    return null
+  }
+
+  // 落点从「视觉上的那一行」翻译成 DOM 上的 { toParent, toNext }。
+  // 行序是 orderedChildren 给的（按 CSS order 排过），所以后邻也必须从
+  // 同一个序列里取——直接用 nextElementSibling 会在带 order 的容器里落错位置。
+  #resolveDrop(drop) {
+    const el = drop.row.el
+
+    if (drop.where === 'inside')
+      return { toParent: el, toNext: null }
+
+    const toParent = el.parentElement
+    if (!toParent || toParent === document.documentElement) return null
+
+    if (drop.where === 'before') return { toParent, toNext: el }
+
+    const kids = orderedChildren(toParent)
+    return { toParent, toNext: kids[kids.indexOf(el) + 1] || null }
+  }
+
+  #updateDrop(drag, clientY) {
+    const list = this.#shadow.querySelector('.list')
     const line = this.#shadow.querySelector('.drop-line')
-    if (!targets.length) { line.hidden = true; drag.index = null; return }
 
-    const listRect = this.#shadow.querySelector('.list').getBoundingClientRect()
-    let index = targets.length
-    let y = null
+    list.querySelectorAll('.row[data-drop-inside]')
+      .forEach(n => n.removeAttribute('data-drop-inside'))
 
-    for (let i = 0; i < targets.length; i++) {
-      const el = this.#shadow.querySelector(`.row[data-id="${CSS.escape(targets[i].id)}"]`)
-      if (!el) continue
-      const r = el.getBoundingClientRect()
-      if (e.clientY < r.top + r.height / 2) { index = i; y = r.top; break }
-      y = r.bottom
+    const drop = this.#dropAt(drag, clientY)
+    drag.drop = drop && this.#resolveDrop(drop) ? drop : null
+
+    if (!drag.drop) { line.hidden = true; return }
+
+    if (drop.where === 'inside') {
+      line.hidden = true
+      this.#shadow.querySelector(`.row[data-id="${CSS.escape(drop.row.id)}"]`)
+        ?.setAttribute('data-drop-inside', '')
+      return
     }
 
-    drag.index = index
-    drag.targets = targets.map(t => t.el)
-
+    const listRect = list.getBoundingClientRect()
     line.hidden = false
-    line.style.top = `${(y ?? listRect.top) - listRect.top + this.#shadow.querySelector('.list').scrollTop}px`
+    line.style.top = `${drop.y - listRect.top + list.scrollTop}px`
   }
 
   #endDrag() {
@@ -262,18 +306,20 @@ export class ReviseTree extends HTMLElement {
     const list = this.#shadow.querySelector('.list')
     list.removeAttribute('data-dragging')
     this.#shadow.querySelector('.drop-line').hidden = true
+    list.querySelectorAll('.row[data-drop-inside]')
+      .forEach(n => n.removeAttribute('data-drop-inside'))
 
-    if (!drag?.moved || drag.index == null) return
+    if (!drag?.moved || !drag.drop) return
 
-    // 只上报意图，不自己落笔：这一次重排要不要同步到共享元素，
+    const target = this.#resolveDrop(drag.drop)
+    if (!target) return
+
+    // 放进一个折叠着的容器：先展开它，否则用户看不到自己刚放进去的东西
+    if (drag.drop.where === 'inside') this.#expanded.add(drag.drop.row.id)
+
+    // 只上报意图，不自己落笔：这一次移动要不要同步到同构容器，
     // 是面板才知道的事（共享开关和同构兄弟都在它那儿）。
-    // 树自己调 applyOrder 的话，联动开着也只会改眼前这一个容器。
-    this.#emit('vr-tree-reorder', {
-      container: drag.parent,
-      others: drag.targets,
-      dragged: drag.row.el,
-      index: drag.index,
-    })
+    this.#emit('vr-tree-move', { el: drag.row.el, ...target })
     this.render()
   }
 }

@@ -3,7 +3,6 @@
  * Part of Visual Revise, built on Project VisBug. See NOTICE.
  */
 import { PROP_GROUP, GROUPS, sameValue } from './tracked-props.js'
-import { textLandmarks } from './anchors.js'
 import { ChangeStore } from './change-store.js'
 import { saveRefImages } from './ref-images.js'
 import { parseCssUrl, fileNameOf } from './image-source.js'
@@ -289,82 +288,43 @@ const removalSection = removals => {
   ].join('\n')
 }
 
-// 编辑器自身的 UI 不算页面结构的一部分
-const isOwnUI = el =>
-  el.hasAttribute?.('data-visual-revise-ui') || /^(VIS-BUG|VISBUG-)/.test(el.tagName || '')
-
-const orderOf = el => {
-  const raw = parseInt(el.style?.order, 10)
-  return Number.isFinite(raw) ? raw : 0
+// 「在谁里面、排在谁前面」——两头都给选择器，AI 才定位得到搬家的起点和终点。
+// 落在末尾时没有后邻可写，必须显式说明：resolveElement 找不到元素时同样返回
+// 空，光看「之前：（空）」分不出是末尾还是没找着。
+const placeLine = (parentAnchors, nextAnchors, atEnd) => {
+  const container = parentAnchors ? `\`${parentAnchors.selector}\`` : '（容器已失联）'
+  const where = atEnd || !nextAnchors
+    ? '末尾'
+    : `${describeElement(nextAnchors)}（\`${nextAnchors.selector}\`）之前`
+  return `${container} 里的${where}`
 }
 
-// 重排产生的是一组 order 数值，但用户的意图是「换个顺序」。
-// 把这组数值还原成顺序本身：AI 拿到顺序才能去调数组或 JSX，
-// 拿到 order 数值只会照搬成 CSS——那是下策，见段落末尾的说明。
-const collectReorders = edits => {
-  const containers = new Map()
+// 移动单独成段：它改的是源码结构，和调样式、换文案都不是一类操作。
+// 混进属性表 AI 会照着写成 CSS —— 那只是看起来挪了位置。
+const moveSection = moves => {
+  if (!moves.length) return ''
 
-  for (const entry of edits) {
-    if (!entry.changes.some(c => c.prop === 'order')) continue
-
-    const parent = entry.el?.parentElement
-    if (!parent || containers.has(parent)) continue
-
-    const siblings = Array.from(parent.children).filter(el => !isOwnUI(el))
-    if (siblings.length < 2) continue
-
-    containers.set(parent, {
-      parent,
-      before: siblings,
-      after: siblings.slice().sort((a, b) => orderOf(a) - orderOf(b)),
-    })
-  }
-
-  return Array.from(containers.values())
-    .filter(g => g.before.some((el, i) => el !== g.after[i]))   // 顺序确实变了
-}
-
-// 取第一条独立的短文本，而不是把整棵子树拼起来——
-// 后者既难读，也无法用来在源码里检索
-const textOf = el => textLandmarks(el, 1)[0] || ''
-
-const nameOf = el => {
-  const text = textOf(el)
-  if (text) return `「${text}」`
-
-  const cls = Array.from(el.classList || []).filter(c => !/^(_|css-)/.test(c))[0]
-  return cls ? `${el.tagName.toLowerCase()}.${cls}` : `<${el.tagName.toLowerCase()}>`
-}
-
-const containerSelector = el => {
-  const tag = el.tagName.toLowerCase()
-  const cls = Array.from(el.classList || []).filter(c => !/^(_|css-)/.test(c))
-  return cls.length ? `${tag}.${cls[0]}` : tag
-}
-
-const reorderSection = groups => {
-  if (!groups.length) return ''
-
-  const blocks = groups.map(({ parent, before, after }) => [
-    `**容器**：\`${containerSelector(parent)}\``,
+  const blocks = moves.map((m, i) => [
+    // 定位信息用移动**之前**的锚点：AI 要在源码里找的是它原来待的地方
+    `### ${i + 1}. ${describeElement(m.fromAnchors || m.anchors)}`,
     '',
-    '调整后的顺序（从前到后）：',
+    anchorBlock(m.fromAnchors || m.anchors),
+    `- 从：${placeLine(m.fromParentAnchors, m.fromNextAnchors, m.fromAtEnd)}`,
+    `- 到：${placeLine(m.toParentAnchors, m.toNextAnchors, m.toAtEnd)}`,
     '',
-    ...after.map((el, i) => `${i + 1}. ${nameOf(el)}`),
-    '',
-    `原顺序：${before.map(nameOf).join(' → ')}`,
   ].join('\n'))
 
   return [
     '---',
     '',
-    '## 元素重新排序',
+    '## 移动的元素',
     '',
-    blocks.join('\n\n'),
+    '以下元素被搬到了页面上的另一个位置：',
     '',
-    '> 请直接调整源码中元素或数据的顺序（数组顺序、JSX 中的书写顺序等）。',
-    '> 不建议改用 CSS `order` 实现：它只改变视觉顺序，DOM 顺序不变，',
-    '> 会让键盘 Tab 顺序与读屏顺序和用户看到的不一致。',
+    blocks.join('\n'),
+    '> 请在源码里把元素本身挪过去（改 JSX / 模板里的书写位置，或改渲染',
+    '> 这段结构的数据），不要用 CSS `order` 或绝对定位去模拟：那只改变视觉',
+    '> 位置，DOM 顺序不变，键盘 Tab 顺序与读屏顺序仍然是旧的。',
     '',
   ].join('\n')
 }
@@ -386,17 +346,12 @@ const FOOTER = `## 给 AI 的说明
 不要静默忽略。`
 
 export const buildPrompt = (state, meta = {}, refs = null) => {
-  const { edits = [], comments = [], removals = [] } = state
-  if (!edits.length && !comments.length && !removals.length) return ''
+  const { edits = [], comments = [], removals = [], moves = [] } = state
+  if (!edits.length && !comments.length && !removals.length && !moves.length) return ''
 
-  const reorders = collectReorders(edits)
-
-  // order 已经由「元素重新排序」段落表达，不再重复列进属性表。
-  // 必须先于下面的 summary 定义——它要统计 styleEdits 的数量。
-  // 只改了文案、没动样式的元素同样要留下（entry.text）。
+  // 面板里手动改的 order 照常进属性表：它是一条普通样式改动，
+  // 和「移动元素」是两回事——后者改的是 DOM 结构，单独成段。
   const styleEdits = edits
-    .map(entry => ({ ...entry, changes: entry.changes.filter(c => c.prop !== 'order') }))
-    .filter(entry => entry.changes.length || entry.text || entry.attrs?.length)
 
   const url      = meta.url      || (typeof location !== 'undefined' ? location.href : '')
   const viewport = meta.viewport || (typeof innerWidth !== 'undefined' ? `${innerWidth} × ${innerHeight}` : '')
@@ -414,7 +369,7 @@ export const buildPrompt = (state, meta = {}, refs = null) => {
   if (styleCount) summary.push(`${styleCount} 处元素样式`)
   if (textCount)  summary.push(`${textCount} 处文案`)
   if (imageCount) summary.push(`${imageCount} 处图片替换`)
-  if (reorders.length)   summary.push(`${reorders.length} 处顺序调整`)
+  if (moves.length)      summary.push(`${moves.length} 处移动`)
   if (removals.length)   summary.push(`${removals.length} 处删除`)
   if (comments.length)   summary.push(`${comments.length} 条交互备注`)
   head.push(`改动：${summary.join('，')}`, '')
@@ -443,8 +398,6 @@ export const buildPrompt = (state, meta = {}, refs = null) => {
       ...(changes.length ? ['**样式改动**', '', changeTable(changes, refs), ''] : []),
     ].join('\n')
   })
-
-  const reorderBlock = reorderSection(reorders)
 
   const hasRefImages = comments.some(c => c.images?.length)
 
@@ -491,14 +444,15 @@ export const buildPrompt = (state, meta = {}, refs = null) => {
 
   // 结尾的分隔线和 FOOTER 要拼成一段：filter(Boolean) 会把中间那个空行滤掉，
   // 让 --- 和下一个标题贴在一起
-  return [head.join('\n'), ...sections, reorderBlock, removalSection(removals),
+  return [head.join('\n'), ...sections, moveSection(moves), removalSection(removals),
     commentSection, refSection(refs), `---\n\n${FOOTER}\n`]
     .filter(Boolean).join('\n')
 }
 
 export const copyPrompt = async (state, meta) => {
-  const { edits = [], comments = [], removals = [] } = state || {}
-  if (!edits.length && !comments.length && !removals.length) return { ok: false, reason: 'empty' }
+  const { edits = [], comments = [], removals = [], moves = [] } = state || {}
+  if (!edits.length && !comments.length && !removals.length && !moves.length)
+    return { ok: false, reason: 'empty' }
 
   // 落盘要在生成提示词之前：正文里写的就是落盘后的绝对路径。
   // 落盘失败不阻断复制——提示词照出，只是把图标注成「请向用户索取」。

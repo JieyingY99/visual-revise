@@ -4,166 +4,252 @@ const { port, close } = await serve()
 const origin = `http://127.0.0.1:${port}`
 const { browser, page } = await launch({ headless: true })
 
-console.log('\n[拖拽重排测试] 独立套件——指针时序敏感，不与其他用例共享状态\n')
+console.log('\n[页面拖拽测试] 独立套件——指针时序敏感，不与其他用例共享状态\n')
 await page.goto(origin)
 await injectVisBug(page, origin)
-await page.evaluate(() => window.__visualRevise.setReorderMode(true))
 await page.waitForTimeout(300)
 
-const orders = () => page.evaluate(() =>
-  Array.from(document.querySelectorAll('.curve-card')).map(c => c.style.order))
-const dragState = () => page.evaluate(() => ({
-  indicator: document.getElementById('visual-revise-drop-indicator')?.style.display ?? '无元素',
-  opacity:   document.querySelectorAll('.curve-card')[2].style.opacity,
-  props:     window.__visualRevise.store.stats().props,
-}))
+// 两个纵向容器 + 一个空容器：既能测同容器内换位，也能测搬进别的容器
+const buildZone = () => page.evaluate(() => {
+  document.getElementById('dz')?.remove()
+  const z = document.createElement('div')
+  z.id = 'dz'
+  z.style.cssText = 'position:absolute;left:30px;top:620px;display:flex;gap:24px'
+  z.innerHTML =
+    '<div id="dz-a" style="width:200px;padding:10px;background:#1a1a1f">'
+    + '<div class="k" style="height:44px;background:#a55">k0</div>'
+    + '<div class="k" style="height:44px;background:#5a5">k1</div></div>'
+    + '<div id="dz-b" style="width:200px;height:120px;padding:10px;background:#22222a"></div>'
+  document.body.appendChild(z)
+})
 
-// ── 进入模式后可拖区域必须可见 ──
-const hints = await page.evaluate(() => ({
-  droppable: document.querySelectorAll('[data-vr-droppable]').length,
-  draggable: document.querySelectorAll('[data-vr-draggable]').length,
+const kidsOf = id => page.evaluate(x =>
+  [...document.getElementById(x).children].map(n => n.textContent.trim()).join(','), id)
+const stats = () => page.evaluate(() => window.__visualRevise.store.stats())
+const reset = async () => {
+  await page.evaluate(() => {
+    window.__visualRevise.store.undoEverything()
+    window.__visualRevise.store.history.clear()
+  })
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(200)
+}
+
+await buildZone()
+
+// ── 拖拽在选择模式下就是开着的，不再挂在「结构」tab 上 ──
+const idle = await page.evaluate(() => ({
+  active:    window.__visualRevise.layoutDrag.active,
+  tab:       document.querySelector('visual-revise-panel').tab,
   styleTag:  !!document.getElementById('visual-revise-drag-hints'),
-  cardsMarked: document.querySelector('.cards')?.hasAttribute('data-vr-droppable'),
-  // 标记不能写进 inline style，否则会被当成用户改动
-  noInlinePollution: Array.from(document.querySelectorAll('.curve-card'))
-    .every(c => !c.getAttribute('style')),
+  // 放宽跨容器限制之后不能再预标记整页容器：那等于给几千个节点一起加
+  // outline，整页会闪成一团
+  premarked: document.querySelectorAll('[data-vr-drop-target]').length,
+  legacy:    document.querySelectorAll('[data-vr-droppable],[data-vr-draggable]').length,
+  noInlinePollution: [...document.querySelectorAll('#dz .k')].every(k => !k.getAttribute('style')?.includes('opacity')),
 }))
-ok(hints.styleTag, '已注入可拖区域的提示样式')
-ok(hints.cardsMarked, 'flex 容器被标记为可拖放区域')
-ok(hints.draggable >= 3, `可拖子元素已标记（${hints.draggable} 个）`)
-ok(hints.noInlinePollution, '标记不写 inline style，不污染改动记录')
-ok((await page.evaluate(() => window.__visualRevise.store.stats().props)) === 0,
-   '进入模式本身不产生任何改动记录')
+ok(idle.active, '选择模式下页面拖拽默认可用（不再要求切到结构 tab）')
+ok(idle.styleTag, '已注入落点提示样式')
+ok(idle.premarked === 0 && idle.legacy === 0,
+   `拖拽开始前不预标记任何容器（落点 ${idle.premarked}，旧标记 ${idle.legacy}）`)
+ok(idle.noInlinePollution, '标记不写 inline style，不污染改动记录')
+ok((await stats()).total === 0, '进入页面本身不产生任何改动记录')
 
-// ── 拖拽中途取消：必须完整收尾，且不落下重排 ──
-const box = await page.locator('.curve-card').nth(2).boundingBox()
-await page.mouse.move(box.x + box.width / 2, box.y + 8)
+// ── 按下不动松开：仍然是「选中」，不是拖拽 ──
+const k0 = await page.locator('#dz .k').nth(0).boundingBox()
+await page.mouse.move(k0.x + 90, k0.y + 22)
 await page.mouse.down()
-await page.mouse.move(box.x - 200, box.y + 8, { steps: 8 })
+await page.mouse.move(k0.x + 92, k0.y + 23)   // 2px，没到 4px 的阈值
+await page.mouse.up()
+await page.waitForTimeout(400)
+
+const tapped = await page.evaluate(() => ({
+  selected: document.querySelectorAll('[data-selected]').length,
+  text:     document.querySelector('[data-selected]')?.textContent.trim(),
+  tab:      document.querySelector('visual-revise-panel').tab,
+  moves:    window.__visualRevise.store.stats().moves,
+}))
+ok(tapped.selected === 1 && tapped.text === 'k0',
+   `按下不动松开仍是选中（选中了「${tapped.text}」）`)
+ok(tapped.tab === 'props', '选中后停在属性 tab——拖拽不再需要切 tab')
+ok(tapped.moves === 0, '没越过阈值就不算一次移动')
+
+// ── 属性 tab 下按住拖 ≥4px：同容器内换位 ──
+// 刚选中的元素上浮着 visbug-handles，从它身上起拖是最常见的情形
+const k1 = await page.locator('#dz .k').nth(1).boundingBox()
+await page.mouse.move(k1.x + 90, k1.y + 22)
+await page.mouse.down()
+await page.mouse.move(k1.x + 90, k1.y + 10, { steps: 4 })
+await page.mouse.move(k0.x + 90, k0.y + 4, { steps: 8 })   // k0 的上 1/3
 await page.waitForTimeout(200)
 
-const mid = await dragState()
-ok(mid.indicator === 'block' && mid.opacity === '0.25',
-   `拖拽进行中：指示线 ${mid.indicator}，被拖元素压暗 ${mid.opacity}`)
-
-// 拖影必须存在并跟随指针
-const ghost1 = await page.evaluate(() => {
+const mid = await page.evaluate(() => {
   const g = document.getElementById('visual-revise-drag-ghost')
-  return g ? { left: parseFloat(g.style.left), top: parseFloat(g.style.top),
-               width: parseFloat(g.style.width), tag: g.tagName,
-               isOwnUI: g.hasAttribute('data-visual-revise-ui'),
-               pointerEvents: g.style.pointerEvents } : null
+  const bar = document.getElementById('visual-revise-drop-indicator')
+  return {
+    ghost:     g ? { left: parseFloat(g.style.left), top: parseFloat(g.style.top), tag: g.tagName,
+                     isOwnUI: g.hasAttribute('data-visual-revise-ui'),
+                     pointerEvents: g.style.pointerEvents } : null,
+    indicator: bar?.style.display,
+    opacity:   document.querySelectorAll('#dz .k')[1].style.opacity,
+    marked:    [...document.querySelectorAll('[data-vr-drop-target]')].map(el => el.id),
+    dragging:  window.__visualRevise.layoutDrag.dragging,
+  }
 })
-ok(!!ghost1, '拖拽时生成拖影')
-ok(ghost1?.tag === 'ARTICLE', `拖影是被拖元素的克隆（${ghost1?.tag}）`)
-ok(ghost1?.isOwnUI && ghost1?.pointerEvents === 'none',
-   '拖影标记为编辑器 UI 且不拦截指针（不会被自己选中）')
+ok(mid.dragging && mid.opacity === '0.25',
+   `越过阈值才真的开始拖（dragging=${mid.dragging}，被拖元素压暗 ${mid.opacity}）`)
+ok(!!mid.ghost && mid.ghost.tag === 'DIV', '拖拽时生成拖影（被拖元素的克隆）')
+ok(mid.ghost?.isOwnUI && mid.ghost?.pointerEvents === 'none',
+   '拖影标记为编辑器 UI 且不拦截指针（不会被自己命中）')
+ok(mid.indicator === 'block', '插入位置有指示线')
+ok(mid.marked.join() === 'dz-a', `只高亮当前悬停的落点容器（${JSON.stringify(mid.marked)}）`)
 
-await page.mouse.move(box.x - 320, box.y + 60, { steps: 4 })
+await page.mouse.move(k0.x + 60, k0.y + 2, { steps: 3 })
 await page.waitForTimeout(120)
 const ghost2 = await page.evaluate(() => {
   const g = document.getElementById('visual-revise-drag-ghost')
   return g ? { left: parseFloat(g.style.left), top: parseFloat(g.style.top) } : null
 })
-ok(ghost2 && ghost2.left < ghost1.left && ghost2.top > ghost1.top,
-   `拖影跟随指针移动（${ghost1.left},${ghost1.top} → ${ghost2.left},${ghost2.top}）`)
+ok(ghost2 && ghost2.left < mid.ghost.left, '拖影跟随指针移动')
 
-await page.evaluate(() => window.__visualRevise.setReorderMode(false))
-await page.waitForTimeout(200)
-
-const cancelled = await dragState()
-ok(cancelled.indicator === 'none', '取消后指示线隐藏')
-ok(cancelled.opacity === '', '取消后元素透明度还原')
-ok(await page.evaluate(() => !document.getElementById('visual-revise-drag-ghost')),
-   '取消后拖影已移除')
-ok(cancelled.props === 0, `取消不落下重排（改动 ${cancelled.props} 项）`)
-ok((await orders()).every(o => o === ''), '取消后无 order 写入')
-
-// 残留的 pointerup 不应再触发已取消的拖拽
 await page.mouse.up()
-await page.waitForTimeout(200)
-ok((await orders()).every(o => o === ''), '取消后残留的 pointerup 不再生效')
+await page.waitForTimeout(400)
 
-// ── 取消之后重新拖拽仍然正常（监听未被清空过头）──
-await page.evaluate(() => window.__visualRevise.setReorderMode(true))
-await page.waitForTimeout(200)
+const swapped = await page.evaluate(() => ({
+  kids:   [...document.getElementById('dz-a').children].map(n => n.textContent.trim()).join(','),
+  orders: [...document.querySelectorAll('#dz .k')].map(k => k.style.order).join('|'),
+  moves:  window.__visualRevise.store.stats().moves,
+  props:  window.__visualRevise.store.stats().props,
+  selected: document.querySelector('[data-selected]')?.textContent.trim(),
+  indicator: document.getElementById('visual-revise-drop-indicator')?.style.display,
+  marked: document.querySelectorAll('[data-vr-drop-target]').length,
+}))
+ok(swapped.kids === 'k1,k0', `拖到目标上 1/3 → 插到它前面（#dz-a = ${swapped.kids}）`)
+ok(/^\|*$/.test(swapped.orders), `真的搬了 DOM 节点，一个 CSS order 都没写（order = "${swapped.orders}"）`)
+ok(swapped.moves === 1 && swapped.props === 0,
+   `记成一条移动而不是一堆属性改动（moves=${swapped.moves} props=${swapped.props}）`)
+ok(swapped.selected === 'k1',
+   `松手后被移动的元素仍是选中态（「${swapped.selected}」）——那次 click 被拖拽吞掉了`)
+ok(swapped.indicator === 'none' && swapped.marked === 0, '松手后指示线与落点高亮都收掉')
 
-const b0 = await page.locator('.curve-card').nth(0).boundingBox()
-const b2 = await page.locator('.curve-card').nth(2).boundingBox()
-await page.mouse.move(b2.x + b2.width / 2, b2.y + 8)
+// ⌘Z 一次退回整次移动
+await page.evaluate(() => document.activeElement?.blur?.())
+await page.keyboard.press('Meta+z')
+await page.waitForTimeout(400)
+ok(await kidsOf('dz-a') === 'k0,k1', `⌘Z 一次撤回整次移动（#dz-a = ${await kidsOf('dz-a')}）`)
+await page.keyboard.press('Meta+Shift+z')
+await page.waitForTimeout(400)
+ok(await kidsOf('dz-a') === 'k1,k0', '⌘⇧Z 重做')
+
+await reset()
+
+// ── 跨容器：搬进另一个（非 flex/grid 的空）容器 ──
+const kk = await page.locator('#dz .k').nth(0).boundingBox()
+const zb = await page.locator('#dz-b').boundingBox()
+await page.mouse.move(kk.x + 90, kk.y + 22)
 await page.mouse.down()
-await page.mouse.move(b0.x + 24, b0.y + 8, { steps: 10 })
+await page.mouse.move(kk.x + 90, kk.y + 34, { steps: 4 })
+await page.mouse.move(zb.x + zb.width / 2, zb.y + zb.height / 2, { steps: 10 })
+await page.waitForTimeout(200)
+const overEmpty = await page.evaluate(() =>
+  [...document.querySelectorAll('[data-vr-drop-target]')].map(el => el.id).join())
+ok(overEmpty === 'dz-b', `悬停在空容器上时它被标成落点（${overEmpty}）`)
+await page.mouse.up()
+await page.waitForTimeout(400)
+
+ok(await kidsOf('dz-b') === 'k0' && await kidsOf('dz-a') === 'k1',
+   `跨容器搬家：#dz-b = ${await kidsOf('dz-b')}，#dz-a = ${await kidsOf('dz-a')}`)
+ok((await stats()).moves === 1, '跨容器移动记入 moves')
+
+await reset()
+
+// ── 拖到一半按 Esc 取消 ──
+const c0 = await page.locator('#dz .k').nth(0).boundingBox()
+await page.mouse.move(c0.x + 90, c0.y + 22)
+await page.mouse.down()
+await page.mouse.move(zb.x + zb.width / 2, zb.y + zb.height / 2, { steps: 8 })
 await page.waitForTimeout(150)
+await page.keyboard.press('Escape')
 await page.mouse.up()
 await page.waitForTimeout(300)
 
-const after = await orders()
-ok(after.join(',') === '1,2,0', `取消后重新拖拽仍正常：order = [${after}]`)
+const cancelled = await page.evaluate(() => ({
+  a: [...document.getElementById('dz-a').children].map(n => n.textContent.trim()).join(','),
+  b: document.getElementById('dz-b').children.length,
+  ghost: !!document.getElementById('visual-revise-drag-ghost'),
+  indicator: document.getElementById('visual-revise-drop-indicator')?.style.display,
+  opacities: [...document.querySelectorAll('#dz .k')].map(k => k.style.opacity).join('|'),
+  total: window.__visualRevise.store.stats().total,
+}))
+ok(cancelled.a === 'k0,k1' && cancelled.b === 0, `Esc 取消，DOM 回到拖之前（#dz-a = ${cancelled.a}）`)
+ok(!cancelled.ghost && cancelled.indicator === 'none', '取消后拖影与指示线都清掉')
+ok(cancelled.opacities === '|', '取消后透明度还原')
+ok(cancelled.total === 0, `取消不落下任何改动（${cancelled.total} 项）`)
 
 // ── 反复中断不累积副作用 ──
 // 每次中断若留下未解绑的 pointermove/pointerup，后续每个指针事件都会
 // 白跑一遍旧处理器；这里断言十轮中断后 store 与 DOM 均无残留。
-await page.evaluate(() => window.__visualRevise.store.undoEverything())
-await page.waitForTimeout(200)
-
 for (let i = 0; i < 10; i++) {
   await page.evaluate(() => window.__visualRevise.setReorderMode(true))
-  await page.waitForTimeout(50)
-  const b = await page.locator('.curve-card').nth(1).boundingBox()
-  await page.mouse.move(b.x + b.width / 2, b.y + 8)
+  const b = await page.locator('#dz .k').nth(1).boundingBox()
+  await page.mouse.move(b.x + 90, b.y + 22)
   await page.mouse.down()
-  await page.mouse.move(b.x - 40, b.y + 8, { steps: 3 })
-  await page.waitForTimeout(50)
+  await page.mouse.move(b.x + 90, b.y - 30, { steps: 3 })
+  await page.waitForTimeout(40)
   await page.evaluate(() => window.__visualRevise.setReorderMode(false))
   await page.mouse.up()
-  await page.waitForTimeout(50)
+  await page.waitForTimeout(40)
 }
 
 const residue = await page.evaluate(() => ({
-  props:     window.__visualRevise.store.stats().props,
-  orders:    Array.from(document.querySelectorAll('.curve-card')).map(c => c.style.order),
-  opacities: Array.from(document.querySelectorAll('.curve-card')).map(c => c.style.opacity),
+  total:     window.__visualRevise.store.stats().total,
+  a:         [...document.getElementById('dz-a').children].map(n => n.textContent.trim()).join(','),
+  opacities: [...document.querySelectorAll('#dz .k')].map(k => k.style.opacity).join('|'),
   indicator: document.getElementById('visual-revise-drop-indicator')?.style.display,
+  ghost:     !!document.getElementById('visual-revise-drag-ghost'),
   active:    window.__visualRevise.layoutDrag.active,
+  marked:    document.querySelectorAll('[data-vr-drop-target]').length,
+  styleTag:  !!document.getElementById('visual-revise-drag-hints'),
 }))
-
-ok(residue.props === 0, `十轮中断后无改动残留（${residue.props} 项）`)
-ok(residue.orders.every(o => o === ''), `十轮中断后无 order 残留`)
-ok(residue.opacities.every(o => o === ''), `十轮中断后无透明度残留`)
-ok(await page.evaluate(() => !document.getElementById('visual-revise-drag-ghost')),
-   '十轮中断后无拖影残留')
-ok(residue.indicator === 'none', `十轮中断后指示线已隐藏`)
-ok(residue.active === false, `十轮中断后模式已关闭`)
-ok(await page.evaluate(() => document.querySelectorAll('[data-vr-droppable]').length) === 0,
-   '关闭模式后可拖标记已清除')
+ok(residue.total === 0 && residue.a === 'k0,k1', `十轮中断后无改动残留（${residue.total} 项）`)
+ok(residue.opacities === '|', '十轮中断后无透明度残留')
+ok(!residue.ghost && residue.indicator === 'none', '十轮中断后无拖影 / 指示线残留')
+ok(residue.active === false && residue.marked === 0 && !residue.styleTag,
+   '关掉之后拖拽停用、落点标记与提示样式都清掉')
 
 // 之后仍能正常拖拽
 await page.evaluate(() => window.__visualRevise.setReorderMode(true))
-await page.waitForTimeout(300)
-const d0 = await page.locator('.curve-card').nth(0).boundingBox()
-const d2 = await page.locator('.curve-card').nth(2).boundingBox()
-await page.mouse.move(d2.x + d2.width / 2, d2.y + 8)
+await page.waitForTimeout(250)
+const r1 = await page.locator('#dz .k').nth(1).boundingBox()
+const r0 = await page.locator('#dz .k').nth(0).boundingBox()
+await page.mouse.move(r1.x + 90, r1.y + 22)
 await page.mouse.down()
-await page.mouse.move(d0.x + 24, d0.y + 8, { steps: 10 })
+await page.mouse.move(r0.x + 90, r0.y + 4, { steps: 10 })
 await page.waitForTimeout(150)
 await page.mouse.up()
-await page.waitForTimeout(300)
+await page.waitForTimeout(400)
+ok(await kidsOf('dz-a') === 'k1,k0',
+   `十轮中断之后拖拽仍能正常提交（#dz-a = ${await kidsOf('dz-a')}）`)
 
-// 断言重排结果本身，而不是改动条数：落回 order:0 的元素与默认值相同，
-// 会被"等值不记录"正确过滤掉，条数取决于最终落位
-const revived = await page.evaluate(() => ({
-  orders: Array.from(document.querySelectorAll('.curve-card')).map(c => c.style.order),
-  recorded: window.__visualRevise.store.read().edits
-    .flatMap(e => e.changes).filter(c => c.prop === 'order').length,
-}))
-ok(revived.orders.join(',') === '1,2,0',
-   `十轮中断之后拖拽仍能正常提交重排：order = [${revived.orders}]`)
-ok(revived.recorded === 2,
-   `落回默认值的那一项不计入改动（记录 ${revived.recorded} 条，写入 3 个 order）`)
+// ── 不能拖进自己或自己的后代 ──
+const nested = await page.evaluate(() => {
+  const s = window.__visualRevise.store
+  const a = document.getElementById('dz-a')
+  return {
+    self:  s.moveElement(a, a, null),
+    child: s.moveElement(a, a.querySelector('.k'), null),
+    root:  s.moveElement(a, document.documentElement, null),
+  }
+})
+ok(!nested.self && !nested.child && !nested.root,
+   `拖进自己 / 后代 / <html> 一律拒绝（${JSON.stringify(nested)}）`)
 
-// ── 提示词必须表达「顺序意图」，而不是一串 order 数值 ──
+// ── 提示词必须把「搬家」表达成结构改动，而不是一串坐标 ──
+await reset()
+await buildZone()
 await page.evaluate(() => {
   const s = window.__visualRevise.store
+  s.moveElement(document.querySelector('#dz-a .k'), document.getElementById('dz-b'), null)
   const title = document.querySelector('.hero-title')
   s.track(title)
   s.applyProp(title, 'font-size', '52px')   // 混入一条普通样式改动
@@ -172,23 +258,29 @@ await page.waitForTimeout(300)
 
 const prompt = await page.evaluate(() =>
   window.__visualRevise.lib.buildPrompt(window.__visualRevise.store.read()))
-
-ok(prompt.includes('## 元素重新排序'), '提示词含「元素重新排序」段落')
-ok(/调整后的顺序（从前到后）/.test(prompt), '给出调整后的顺序')
-ok(/原顺序：/.test(prompt), '同时给出原顺序供对照')
-
-const orderSection = prompt.slice(prompt.indexOf('## 元素重新排序'))
-ok(/1\. 「Thinking Nine」/.test(orderSection),
-   `新顺序首位是被拖动的元素：${orderSection.split('\n').find(l => l.startsWith('1.'))?.trim()}`)
-ok(!/「[^」]{40,}」/.test(orderSection), '元素名取短文本，不是整棵子树拼成的长串')
-
-ok(!/\| order \|/.test(prompt) && !/order.*→/.test(prompt.split('## 元素重新排序')[0]),
-   'order 数值不再出现在属性改动表里')
-ok(prompt.includes('不建议改用 CSS `order`') && prompt.includes('键盘 Tab'),
-   '说明了直接改源码顺序的理由（order 会破坏键盘与读屏顺序）')
+ok(prompt.includes('## 移动的元素'), '提示词含「移动的元素」段落')
+const moveSection = prompt.slice(prompt.indexOf('## 移动的元素'))
+ok(/- 从：.*dz-a/.test(moveSection) && /- 到：.*dz-b/.test(moveSection),
+   `from / to 两头都给了容器选择器：${moveSection.split('\n').filter(l => /^- (从|到)：/.test(l)).join(' ／ ')}`)
+ok(/- 选择器：/.test(moveSection) && /- 文本特征：/.test(moveSection),
+   '被移动的元素本身也给了定位锚点')
+ok(prompt.includes('不要用 CSS `order`') && prompt.includes('键盘 Tab'),
+   '说明了为什么要改源码结构而不是拿 CSS 模拟')
 ok(prompt.includes('font-size'), '同时存在的普通样式改动不受影响')
-ok(/改动：1 处元素样式，1 处顺序调整/.test(prompt),
+ok(/改动：1 处元素样式，1 处移动/.test(prompt),
    `摘要分别统计两类改动：${prompt.split('\n').find(l => l.startsWith('改动：'))}`)
+
+// 只做了移动、什么样式都没改时，复制按钮不该报「还没有任何改动」
+await reset()
+await buildZone()
+const onlyMove = await page.evaluate(async () => {
+  const s = window.__visualRevise.store
+  s.moveElement(document.querySelector('#dz-a .k'), document.getElementById('dz-b'), null)
+  const md = window.__visualRevise.lib.buildPrompt(s.read())
+  return { len: md.length, hasSection: md.includes('## 移动的元素') }
+})
+ok(onlyMove.len > 0 && onlyMove.hasSection,
+   `只做了移动也能生成提示词（${onlyMove.len} 字符）——否则复制会报 empty`)
 
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

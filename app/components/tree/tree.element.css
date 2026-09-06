@@ -178,3 +178,11 @@
   pointer-events: none;
 }
 .drop-line[hidden] { display: none; }
+
+/* 「放进这一行里面」和「插到这一行前 / 后」是两种落点，指示也得是两种：
+   一条线说的是位置，整行描边说的是容器。只用线的话，用户分不出
+   自己是要放进去还是放旁边。 */
+.row[data-drop-inside] {
+  background: rgb(13 153 255 / .16);
+  box-shadow: inset 0 0 0 1px var(--vr-accent);
+}

@@ -22,7 +22,7 @@ import { resizeMode, planResize, currentSize, isMainAxis, cssVariables } from '.
 import { parseTracks, serializeTracks, readTracks, gridShape } from './grid.js'
 import { flowOf, planFlow, alignmentOf, planAlignment } from './layout.js'
 import { semanticName, describeNode, childrenOf } from './tree-model.js'
-import { orderedChildren, applyOrder } from './reorder.js'
+import { orderedChildren } from './reorder.js'
 
 // visbug-distance 是「粘住」的测距线：它的所有权已从 measurements 模块转移出去，
 // 停用工具时的 clearMeasurements() 清不到它们，只能在这里一并收起。
@@ -70,8 +70,18 @@ export const mountVisualRevise = visbug => {
   // 树发出的事件带 composed，会从面板的 shadow 冒上来，所以监听挂在面板上。
 
   const layoutDrag = createLayoutDrag({
-    onDone: ({ ordered }) => panel.toast(`已重排 ${ordered.length} 个元素`),
+    // 选中框浮在元素上方、四角还有拦指针的缩放把手，拖之前先让开
+    onDragStart: () => engine.unselect_all(),
+    onDone: ({ el, toParent }) => {
+      // 松手后那次 click 被拖拽吞掉了，选中得由我们自己接回来——
+      // 否则用户刚搬完的元素反而失去了焦点，面板也跟着空掉
+      if (el?.isConnected) engine.select(el)
+      toolbar.toast(`已移动到 ${describeNode(toParent).name} 里`)
+    },
   })
+  // 初始模式就是 select，而 setMode 只在切换时才跑。不在这里开一次，
+  // 拖拽要等用户先切一次模式才活过来——最常见的那条路径反而是死的。
+  layoutDrag.setActive(true)
 
   let interactive = false
   // 声明要排在 onSelected 之前：engine.onSelectedUpdate 注册时会立刻回调一次，
@@ -285,7 +295,7 @@ export const mountVisualRevise = visbug => {
         e.stopPropagation()
         setMode('select')
         if (panel.target) panel.setTab(key === 'f' ? 'structure' : 'props')
-        layoutDrag.setActive(key === 'f')
+        layoutDrag.setActive(mode === 'select')
         return
       }
 
@@ -364,9 +374,10 @@ export const mountVisualRevise = visbug => {
     toolbar.hidden = stealth
 
     comments.setActive(next === 'comment')
-    // 页面上直接拖子元素，只在面板停在「结构」tab 时开着——
-    // 它接管页面指针事件，属性 tab 下开着会挡住正常的选中
-    layoutDrag.setActive(next === 'select' && panel.tab === 'structure')
+    // 页面上直接拖元素在整个选择模式下都开着。以前只在「结构」tab 下开，
+    // 是因为它在 pointerdown 那一刻就抢事件、会挡住正常的选中；现在有了
+    // 4px 的起拖阈值，按下不动仍然是选中，不再需要靠 tab 把它关起来。
+    layoutDrag.setActive(next === 'select')
     toolbar.setMode(next)
 
     if (next !== 'select') {
@@ -380,18 +391,13 @@ export const mountVisualRevise = visbug => {
   // 兼容既有调用点
   const setCommentMode = on => setMode(on ? 'comment' : 'select')
 
-  // 重排不再是一个模式，但「开启 / 关闭页面上的拖拽重排」这件事还在。
-  // 名字保留：调用方要的一直是这个语义，底层从「切模式」换成了
-  // 「切到面板的结构 tab」。没有选中元素时面板不出现，也就没有结构可看，
-  // 此时只开页面拖拽本身。
+  // 拖拽移动不再是一个模式，但「临时关掉 / 打开页面上的拖拽」这件事还在
+  // （调用方要的一直是这个语义）。关：把手上这一次拖拽取消掉并停用；
+  // 开：回到选择模式并启用。
   const setReorderMode = on => {
+    if (!on) { layoutDrag.setActive(false); return }
     if (mode !== 'select') setMode('select')
-    if (panel.target) panel.setTab(on ? 'structure' : 'props')
-    // 选中框（visbug-handles）浮在元素上方并拦指针，会挡住拖拽的起手。
-    // 以前进重排模式顺带清了选中，所以没暴露；现在重排不再是模式，
-    // 这一步得自己做。
-    if (on) engine.unselect_all()
-    layoutDrag.setActive(on)
+    layoutDrag.setActive(mode === 'select')
   }
 
   // 评论模式下点击不选中元素，而是在该元素上起草评论。
@@ -532,8 +538,11 @@ export const mountVisualRevise = visbug => {
     el.scrollIntoView({ behavior: 'smooth', block: 'center' })
   })
 
-  panel.addEventListener('vr-tree-reorder', e =>
-    toolbar.toast(`已重排 ${(e.detail?.others?.length ?? 0) + 1} 个元素`))
+  panel.addEventListener('vr-tree-move', e => {
+    const el = e.detail?.el
+    if (!el?.isConnected) return
+    toolbar.toast(`已移动到 ${describeNode(e.detail.toParent).name} 里`)
+  })
 
 
   // × 只收这块面板，不动当前模式——用户多半还想接着选下一个元素，
@@ -546,8 +555,6 @@ export const mountVisualRevise = visbug => {
     engine.unselect_all()
   })
   panel.addEventListener('vr-comment-toggle', () => setCommentMode(!comments.active))
-  panel.addEventListener('vr-tab', e =>
-    layoutDrag.setActive(mode === 'select' && e.detail.tab === 'structure'))
   list.addEventListener('vr-toast', e => toolbar.toast(e.detail.message, e.detail.kind))
 
   panel.addEventListener('vr-open-list', () => {
@@ -618,7 +625,8 @@ export const mountVisualRevise = visbug => {
     resizeMode, planResize, currentSize, isMainAxis, cssVariables,
     parseTracks, serializeTracks, readTracks, gridShape,
     flowOf, planFlow, alignmentOf, planAlignment,
-    semanticName, describeNode, childrenOf, orderedChildren, applyOrder,
+    semanticName, describeNode, childrenOf, orderedChildren,
+    moveElement: (el, toParent, toNext) => ChangeStore.moveElement(el, toParent, toNext),
   }
   // 构建时间由 rollup 注入。一句话回答「我这份是不是最新的」——
   // 扩展重载、页面刷新、脚本缓存，三者任缺一环看到的都是上一版，
