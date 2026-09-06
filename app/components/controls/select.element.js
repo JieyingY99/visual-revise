@@ -102,7 +102,7 @@ export class VrSelect extends HTMLElement {
       <style>
         :host {
           display: block;
-          height: 30px;
+          height: 32px;
           background: #383838;
           border: 1px solid transparent;
           border-radius: 5px;

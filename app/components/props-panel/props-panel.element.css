@@ -112,14 +112,18 @@ header:active { cursor: grabbing; }
 .side-pair,
 .limits,
 .with-action,
-.flow-row { align-items: stretch; }
+.flow-row,
+.typo-align { align-items: stretch; }
 
+/* 高度跟行走（stretch），宽度再用 aspect-ratio 跟高度走——只拉高不拉宽
+   会得到一个 24×32 的长方形按钮，比不拉更难看。 */
 .layer-row > .icon-btn,
 .dims > .icon-btn,
 .side-pair > .icon-btn,
 .limits > .icon-btn,
 .with-action > .icon-btn,
-.flow-row > .icon-btn { height: auto; align-self: stretch; }
+.flow-row > .icon-btn,
+.typo-align > .icon-btn { height: auto; width: auto; aspect-ratio: 1 / 1; align-self: stretch; }
 .icon-btn:hover { background: var(--vr-field-hi); color: var(--vr-text); }
 .icon-btn[data-on] { background: var(--vr-accent); color: #fff; }
 
@@ -173,7 +177,12 @@ header:active { cursor: grabbing; }
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.scroll::-webkit-scrollbar { width: 10px; }
+/* 原生滚动条藏掉。它会占 10px 布局宽度，把内容区右侧挤窄——面板左右
+   padding 一边 12 一边 2，一眼看得出来。headless 用 overlay 滚动条量不出这个，
+   用户的 macOS 一开「始终显示滚动条」就露馅。设计工具的属性面板惯例也是
+   不显示常驻滚动条，靠滚轮 / 触控板滚。 */
+.scroll { scrollbar-width: none; }
+.scroll::-webkit-scrollbar { display: none; width: 0; }
 .scroll::-webkit-scrollbar-track { background: transparent; }
 .scroll::-webkit-scrollbar-thumb {
   background: #4a4a4a;
@@ -225,7 +234,7 @@ h3:hover .acts .var-btn { opacity: 1; }
 .icon-btn[disabled]:hover { background: transparent; color: var(--vr-label); }
 
 .layers { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.layer-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.layer-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 /* 填充控件和颜色控件自己都是 flex 容器（色块 + 输入区）。这一条 min-width: 0
    缺不得：flex 子项默认按内容算最小宽度，色值框里的等宽字体会把整行顶宽，
    把右边的眼睛和减号挤出面板——按钮还在，只是画到了看不见的地方。 */
@@ -299,7 +308,7 @@ section[folded] .rows { display: none; }
 /* ── 字段：标签在控件上方 ── */
 .rows { display: grid; gap: 12px; }
 
-.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 
 .field { display: grid; gap: 5px; min-width: 0; }
 
@@ -314,6 +323,9 @@ label.name[data-drag] { cursor: ew-resize; width: fit-content; }
 label.name[data-dirty] { color: var(--vr-accent); font-weight: 500; }
 
 /* ── 控件 ── */
+/* 输入框统一 32：颜色控件（vr-color / vr-fill）和带边框的 resize-cell 都是 32，
+   普通 input 原来是 30——同一面板里两种输入框高度，四行并排时按钮列宽跟着
+   差 2px，两列的分界线就错开了。 */
 .control { position: relative; display: flex; align-items: center; }
 
 /* 图标前缀比字符前缀高一点，用 grid 居中，免得基线对不齐 */
@@ -336,7 +348,7 @@ label.name[data-dirty] { color: var(--vr-accent); font-weight: 500; }
 
 input {
   width: 100%;
-  height: 30px;
+  height: 32px;
   padding: 0 8px;
   font: inherit;
   font-size: 11px;
@@ -360,7 +372,7 @@ input::placeholder { color: var(--vr-mute); }
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   gap: 2px;
-  height: 30px;
+  height: 32px;
   padding: 2px;
   background: var(--vr-field);
   border-radius: 5px;
@@ -383,14 +395,20 @@ input::placeholder { color: var(--vr-mute); }
    末尾固定 24px 给比例锁 / 展开按钮。尺寸、限制、内边距、外边距四行
    上下相邻，竖直分界必须落在同一条线上——原来三套栅格
    （1fr 1fr auto auto / 1fr 1fr auto / 1fr 1fr）各差几像素，扫下来是歪的。 */
+/* 第三列 minmax(32px, auto) 而不是 24px 或 auto：
+   - 写死 24 会把 aspect-ratio 撑成 32 的按钮挤出网格，右边缘比上一行多探出 8px；
+   - 纯 auto 在「限制」那一行（没有按钮）会收缩成 0，前两列各多分 16px，
+     四行的分界线就错开一截。
+   32 是输入框的统一外框高，按钮跟它等宽。
+   gap 6 跟 flex 行（排列 / 对齐 / 字体）一致——原来 grid 8、flex 6、层列表 4
+   三种混用，上下两行的间距一眼看得出不一样。 */
 .dims,
 .side-pair,
 .limits {
   display: grid;
-  grid-template-columns: 1fr 1fr 24px;
-  gap: 8px;
+  grid-template-columns: 1fr 1fr minmax(32px, auto);
+  gap: 6px;
 }
-.dims, .side-pair { align-items: center; }
 .dims .control { min-width: 0; }
 .dims .ratio[data-on] {
   background: rgb(13 153 255 / .16);
@@ -399,7 +417,7 @@ input::placeholder { color: var(--vr-mute); }
 
 .segment {
   display: flex;
-  height: 30px;
+  height: 32px;
   padding: 2px;
   gap: 2px;
   background: var(--vr-field);
@@ -550,11 +568,14 @@ input::placeholder { color: var(--vr-mute); }
   background: var(--vr-field);
   border-radius: 5px;
   border: 1px solid transparent;
+  /* 外框 32 且 border-box：input 涨到 32 后这层壳不能再往外加 2px 边框变 34 */
+  height: 32px; box-sizing: border-box;
 }
 .resize-cell input,
 .control.limit input {
   background: transparent;
   border: none;
+  height: 100%;
 }
 .resize-cell:hover,
 .control.limit:hover { background: var(--vr-field-hi); }
@@ -769,7 +790,7 @@ input::placeholder { color: var(--vr-mute); }
 .typo-pair {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 6px;
 }
 
 .typo-align { display: flex; gap: 6px; align-items: center; }

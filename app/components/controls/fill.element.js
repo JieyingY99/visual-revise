@@ -194,12 +194,12 @@ export class VrFill extends HTMLElement {
         :host { display: flex; gap: 6px; align-items: center; cursor: pointer; }
         .swatch {
           flex: none; box-sizing: border-box;
-          width: 30px; height: 30px; border-radius: 5px; border: 1px solid #3d3d3d;
+          width: 32px; height: 32px; border-radius: 5px; border: 1px solid #3d3d3d;
           position: relative; overflow: hidden; ${CHECKER}
         }
         .swatch i { position: absolute; inset: 0; background-size: cover; }
         .label {
-          flex: 1; min-width: 0; height: 30px; display: flex; align-items: center; padding: 0 8px;
+          flex: 1; min-width: 0; height: 32px; box-sizing: border-box; display: flex; align-items: center; padding: 0 8px;
           font: 400 11px/1 ui-monospace, Menlo, monospace; color: #fff;
           background: #383838; border-radius: 5px;
           white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -210,7 +210,7 @@ export class VrFill extends HTMLElement {
            两个控件在面板里上下相邻，差一个像素都看得出来 */
         .fields {
           flex: 1; min-width: 0; display: flex; align-items: center;
-          height: 30px; background: #383838; border-radius: 5px;
+          height: 32px; box-sizing: border-box; background: #383838; border-radius: 5px;
           border: 1px solid transparent;
         }
         :host(:hover) .fields { background: #444; }

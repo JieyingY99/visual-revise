@@ -77,11 +77,17 @@ const probe = () => page.evaluate(() => {
       }
     }
 
+    // 上下文：同一行 / 同一分段 / 同一 acts 组里的图标该同尺寸
+    const ctxEl = svg.closest('.segment, .acts, .layer-row, .flow-row, .dims, .side-pair, .with-action, .typo-align, .control, header, .tabs, .effect-row')
+    const ctx = ctxEl ? (ctxEl.className || ctxEl.tagName).toString().split(' ')[0] : 'other'
+    let b2; try { b2 = svg.getBBox() } catch { b2 = null }
+    const ink = b2 && vb.length === 4 && vb[2] ? +(Math.max(b2.width, b2.height) / vb[2]).toFixed(2) : null
+
     icons.push({
       owner: name(svg.parentElement || svg),
       w: +r.width.toFixed(2), h: +r.height.toFixed(2),
       vbSquare: vb.length === 4 ? vb[2] === vb[3] : true,
-      off,
+      off, ctx, ink,
     })
   }
 
@@ -89,20 +95,23 @@ const probe = () => page.evaluate(() => {
   //    只看并排的兄弟：输入框内部的前缀图标和模式按钮是框内装饰，
   //    它们本来就该在框里居中，不参与这条。
   const rows = []
-  for (const row of sr.querySelectorAll('.layer-row, .pair, .typo-pair, .dims, .side-pair, .limits, .with-action, .flow-row')) {
+  for (const row of sr.querySelectorAll('.layer-row, .pair, .typo-pair, .dims, .side-pair, .limits, .with-action, .flow-row, .typo-align')) {
     if (!vis(row)) continue
     const kids = [...row.children].filter(vis)
     if (kids.length < 2) continue
-    const boxes = kids.map(k => ({ el: name(k), r: k.getBoundingClientRect(), icon: false }))
+    const boxes = kids.map(k => ({ el: name(k), r: k.getBoundingClientRect(), icon: k.classList.contains('icon-btn') }))
     const fields = boxes
     const hs = fields.map(b => +b.r.height.toFixed(1))
     const mids = boxes.map(b => +(b.r.top + b.r.height / 2).toFixed(1))
+    // 并排的图标按钮还得是正方形：只拉高不拉宽就是个 24×32 的长方形
+    const oblong = boxes.filter(b => b.icon && Math.abs(b.r.width - b.r.height) > 0.5).map(b => `${b.el} ${b.r.width}×${b.r.height}`)
     rows.push({
       row: name(row),
       heights: hs,
       same: new Set(hs).size <= 1,
       centered: Math.max(...mids) - Math.min(...mids) <= 1,
       mids,
+      oblong,
     })
   }
 
@@ -137,8 +146,36 @@ const probe = () => page.evaluate(() => {
   const colorHosts = [...sr.querySelectorAll('vr-color, vr-fill')].filter(vis)
     .map(c => ({ el: c.tagName.toLowerCase(), h: +c.getBoundingClientRect().height.toFixed(1) }))
 
+  // 面板左右内边距要对称。原生滚动条占位会把右边挤窄，headless 用 overlay
+  // 滚动条量不出来，所以这里连滚动条宽度一起算：offsetWidth − clientWidth
+  const hostBox = document.querySelector('visual-revise-panel').getBoundingClientRect()
+  // 取第一个真正可见的 .rows：折叠的分区和空的层列表都是 display:none，rect 全 0
+  const firstRows = [...sr.querySelectorAll('section .rows')].map(r => r.getBoundingClientRect()).find(r => r.width > 0)
+  const scrollEl = sr.querySelector('.scroll')
+  const padding = firstRows ? {
+    left: +(firstRows.left - hostBox.left).toFixed(1),
+    right: +(hostBox.right - firstRows.right).toFixed(1),
+    scrollbar: scrollEl ? scrollEl.offsetWidth - scrollEl.clientWidth : 0,
+  } : null
+
+  // 并排行的间距与右缘：行内 gap 该只有一个值；最右的控件要贴到行容器右边缘，
+  // 差一点就是跟上下行对不齐（grid 第三列写死 24px 时按钮会探出 6~8px）
+  const rowGaps = []
+  for (const row of sr.querySelectorAll('.layer-row, .pair, .typo-pair, .dims, .side-pair, .limits, .with-action, .flow-row, .typo-align')) {
+    if (!vis(row)) continue
+    const kids = [...row.children].filter(vis)
+    if (kids.length < 2) continue
+    const rr = row.getBoundingClientRect(), bs = kids.map(k => k.getBoundingClientRect())
+    rowGaps.push({
+      row: name(row),
+      gaps: bs.slice(1).map((b, i) => +(b.left - bs[i].right).toFixed(1)),
+      rightGap: +(rr.right - bs[bs.length - 1].right).toFixed(1),
+      spill: bs.some(b => b.right > rr.right + 0.5 || b.left < rr.left - 0.5),
+    })
+  }
+
   return {
-    icons, rows, overflow, listRows, colorHosts,
+    icons, rows, overflow, listRows, colorHosts, padding, rowGaps,
     gaps: Object.fromEntries(Object.entries(gaps).map(([k, v]) => [k, [...v]])),
     host: { left: +host.left.toFixed(1), right: +host.right.toFixed(1), width: +host.width.toFixed(1) },
   }
@@ -270,9 +307,37 @@ const skewed = [...new Set(scenes.flatMap(s => s.icons
 AC('AC-9.1b', skewed.length === 0,
    `图形都落在 viewBox 中央${skewed.length ? '，画偏的：' + skewed.slice(0, 8).join('; ') : ''}`)
 
+// 同一上下文里渲染尺寸一致：换行钮 13 挤在四个 14 的 flow 分段旁边就是小一号
+const sizeByCtx = {}
+for (const s of scenes) for (const i of s.icons) (sizeByCtx[i.ctx] ||= new Set()).add(i.w)
+const mixed = Object.entries(sizeByCtx).filter(([, v]) => v.size > 1).map(([k, v]) => `${k}: ${[...v].join('/')}`)
+AC('AC-9.1c', mixed.length === 0,
+   `同一上下文里图标渲染尺寸一致${mixed.length ? '，混用的：' + mixed.join('; ') : `（${Object.entries(sizeByCtx).map(([k, v]) => `${k}=${[...v][0]}`).join(' ')}）`}`)
+
+// 墨迹占 viewBox 62–78%：太小的跟旁边的比矮一头，太大的顶到边框
+const inkOut = [...new Set(scenes.flatMap(s => s.icons.filter(i => i.ink !== null && (i.ink < 0.6 || i.ink > 0.8)).map(i => `${i.owner} ${Math.round(i.ink * 100)}%`)))]
+AC('AC-9.1d', inkOut.length === 0,
+   `图标墨迹占 viewBox 的 60–80%${inkOut.length ? '，出圈的：' + inkOut.slice(0, 8).join('; ') : ''}`)
+
 const badRows = scenes.flatMap(s => s.rows.filter(r => !r.same).map(r => `${s.label}/${r.row} ${r.heights.join('·')}`))
 AC('AC-9.2', badRows.length === 0,
    `同一行的所有控件等高（含图标按钮）${badRows.length ? '，不齐的：' + badRows.slice(0, 6).join('; ') : `（共 ${scenes.reduce((n, s) => n + s.rows.length, 0)} 行）`}`)
+
+const oblongs = [...new Set(scenes.flatMap(s => s.rows.flatMap(r => r.oblong.map(o => `${r.row}/${o}`))))]
+AC('AC-9.2e', oblongs.length === 0,
+   `并排的图标按钮都是正方形${oblongs.length ? '，长方形的：' + oblongs.slice(0, 6).join('; ') : ''}`)
+
+const gapSet = [...new Set(scenes.flatMap(s => s.rowGaps.flatMap(r => r.gaps)))]
+AC('AC-9.10', gapSet.length === 1,
+   `并排行内的间距只有一个值${gapSet.length === 1 ? `（${gapSet[0]}px）` : `，出现了 ${gapSet.join('/')}px`}`)
+const ragged = [...new Set(scenes.flatMap(s => s.rowGaps.filter(r => r.spill || r.rightGap !== 0).map(r => `${r.row} 右缘差 ${r.rightGap}${r.spill ? ' 溢出' : ''}`)))]
+AC('AC-9.11', ragged.length === 0,
+   `每行最右的控件都贴到行容器右边缘、不溢出${ragged.length ? '：' + ragged.slice(0, 6).join('; ') : ''}`)
+
+const pads = scenes.map(s => s.padding).filter(Boolean)
+const asym = pads.filter(p => Math.abs(p.left - p.right) > 0.5 || p.scrollbar > 0)
+AC('AC-9.9', asym.length === 0,
+   `面板左右内边距对称、滚动条不占位${asym.length ? `（左 ${asym[0].left} / 右 ${asym[0].right} / 滚动条 ${asym[0].scrollbar}px）` : `（${pads[0]?.left} / ${pads[0]?.right}）`}`)
 
 const offCenter = scenes.flatMap(s => s.rows.filter(r => !r.centered).map(r => `${s.label}/${r.row} 中心线 ${r.mids.join('·')}`))
 AC('AC-9.2b', offCenter.length === 0,

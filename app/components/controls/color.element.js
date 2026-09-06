@@ -76,7 +76,7 @@ export class VrColor extends HTMLElement {
         :host { display: flex; gap: 6px; align-items: center; }
         .swatch {
           flex: none; box-sizing: border-box; padding: 0;
-          width: 30px; height: 30px;
+          width: 32px; height: 32px;
           border-radius: 5px; border: 1px solid #3d3d3d;
           position: relative; overflow: hidden; cursor: pointer;
           ${CHECKER}
@@ -87,7 +87,7 @@ export class VrColor extends HTMLElement {
            得先把十六进制的 80 算出来。分开之后两边都能单独敲。 */
         .fields {
           flex: 1; min-width: 0; display: flex; align-items: center;
-          height: 30px; background: #383838; border-radius: 5px;
+          height: 32px; box-sizing: border-box; background: #383838; border-radius: 5px;
           border: 1px solid transparent;
         }
         .fields:hover { background: #444; }
