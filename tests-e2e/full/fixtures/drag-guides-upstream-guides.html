@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Guides playground · Visual Revise e2e</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0b0b0d; color: #eee; font: 14px/1.4 system-ui, sans-serif; }
+  /* 页面要能滚：4.5.2 里「滚动收起标尺线」得有真实的滚动可做 */
+  #tall { height: 1600px; }
+  .b { position: absolute; }
+</style>
+</head>
+<body>
+  <div id="tall"></div>
+
+  <!-- 锚（被选中的那个）：380..580 × 300..400 -->
+  <div class="b" id="ga" style="left:380px; top:300px; width:200px; height:100px; background:#33384a"></div>
+
+  <!-- 右：ga.right(580) < gr.left(700) → d = 120 -->
+  <div class="b" id="gr" style="left:700px; top:300px; width:100px; height:100px; background:#4a3333"></div>
+  <!-- 左：gl.right(280) < ga.left(380) → d = 100 -->
+  <div class="b" id="gl" style="left:180px; top:300px; width:100px; height:100px; background:#334a33"></div>
+  <!-- 上：gt.bottom(210) < ga.top(300) → d = 90 -->
+  <div class="b" id="gt" style="left:380px; top:150px; width:200px; height:60px; background:#4a4a33"></div>
+  <!-- 下：ga.bottom(400) < gb.top(500) → d = 100 -->
+  <div class="b" id="gb" style="left:380px; top:500px; width:200px; height:60px; background:#334a4a"></div>
+
+  <!-- 包含：gw 完全裹住 gi，四条内距 120 / 60 / 40 / 100 -->
+  <div class="b" id="gw" style="left:700px; top:480px; width:300px; height:220px; background:#23331f">
+    <div class="b" id="gi" style="left:60px; top:40px; width:120px; height:80px; background:#56664f"></div>
+  </div>
+</body>
+</html>

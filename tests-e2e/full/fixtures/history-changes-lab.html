@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>改动记录实验台</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.4 system-ui, sans-serif; background: #0b0b0d; color: #eee; }
+  /* 顶部留白：工具条固定在 top:20 居中，内容压在它下面才点得到 */
+  #stg { width: 640px; padding: 96px 12px 12px; }
+  h1 { font-size: 20px; margin: 0 0 10px; }
+  .box { padding: 8px; border: 1px solid #2a2a33; margin: 6px 0; background: #131318; }
+  .row { padding: 4px 8px; margin: 3px 0; background: #1c1c24; }
+  .dot { display: inline-block; width: 10px; height: 10px; background: #445; }
+  #pic { display: block; width: 60px; height: 40px; background: #333; }
+  /* 页面足够长才能验证「列表里滚轮不穿透到页面」 */
+  #tall { height: 1600px; }
+</style>
+<!-- 这一整块单独放，测「样式表里的 important 消失后历史仍能原样重放」时会被整个摘掉 -->
+<style id="impsheet">
+  .imp  { padding-top: 20px !important; opacity: .9 !important; }
+  .tcimp { color: rgb(255, 0, 0) !important; }
+  .fimp { background-color: rgb(0, 128, 0) !important; }
+</style>
+</head>
+<body>
+  <main id="stg">
+    <h1 id="ttl">改动记录实验台</h1>
+
+    <!-- 一批相邻兄弟：一次批量删除两个，验证撤销时 ops 反序执行 -->
+    <div class="box" id="pair">
+      <p class="row" id="p1">甲一</p>
+      <p class="row" id="p2">甲二</p>
+      <p class="row" id="p3">甲三</p>
+    </div>
+
+    <!-- 跨容器移动 -->
+    <div class="box" id="src"><p class="row" id="mvr">搬我</p></div>
+    <div class="box" id="dst"></div>
+
+    <!-- 删除：有文本的 / 没文本但有子元素的 -->
+    <div class="box" id="dw"><p class="row" id="dgo">删我</p></div>
+    <div class="box" id="sw"><div class="box" id="sil"><i class="dot"></i><i class="dot"></i></div></div>
+
+    <!-- 文案改动 / 换图 -->
+    <p class="row" id="txt">原始文案</p>
+    <img id="pic" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="">
+
+    <!-- 末段选择器：这一段没有 id，记录头部只该显示 span.tagme -->
+    <div class="box" id="deep"><span class="tagme">末段</span></div>
+
+    <!-- !important：样式表赢家带 important，inline 普通声明压不过它 -->
+    <p class="row imp" id="imp">带 important 的行</p>
+    <p class="row tcimp" id="tc" style="color: rgb(0, 0, 255)">文字色也带 important</p>
+    <div class="box fimp" id="fil" style="background-color: rgb(0, 0, 255)">填充也带 important</div>
+
+    <!-- 页面反复把删掉的元素渲染回来：验证 fighting -->
+    <div class="box" id="fw"><p class="row" id="fgt">页面在还原我</p></div>
+
+    <div id="tall"></div>
+  </main>
+</body>
+</html>

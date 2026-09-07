@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>弹层测试固件</title>
+<style>
+  /* 颜色变量够多（24 个），变量列表的 max-height:300px 才会真的滚起来。
+     另外两个非颜色变量用来验「另有 N 个其它类型的」那条计数。 */
+  :root {
+    --pop-brand: #22cc88;
+    --pop-accent: #ff8800;
+    --pop-ink: #3355ff;
+    --pop-paper: #f5f5f5;
+    --pop-c00: #101010; --pop-c01: #202020; --pop-c02: #303030; --pop-c03: #404040;
+    --pop-c04: #505050; --pop-c05: #606060; --pop-c06: #707070; --pop-c07: #808080;
+    --pop-c08: #909090; --pop-c09: #a0a0a0; --pop-c10: #b0b0b0; --pop-c11: #c0c0c0;
+    --pop-c12: #d01010; --pop-c13: #d02020; --pop-c14: #d03030; --pop-c15: #d04040;
+    --pop-c16: #d05050; --pop-c17: #d06060; --pop-c18: #d07070; --pop-c19: #d08080;
+    --pop-gap: 12px;
+    --pop-stack: Inter, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, sans-serif; background: #0b0b0d; color: #eee; }
+
+  #solid { position: absolute; left: 24px; top: 120px; width: 260px; padding: 16px;
+           background: #3355aa; color: #dddddd; border: 2px solid #778899; border-radius: 8px; }
+  #grad  { position: absolute; left: 320px; top: 120px; width: 220px; height: 100px;
+           background-image: linear-gradient(90deg, #ff0000 0%, #0000ff 100%); }
+  #img   { position: absolute; left: 580px; top: 120px; width: 200px; height: 100px;
+           background-color: #224466;
+           background-image: url("data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw=="); }
+  #flex  { position: absolute; left: 820px; top: 120px; width: 300px; height: 120px;
+           display: flex; gap: 8px; background: #2a2a33; }
+  #flex > span { display: block; width: 60px; height: 40px; background: #556; }
+  #gridbox { position: absolute; left: 24px; top: 300px; width: 300px; height: 120px; padding: 24px;
+             display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 60px;
+             gap: 8px; background: #223322; }
+  #gridbox > span { background: #445544; }
+  #plain { position: absolute; left: 360px; top: 300px; width: 220px; height: 80px; background: #444; }
+  #nofill { position: absolute; left: 620px; top: 300px; width: 200px; height: 80px; }
+  /* 计算出的 background-size 不在下拉的 auto/cover/contain 里，用来验「当前值不在
+     options 里时插到最前」 */
+  #mixed  { position: absolute; left: 860px; top: 300px; width: 200px; height: 80px;
+            background-color: #553311;
+            background-image: url("data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==");
+            background-size: 120px 40px; }
+  /* 页面要能滚：弹层「页面滚动就关」那条得有真的滚动距离 */
+  .spacer { height: 1600px; }
+</style>
+</head>
+<body>
+  <div id="solid">纯色容器文字</div>
+  <div id="grad"></div>
+  <div id="img"></div>
+  <div id="flex"><span></span><span></span></div>
+  <div id="gridbox"><span></span><span></span></div>
+  <div id="plain"><span>子</span></div>
+  <div id="nofill"><span>无填充</span></div>
+  <div id="mixed"></div>
+  <div class="spacer"></div>
+</body>
+</html>

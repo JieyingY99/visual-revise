@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Variables fixture · 没有颜色变量</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0e0e11; color: #eee; font: 14px/1.4 system-ui, sans-serif; }
+  /* 三个变量，一个颜色都没有：变量页要显示「另有 3 个其它类型的」 */
+  :root {
+    --only-len: 12px;
+    --only-num: 3;
+    --only-font: "Inter", sans-serif;
+  }
+  .box { width: 200px; height: 80px; margin: 20px; padding: 10px; background: #333; }
+</style>
+</head>
+<body>
+  <div class="box" id="ev-text">没有颜色变量可绑</div>
+</body>
+</html>

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>选择 / 把手 / 文字编辑 固件</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0b0b0d; color: #eee; font-family: system-ui, sans-serif; }
+
+  /* 全部绝对定位、彼此留出 >= 40px 空隙：
+     选中框的 8 个把手会向元素外扩 12px，靠太近就会互相盖住点击点。
+     所有元素都留在 x < 1000 内，右侧默认位置的属性面板（x≈1124）盖不到把手。 */
+  .box { position: absolute; background: #1b1b22; border: 1px solid #2c2c33; }
+
+  #solo   { left: 60px;  top: 40px;  width: 300px; height: 140px; padding: 12px; }
+  #texty  { left: 60px;  top: 220px; width: 340px; height: 120px; padding: 16px; font-size: 20px; line-height: 1.5; }
+  /* 容器比子项高一截：留出一条只属于容器自己的空白带，
+     好让「点容器本身」有个既不落在子项上、也够不着把手热区的落点。 */
+  #list   { left: 60px;  top: 380px; width: 470px; height: 170px; display: flex; gap: 16px; padding: 10px; align-items: flex-start; }
+  .item   { width: 96px; height: 96px; background: #22222a; border: 1px solid #33333d; }
+  #form   { left: 60px;  top: 590px; width: 340px; height: 64px; padding: 14px; }
+  #typer  { width: 280px; height: 32px; font-size: 14px; }
+  #nest   { left: 60px;  top: 690px; width: 340px; height: 130px; padding: 16px; }
+  #inner  { margin: 0; font-size: 18px; padding: 18px 8px; }
+</style>
+</head>
+<body>
+  <div class="box" id="solo">SOLO</div>
+  <div class="box" id="texty">Editable Paragraph</div>
+  <div class="box" id="list">
+    <div class="item" id="a">A</div>
+    <div class="item" id="b">B<em class="deep">deep</em></div>
+    <div class="item" id="c">C</div>
+    <div class="item" id="d">D</div>
+  </div>
+  <!-- style 写在标签上：⌥Delete 抹掉的正是这种「页面作者写的 inline 声明」 -->
+  <div class="box" id="form" style="opacity: 0.95"><input id="typer" value=""></div>
+  <div class="box" id="nest"><p id="inner">Inner Sentence</p></div>
+</body>
+</html>

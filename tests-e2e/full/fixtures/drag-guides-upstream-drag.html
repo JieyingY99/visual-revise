@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Drag playground · Visual Revise e2e</title>
+<style>
+  * { box-sizing: border-box; }
+  /* body 只有 200px 高、banner 只有 220px 宽：
+     - (1200, 16) 命中 <body> 本身  → 验「body 不响应起拖」
+     - 滚到 1400 之后视口里任意一点命中 <html> → 验「canDrag 为假 / 拒绝非法落点」
+     下面那些 zone 都是 position:absolute，不受 body 高度影响。 */
+  /* 页面比一屏长：滚到下半段时 <body>（扩展自己把它撑成 min-height:100vh）
+     整个落在视口上方，视口里点下去命中的就是 <html> 本身。 */
+  html { height: 2400px; }
+  body { margin: 0; height: 200px; background: #0b0b0d; color: #eee; font: 14px/1.4 system-ui, sans-serif; }
+  #banner { width: 220px; height: 32px; padding: 6px 12px; background: #15151b; }
+  .zone { position: absolute; padding: 12px; }
+  .cell { width: 120px; height: 70px; padding: 8px; background: #3a3a48; color: #fff; }
+</style>
+</head>
+<body>
+  <div id="banner">drag playground</div>
+
+  <!-- 横排容器：主轴看 x，落点分左 1/3 / 中 / 右 1/3 -->
+  <div id="row" class="zone" style="left:140px; top:120px; display:flex; gap:20px; background:#191920">
+    <div class="cell" id="r0">R0</div>
+    <div class="cell" id="r1">R1</div>
+    <div class="cell" id="r2">R2</div>
+  </div>
+
+  <!-- 竖排（普通块级）容器：主轴看 y -->
+  <div id="col" class="zone" style="left:620px; top:120px; width:200px; background:#20202a">
+    <div class="cell" id="c0" style="width:auto">C0</div>
+    <div class="cell" id="c1" style="width:auto">C1</div>
+  </div>
+
+  <!-- 空容器：只能整块接收（inside） -->
+  <div id="empty" class="zone" style="left:880px; top:120px; width:200px; height:170px; background:#2a2030"></div>
+
+  <!-- 容器 + 唯一子节点：验「不能拖进自己的后代」 -->
+  <div id="nest" class="zone" style="left:140px; top:330px; width:320px; height:150px; background:#1d2418">
+    <div id="n0" style="width:220px; height:110px; padding:8px; background:#44553a">N0</div>
+  </div>
+
+  <!-- 图片 + 普通兄弟：图片同样满足 canDrag -->
+  <div id="pics" class="zone" style="left:620px; top:330px; display:flex; gap:20px; background:#241a24">
+    <img id="pic" width="120" height="70" alt="pic"
+         src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw=="
+         style="background:#a55">
+    <div class="cell" id="p1">P1</div>
+  </div>
+
+  <!-- 超大元素（1200×1700 > 1600×1200），拖影应退化成蓝色轮廓框。
+       外壳 overflow:hidden 保证它不把页面撑出滚动条。 -->
+  <div id="hugewrap" class="zone" style="left:140px; top:520px; width:900px; height:180px; overflow:hidden; background:#101018">
+    <div id="huge" style="width:1200px; height:1700px; background:#26262f">HUGE</div>
+  </div>
+  <!-- 长页面下半段的一组元素：滚下去之后周围全是 <html> -->
+  <div id="deepzone" class="zone" style="left:140px; top:1500px; display:flex; gap:20px; background:#191920">
+    <div class="cell" id="d0">D0</div>
+    <div class="cell" id="d1">D1</div>
+  </div>
+</body>
+</html>

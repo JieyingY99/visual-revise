@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Layout / Appearance fixture</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 96px 24px 400px; width: 1000px;
+    font: 14px/1.4 system-ui, sans-serif; background: #0b0b0d; color: #eee;
+  }
+  .box { padding: 12px; border: 1px solid #33333a; margin: 12px 0; background: #16161c; }
+  .kid { padding: 6px 10px; background: #24242c; }
+  /* 样式表里的尺寸限制：drop-limit 的「清了 inline 值还在」分支要用它 */
+  .sheet-min { min-height: 90px; }
+</style>
+</head>
+<body>
+  <div id="free" class="box">自由块 <span>a</span> <span>b</span></div>
+
+  <div><span id="inline" class="box" style="display:inline-block">行内块</span></div>
+
+  <div id="row" class="box" style="display:flex;flex-direction:row;gap:8px;padding:12px 20px">
+    <div id="kid" class="kid">A</div><div class="kid">B</div>
+  </div>
+
+  <div id="col" class="box" style="display:flex;flex-direction:column;gap:8px;padding:12px 20px">
+    <div class="kid">A</div><div class="kid">B</div>
+  </div>
+
+  <div id="grid0" class="box" style="display:grid;padding:12px 20px">
+    <span>1</span><span>2</span>
+  </div>
+
+  <div id="grid3" class="box" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;padding:12px 20px">
+    <div id="gridkid" class="kid">1</div><div class="kid">2</div><div class="kid">3</div>
+  </div>
+
+  <div id="grid32" class="box" style="display:grid;grid-template-columns:repeat(3, 1fr);grid-template-rows:repeat(2, 1fr);gap:10px;padding:12px 20px">
+    <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span>
+  </div>
+
+  <div id="dims" class="box" style="width:200px;height:80px">尺寸</div>
+
+  <div id="hug" class="box" style="width:fit-content">贴合内容的宽度</div>
+
+  <div id="sheetmin" class="box sheet-min">样式表里的最小高度</div>
+
+  <div id="ratio" class="box" style="width:240px;height:100px">比例锁</div>
+
+  <div id="zero" class="box" style="width:120px;height:60px">待清零</div>
+
+  <div id="pad" class="box" style="padding:10px 20px;margin:5px 30px">间距两段式</div>
+
+  <div id="blockwrap" class="box"><div id="blockkid" class="kid">块容器的子项</div></div>
+
+  <div class="box"><img id="pic" width="80" height="60" alt=""
+    src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw=="></div>
+
+  <div id="appear" class="box">外观</div>
+</body>
+</html>

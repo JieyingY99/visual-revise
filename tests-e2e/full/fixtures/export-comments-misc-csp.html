@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<!-- 关键：img-src 不含 data:，页面禁止内嵌图片预览。
+     其余一律放行，否则注入不进编辑器就测不到降级形态。 -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src * 'unsafe-inline' 'unsafe-eval' blob:; img-src http: https:">
+<title>CSP 禁 data: 图片</title>
+<style>
+  body { margin: 0; font-family: system-ui, sans-serif; background: #101014; color: #eee; }
+  .box { margin: 40px; padding: 24px; border: 1px solid #333; border-radius: 12px; }
+  .headline { font-size: 24px; margin: 0 0 8px; }
+</style>
+</head>
+<body>
+  <div class="box">
+    <h1 class="headline">CSP 页面</h1>
+    <p class="note">这一页禁掉了 data: 图片，缩略图应当降级成「类型 + 体积」。</p>
+  </div>
+</body>
+</html>

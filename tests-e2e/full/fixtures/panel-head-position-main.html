@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Panel head / tab / section / Position fixture</title>
+<style>
+  /* 供「绑定变量」用：两条颜色变量 + 一条非颜色变量（后者应被变量列表滤掉） */
+  :root { --vr-brand: #ff2d55; --vr-ink: #00c853; --vr-space: 12px; }
+
+  * { box-sizing: border-box }
+  body { margin: 0; padding: 12px 0 60px; width: 980px;
+         font-family: system-ui, sans-serif; background: #0b0b0d; color: #eee }
+
+  /* flex 横向容器 + 三个同构子项（同构联动 / flex 主轴对齐） */
+  #flexrow { display: flex; flex-direction: row; gap: 10px; padding: 16px;
+             width: 520px; height: 120px; background: #15151a }
+  #flexrow > .kid { width: 120px; height: 60px; background: #26262e }
+
+  /* flex 纵向容器：主轴 = 垂直，交叉轴 = 水平 */
+  #flexcol { display: flex; flex-direction: column; gap: 8px; padding: 16px;
+             width: 280px; height: 190px; background: #15151a }
+  #flexcol > .kid { height: 50px; background: #26262e }
+
+  /* grid 容器：对齐走 *-self */
+  #gridbox { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 16px;
+             width: 400px; background: #15151a }
+  #gridbox > .kid { height: 60px; background: #26262e }
+
+  /* 普通 block 容器：子项不该出现对齐按钮组 */
+  #blockbox { padding: 16px; width: 400px; background: #15151a }
+  #blockbox > .kid { height: 60px; background: #26262e }
+
+  #para { font-size: 14px; line-height: normal; color: #dcdce4; margin: 10px 0; width: 520px }
+  #stroked  { border: 2px solid #8888aa; padding: 12px; width: 240px; background: #15151a }
+  #nostroke { padding: 12px; width: 240px; background: #15151a }
+  #relbox   { position: relative; width: 200px; height: 70px; background: #2a2a33 }
+
+  /* 什么都没有：无背景、无描边、无阴影——用来验空状态照样渲染 */
+  #barebox { padding: 10px; width: 240px }
+  #barebox > span { color: #888 }
+
+  .pad { height: 18px; width: 300px; background: #111116; margin: 2px 0; font-size: 11px }
+  #deep { padding: 12px; width: 400px; background: #15151a }
+  #deepkid { padding: 10px; background: #26262e }
+</style>
+</head>
+<body>
+  <h1 id="title">Panel head fixture</h1>
+
+  <div id="flexrow">
+    <div class="kid" id="fk0">fk0</div>
+    <div class="kid" id="fk1">fk1</div>
+    <div class="kid" id="fk2">fk2</div>
+  </div>
+
+  <div id="flexcol">
+    <div class="kid" id="ck0">ck0</div>
+    <div class="kid" id="ck1">ck1</div>
+  </div>
+
+  <div id="gridbox">
+    <div class="kid" id="gk0">gk0</div>
+    <div class="kid" id="gk1">gk1</div>
+  </div>
+
+  <div id="blockbox">
+    <div class="kid" id="bk0">bk0</div>
+  </div>
+
+  <p id="para">Paragraph text: this element carries direct text, so it counts as a text element.</p>
+  <div id="stroked">has border</div>
+  <div id="nostroke">no border</div>
+  <div id="relbox" class="panel-card is-wide css-1a2b3c"><span>rel</span></div>
+  <div id="barebox"><span id="barekid">bare</span></div>
+  <!-- 内联 svg：#showTypography 放行它，但它不是文字元素，所以 Typography 会渲染且保持默认折叠 -->
+  <svg id="svgbox" width="80" height="60" style="background:#26262e"></svg>
+
+<script>
+  // 30 个 body 直接子节点：把结构树里靠后的那一行推到树的可视区之外，
+  // 用来验证切到「结构」tab 时会补滚到选中行
+  for (let i = 0; i < 30; i++) {
+    const d = document.createElement('div')
+    d.className = 'pad'; d.id = 'pad' + i; d.textContent = 'pad ' + i
+    document.body.appendChild(d)
+  }
+  const deep = document.createElement('div')
+  deep.id = 'deep'
+  deep.innerHTML = '<div id="deepkid">deep kid</div>'
+  document.body.appendChild(deep)
+</script>
+</body>
+</html>

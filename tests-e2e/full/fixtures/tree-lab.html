@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>结构树实验台</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.4 system-ui, sans-serif; background: #0b0b0d; color: #eee; }
+  /* 顶部留白：工具条固定在 top:20 居中，内容压在它下面才点得到 */
+  #stage { width: 700px; padding: 76px 12px 12px; }
+  h1 { font-size: 20px; margin: 0 0 10px; }
+  .grp { padding: 6px; border: 1px solid #2a2a33; margin: 6px 0; background: #131318; }
+  .leaf { margin: 2px 0; padding: 3px 6px; background: #1c1c24; }
+  /* 视觉顺序被 CSS order 重排过的容器：DOM 顺序 A,B,C，看到的是 C,B,A */
+  #ordered { display: flex; flex-direction: column; padding: 6px; border: 1px solid #334; margin: 6px 0; }
+  /* 没有子元素、但 display:block 的容器：中段落点也该成立 */
+  #emptybox { display: block; height: 26px; border: 1px dashed #445; margin: 6px 0; }
+  /* 纯 inline 且没有子元素：不是容器，中段落点不成立 */
+  #sp { display: inline; background: #223; padding: 2px 6px; }
+  .dup { padding: 6px; border: 1px solid #2a3a2a; margin: 6px 0; }
+  #many { padding: 6px; border: 1px solid #3a2a2a; }
+  #many i { font-style: normal; font-size: 9px; padding: 0 2px; }
+  #deep { width: 640px; overflow: hidden; padding: 6px; border: 1px solid #2a2a3a; }
+  .lv { display: flex; padding-left: 2px; }
+  #bottom { margin-top: 12px; padding: 10px; background: #16161c; }
+  #tall { height: 1000px; }
+</style>
+</head>
+<body>
+  <main id="stage">
+    <h1 id="title">结构树实验台</h1>
+
+    <section id="alpha" class="grp">
+      <p class="leaf" id="a1">A1</p>
+      <p class="leaf" id="a2">A2</p>
+      <p class="leaf" id="a3">A3</p>
+    </section>
+
+    <section id="beta" class="grp">
+      <p class="leaf" id="b1">B1</p>
+      <p class="leaf" id="b2">B2</p>
+      <p class="leaf" id="b3">B3</p>
+    </section>
+
+    <div id="gamma" class="grp">
+      <p class="leaf" id="g1">G1</p>
+      <p class="leaf" id="g2">G2</p>
+    </div>
+
+    <div id="emptybox"></div>
+    <span id="sp">纯文字节点</span>
+
+    <div id="ordered">
+      <p class="leaf" id="o-a" style="order:2">O-A</p>
+      <p class="leaf" id="o-b" style="order:1">O-B</p>
+      <p class="leaf" id="o-c">O-C</p>
+    </div>
+
+    <div id="dupwrap">
+      <div class="dup" id="dup1"><p class="di">X1</p><p class="di">X2</p></div>
+      <div class="dup" id="dup2"><p class="di">Y1</p><p class="di">Y2</p></div>
+    </div>
+  </main>
+
+  <div id="many"></div>
+  <div id="deep"></div>
+  <div id="bottom">底部锚点</div>
+  <div id="tall"></div>
+
+  <script>
+    // 250 个兄弟：超过 MAX_SIBLINGS(200) 才能验证「还有 N 个未列出」
+    const many = document.getElementById('many')
+    for (let i = 1; i <= 250; i++) {
+      const n = document.createElement('i')
+      n.textContent = i
+      many.appendChild(n)
+    }
+    // 14 层嵌套 + 一段长文字：树的缩进要能横向滚出来，而不是把面板撑宽
+    const build = d => d === 0
+      ? '<span class="tip">最深一层放一段足够长的说明文字用来撑出横向滚动条</span>'
+      : '<div class="lv">' + build(d - 1) + '</div>'
+    document.getElementById('deep').innerHTML = build(20)
+  </script>
+</body>
+</html>

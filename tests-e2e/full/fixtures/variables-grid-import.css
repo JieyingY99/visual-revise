@@ -1,0 +1,5 @@
+/* 通过 @import 引进来的一组 token。cascade.js 的 flatten 要跟进 CSSImportRule
+   才收得到它——现代设计系统常把 token 拆成单独一张表再 @import 进来。 */
+:root {
+  --vg-import: #7744ee;
+}

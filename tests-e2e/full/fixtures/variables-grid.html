@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Variables &amp; Grid fixture</title>
+<!-- @import 必须写在一张表的最前面，所以单独占一张 -->
+<style>@import url("./variables-grid-import.css");</style>
+<style>
+  * { box-sizing: border-box; }
+  /* 上方留白让开工具条（top:20，横向居中），右侧留白让开属性面板（right:16，宽 300） */
+  body { margin: 0; padding: 96px 0 40px; background: #0e0e11; color: #eee;
+         font: 14px/1.4 system-ui, sans-serif; }
+
+  /* ── 变量的五种写法：顶层 :root / @media / @layer / @supports / 容器类 ── */
+  :root {
+    --vg-ink: #22cc88;
+    --vg-line: #ff8800;
+    --vg-red: #ff2222;
+    --vg-w: 3px;            /* 长度：不是颜色，变量页里不该出现 */
+    --vg-len: 12px;         /* 长度 */
+    --vg-num: 1.25;         /* 数字 */
+    --vg-font: Inter, "PingFang TC", sans-serif;  /* 字体栈 */
+    --vg-long: rgba(255, 128, 64, 0.5);           /* 值超过 18 个字符，行里要截断 */
+  }
+  @media all { :root { --vg-media: #3355ff; } }
+  @layer base { :root { --vg-layer: #cc22aa; } }
+  @supports (display: grid) { :root { --vg-supports: #11aabb; } }
+  /* 容器作用域上的 token，并且把 --vg-ink 就地改掉：
+     变量页的色圈要按选中元素取值，不是按 :root */
+  .vg-scope { --vg-scoped: #aa22cc; --vg-ink: #ffcc00; }
+  /* 单个元素上重新赋值：多选 unlink 时两个元素各自解析出不同的颜色 */
+  .vg-blue { --vg-ink: #2244ff; }
+
+  .row { display: flex; flex-wrap: wrap; gap: 12px; padding: 12px 16px; max-width: 1000px; }
+  .box { width: 190px; height: 72px; padding: 10px; background: #333; }
+
+  /* 2.11.2 层叠赢家：id 规则写在前、类规则写在后。
+     只按文档顺序挑会选中 .vg-a，按层叠挑才会选中 #vg-text 那条 */
+  #vg-text { color: var(--vg-media); }
+  .vg-a { color: var(--vg-ink); }
+
+  /* 2.11.4 继承：声明在父级，子级自己没有 color */
+  #vg-parent { color: var(--vg-ink); }
+
+  /* 2.11.3 简写里的一段 */
+  #vg-sh { border: 2px solid var(--vg-line); }
+  /* 2.11.3 反面：整条简写里两个 var()，分不清哪个是颜色，不算绑定 */
+  #vg-sh2 { border: var(--vg-w) solid var(--vg-line); }
+  /* 2.11.3 反面之二：只有一个 var()，但它解析出来是长度不是颜色 */
+  #vg-sh3 { border: var(--vg-w) solid #8899aa; }
+
+  /* 2.11.5 保险丝：@container 的条件 cascade.js 算不了、按成立处理，
+     但页面上没有任何容器上下文，这条其实并不生效 */
+  #vg-guard { color: rgb(0, 128, 0); }
+  @container (min-width: 9999px) { #vg-guard { color: var(--vg-red); } }
+
+  /* 2.11.6 样式表里带 !important：unlink 写回去也得带，否则压不过 */
+  #vg-imp { color: var(--vg-ink) !important; }
+  /* 同样带 !important，但写的是死色值：往它身上绑变量也得带 important 才压得过 */
+  #vg-imp2 { color: #ff00ff !important; }
+
+  /* 网格 */
+  .gridbox { display: grid; gap: 8px; padding: 10px; background: #222; }
+  #vg-grid { grid-template-columns: 200px 1fr auto; grid-template-rows: repeat(2, 1fr); }
+  #vg-grid2 { grid-template-columns: repeat(2, 1fr); }
+  .gridbox span { background: #454550; padding: 6px 10px; }
+</style>
+</head>
+<body>
+  <div class="row">
+    <div class="box vg-a" id="vg-text">样式表绑定</div>
+    <div class="box" id="vg-parent"><span id="vg-child">继承来的字色</span></div>
+    <div class="box" id="vg-sh">简写描边</div>
+    <div class="box" id="vg-sh2">简写里两个变量</div>
+    <div class="box" id="vg-sh3">简写里的变量不是颜色</div>
+  </div>
+  <div class="row">
+    <div class="box" id="vg-guard">条件不成立</div>
+    <div class="box" id="vg-imp">带 important 的字色</div>
+    <div class="box" id="vg-imp2">important 的死色值</div>
+    <div class="box" id="vg-nostroke">还没有描边</div>
+    <div class="box" id="vg-plain"><span>只有子元素</span></div>
+  </div>
+  <div class="row vg-scope">
+    <div class="box" id="vg-scoped">容器里取值</div>
+  </div>
+  <div class="row">
+    <div class="box" id="vg-m1">多选 A</div>
+    <div class="box vg-blue" id="vg-m2">多选 B</div>
+  </div>
+  <div class="row">
+    <div class="gridbox" id="vg-grid">
+      <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span>
+    </div>
+    <div class="gridbox" id="vg-grid2"><span>a</span><span>b</span></div>
+    <div class="gridbox" id="vg-grid3"
+         style="display:grid;grid-template-columns:repeat(3, 1fr)">
+      <span>x</span><span>y</span><span>z</span>
+    </div>
+  </div>
+</body>
+</html>
