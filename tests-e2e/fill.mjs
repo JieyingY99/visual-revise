@@ -190,7 +190,10 @@ await page.evaluate(() => {
 await page.waitForTimeout(300)
 
 // 多层模型下这条 background-image 是新的一层，跟底色各占一行——旧弹层针对的
-// 还是原来那一层，得关掉重开，在图片那一层上打开才谈得上「这层的图会被顶掉」
+// 还是原来那一层，得关掉重开，在图片那一层上打开才谈得上「这层的图会被顶掉」。
+// Esc 现在一次只做一件事：第一下关弹层（选中还在），第二下才取消选中——
+// 不清掉选中的话 visbug-handles 还挂着，再点同一张卡片会被它拦。
+await page.keyboard.press('Escape'); await page.waitForTimeout(200)
 await page.keyboard.press('Escape'); await page.waitForTimeout(250)
 await page.locator('.curve-card').nth(1).click({ position: { x: 130, y: 8 } })
 await page.waitForTimeout(400)
@@ -198,7 +201,8 @@ await panel('.layer-row:first-child vr-fill .swatch').click()
 await page.waitForTimeout(350)
 await page.locator(`${fillPanel} [data-tab="solid"]`).click()
 await page.waitForTimeout(350)
-ok((await page.locator(`${fillPanel}`).textContent()).includes('背景图'),
+// 弹层内容在宿主的 shadow root 里，locator 的 textContent 只看得到宿主的空壳
+ok((await page.evaluate(() => document.getElementById('visual-revise-fill-panel')?.shadowRoot.textContent || '')).includes('背景图'),
    '在图片那一层上切到纯色标签，会先说明这张图会被颜色顶掉')
 ok((await style('background-image')).startsWith('url('),
    '光是切到纯色标签不动背景图——点进来看看不该把人家的图清掉')

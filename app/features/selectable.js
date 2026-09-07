@@ -20,11 +20,18 @@ import { showTip as showMetaTip, removeAll as removeAllMetaTips } from './metati
 import { showTip as showAccessibilityTip, removeAll as removeAllAccessibilityTips } from './accessibility'
 
 import {
-  metaKey, htmlStringToDom, createClassname, camelToDash,
+  metaKey, createClassname, camelToDash,
   isOffBounds, getStyle, getStyles, deepElementFromPoint, getShadowValues,
   isSelectorValid, findNearestChildElement, findNearestParentElement,
   getTextShadowValues, isFixed, onRemove
 } from '../utilities/'
+
+// 直接 import 而不是靠宿主注入：change-store 不 import 任何 features，
+// 不会成环（visual-revise.js 就是这么引的）；而 Selectable(visbug) 的构造点
+// 在 app/visbug.element.js 里，那里没有任何注入口。
+import { ChangeStore } from '../core/change-store.js'
+import { isEditorUI } from '../core/dom-utils.js'
+import { stripEditorMarks } from '../core/editor-marks.js'
 
 // 绑定与解绑必须共用同一份清单：两处手写会漂移，
 // listen/unlisten 成对调用（编辑态与交互态来回切换）时，
@@ -35,7 +42,9 @@ const HOTKEYS = metaKey => [
   'esc',
   `${metaKey}+d`,
   'backspace,del,delete',
-  'alt+del,alt+backspace',
+  // 'alt+del,alt+backspace' 归 visual-revise.js 的 onKeydown 接管了：
+  // 这一键要走 ChangeStore 才进得了历史栈。绑定与解绑共用这份清单，
+  // 只删 listen() 里那一行不行——listen/unlisten 往返时会重新绑回来。
   `${metaKey}+e,${metaKey}+shift+e`,
   `${metaKey}+g,${metaKey}+shift+g`,
   'enter,shift+enter',
@@ -49,12 +58,21 @@ export function Selectable(visbug) {
   let selectedCallbacks   = []
   let labels              = []
   let handles             = []
+  // data-label-id 的发号器，只增不减，见 select()
+  let labelSeq            = 0
 
   const hover_state       = {
     target:   null,
     element:  null,
     label:    null,
   }
+
+  // 这个 feature 拿不到工具条（宿主的 toast 在 visual-revise.js 那边），
+  // 冒泡一个 vr-toast 上去由宿主统一渲染
+  const toast = (message, kind = 'info') =>
+    document.body.dispatchEvent(new CustomEvent('vr-toast', {
+      bubbles: true, composed: true, detail: { message, kind },
+    }))
 
   const listen = () => {
     page.addEventListener('click', on_click, true)
@@ -73,7 +91,6 @@ export function Selectable(visbug) {
     hotkeys('esc', on_esc)
     hotkeys(`${metaKey}+d`, on_duplicate)
     hotkeys('backspace,del,delete', on_delete)
-    hotkeys('alt+del,alt+backspace', on_clearstyles)
     hotkeys(`${metaKey}+e,${metaKey}+shift+e`, on_expand_selection)
     hotkeys(`${metaKey}+g,${metaKey}+shift+g`, on_group)
     hotkeys('enter,shift+enter', on_keyboard_traversal)
@@ -96,6 +113,15 @@ export function Selectable(visbug) {
   }
 
   const on_click = e => {
+    // 这一下点击是从编辑器自己的面板里发出来的（在面板里横向拖数值，越过
+    // 面板边缘才松手）：click 的 target 仍是面板里那个控件，而下面按坐标
+    // 命中的却是松手处的页面元素——选中会被悄悄换掉，用户手上正在改的
+    // 元素当场丢失。
+    // 只早退这一类，不能把浮在选中元素正上方的 visbug-* 覆盖层一起吃掉：
+    // 「同一下点击仍要正常选中页面元素」走的就是那条路。
+    const path = e.composedPath?.() || []
+    if (!String(path[0]?.tagName || '').startsWith('VISBUG-') && isEditorUI(path)) return
+
     const $target = deepElementFromPoint(e.clientX, e.clientY)
     // 坐标落在视口外时拿不到元素（拖到边缘、鼠标甩出窗口），当作没命中
     if (!$target) return
@@ -118,11 +144,22 @@ export function Selectable(visbug) {
   }
 
   const unselect = id => {
-    [...labels, ...handles]
-      .filter(node =>
-          node.getAttribute('data-label-id') === id)
-        .forEach(node =>
-          node.remove())
+    const doomed = [...labels, ...handles]
+      .filter(node => node.getAttribute('data-label-id') === id)
+
+    doomed.forEach(node => node.remove())
+
+    // 从两个数组里也把它们摘掉，否则 on_hover / setLabel / createLabel 里那三处
+    // `handles.forEach(handle => handle.showPopover())` 会对已经离开 DOM 的节点
+    // 调用 showPopover，抛「Invalid on disconnected popover elements」——
+    // 异常打断的是「把手提升到 top layer」那一整段，此后每次 hover 都炸一次。
+    //
+    // 按元素引用剔除，不留 null 槽位：labels 与 handles 不是平行数组
+    // （createLabel 只在 no_label === false 时才建），下标对不上；而显式 null
+    // 会被 forEach 访问到，也会让上面这句 node.getAttribute 直接 TypeError。
+    // 压缩数组不再有撞号风险——data-label-id 已改用单调递增计数器发号。
+    labels  = labels.filter(node => !doomed.includes(node))
+    handles = handles.filter(node => !doomed.includes(node))
 
     selected.filter(node =>
       node.getAttribute('data-label-id') === id)
@@ -177,8 +214,10 @@ export function Selectable(visbug) {
     const root_node = selected[0]
     if (!root_node) return
 
-    const deep_clone = root_node.cloneNode(true)
-    deep_clone.removeAttribute('data-selected')
+    // 只摘 data-selected 不够：data-label-id 会跟着副本留在页面上，
+    // 和之后某个选中项撞号，缩放把手按 `[data-label-id="N"]` 取目标时
+    // 就会去改这个副本。整棵子树一并剥干净。
+    const deep_clone = stripEditorMarks(root_node.cloneNode(true))
     root_node.parentNode.insertBefore(deep_clone, root_node.nextSibling)
     e.preventDefault()
   }
@@ -186,9 +225,10 @@ export function Selectable(visbug) {
   const on_delete = e =>
     selected.length && delete_all()
 
-  const on_clearstyles = e =>
-    selected.forEach(el =>
-      el.attr('style', null))
+  // ⌥Delete / ⌥Backspace（清空 inline style）已由 visual-revise.js 的 onKeydown
+  // 接管：那一键要逐条走 ChangeStore.applyProp 才进得了历史栈，⌘Z 才救得回来。
+  // 上游这里原本是 `el.attr('style', null)`，.attr 是 blingblingjs 用
+  // Object.assign 挂在实例上的糖，注入之后才出现的元素身上根本没有它。
 
   const on_copy = async e => {
     // if user has selected text, dont try to copy an element
@@ -197,8 +237,8 @@ export function Selectable(visbug) {
 
     if (selected[0] && window.node_clipboard !== selected[0]) {
       e.preventDefault()
-      let $node = selected[0].cloneNode(true)
-      $node.removeAttribute('data-selected')
+      // 编辑器的内部记号一个都不能跟着 outerHTML 走出去，见 stripEditorMarks
+      const $node = stripEditorMarks(selected[0].cloneNode(true))
 
       window.copy_backup = $node.outerHTML
       e.clipboardData.setData('text/html', window.copy_backup)
@@ -212,26 +252,56 @@ export function Selectable(visbug) {
 
   const on_cut = e => {
     if (selected[0] && window.node_clipboard !== selected[0]) {
-      let $node = selected[0].cloneNode(true)
-      $node.removeAttribute('data-selected')
+      const $node = stripEditorMarks(selected[0].cloneNode(true))
       window.copy_backup = $node.outerHTML
       e.clipboardData.setData('text/html', window.copy_backup)
-      selected[0].remove()
+
+      // 走 ChangeStore 而不是 selected[0].remove()：同一个「删元素」动作，
+      // Delete 键有账、⌘X 没有的话，用户剪掉一块内容，导出给 AI 的提示词里
+      // 一个字都看不到，记录里也没有任何入口能把它放回来。
+      // 顺带从「只删 selected[0]」扩成删掉全部选中——上游漏的那半。
+      const targets = selected.filter(el => el?.isConnected)
+      unselect_all()
+      ChangeStore.removeElements(targets)
     }
   }
 
-  const on_paste = async (e, index = 0) => {
+  // 剪贴板 HTML 前面常带换行 / 空白，body.firstChild 会是文本节点——
+  // 那种节点进不了 insertElement 的守卫，会静默地什么都不发生
+  const parsePasted = html =>
+    new DOMParser().parseFromString(String(html || ''), 'text/html').body.firstElementChild
+
+  const on_paste = async e => {
     const clipData = e.clipboardData.getData('text/html')
-    const globalClipboard = await navigator.clipboard.readText()
-    const potentialHTML = clipData || globalClipboard || window.copy_backup
 
-    if (selected.length && potentialHTML) {
-      e.preventDefault()
-
-      selected.forEach(el =>
-        el.appendChild(
-          htmlStringToDom(potentialHTML)))
+    // 上游这里是无条件 await navigator.clipboard.readText()：没权限时 promise
+    // reject，整个处理器当场中断，连 e.clipboardData 那条已经拿到的都用不上
+    let globalClipboard = ''
+    try {
+      globalClipboard = await navigator.clipboard.readText()
+    } catch (err) {
+      globalClipboard = ''
     }
+
+    const potentialHTML = clipData || globalClipboard || window.copy_backup
+    if (!selected.length) return
+
+    if (!potentialHTML) {
+      toast('读不到剪贴板内容，请检查剪贴板权限', 'error')
+      return
+    }
+
+    e.preventDefault()
+
+    // 每个目标各粘一份（上游行为），但走 ChangeStore：新增的元素要进改动记录、
+    // 能一次 ⌘Z 退回、也要在导出的提示词里说清「请新建这个元素」
+    const targets = [...selected]
+    ChangeStore.history.batch(
+      targets.length > 1 ? `粘贴到 ${targets.length} 个元素里` : '粘贴元素',
+      () => targets.forEach(el => {
+        const node = parsePasted(potentialHTML)
+        if (node) ChangeStore.insertElement(node, el, null, '粘贴元素')
+      }))
   }
 
   const on_copy_styles = async e => {
@@ -309,34 +379,32 @@ export function Selectable(visbug) {
       })
   }
 
+  // 分组 / 取消分组改了 DOM 结构，跟删除、移动是同一类操作，必须一样入账：
+  // 上游那两段只用原生 DOM API，改完的结构在导出的提示词里一个字都没有，
+  // ⌘Z 反而会去撤销更早的一条无关操作。
+  // 「一次插入 + n 次移动」的记录语义收在 ChangeStore 里（见 groupElements），
+  // 这里只负责选中集的进出。
   const on_group = (e, {key}) => {
     e.preventDefault()
 
     if (key.split('+').includes('shift')) {
-      let $selected = [...selected]
+      const wrappers = selected.filter(el => el?.isConnected)
+      if (!wrappers.length) return
+
       unselect_all()
-      $selected.reverse().forEach(el => {
-        let l = el.children.length
-        while (el.children.length > 0) {
-          var node = el.childNodes[el.children.length - 1]
-          if (node.nodeName !== '#text')
-            select(node)
-          el.parentNode.prepend(node)
-        }
-        el.parentNode.removeChild(el)
-      })
+      wrappers
+        .flatMap(wrapper => ChangeStore.ungroupElement(wrapper) || [])
+        .filter(node => node.isConnected)
+        .forEach(node => select(node))
+      return
     }
-    else {
-      let div = document.createElement('div')
-      selected[0].parentNode.prepend(
-        selected.reverse().reduce((div, el) => {
-          div.appendChild(el)
-          return div
-        }, div)
-      )
-      unselect_all()
-      select(div)
-    }
+
+    const targets = selected.filter(el => el?.isConnected)
+    if (!targets.length) return
+
+    unselect_all()
+    const wrapper = ChangeStore.groupElements(targets)
+    if (wrapper) select(wrapper)
   }
 
   const on_selection = e =>
@@ -461,7 +529,11 @@ export function Selectable(visbug) {
   }
 
   const select = el => {
-    const id = handles.length
+    // 发号用单调递增计数器，不再用 handles.length：unselect_all 会把数组清空，
+    // 下一个选中项又从 0 开始发号，和页面上还留着旧编号的节点（⌘D 副本、
+    // ⌘V 粘进来的副本）撞车——缩放把手按 `[data-label-id="N"]` 取拖动目标，
+    // 撞号时它取的是文档顺序靠前的那个，于是去改了另一个元素。
+    const id = ++labelSeq
     const tool = visbug.activeTool
 
     el.setAttribute('data-selected', true)
@@ -628,60 +700,58 @@ export function Selectable(visbug) {
     })
   }
 
+  // id 现在是单调递增的，每次 select 都是新号，不必再用 `!labels[id]` 去重——
+  // 那条守卫原本靠「id === 数组下标」成立，改用计数器之后下标早已对不上
   const createLabel = ({el, id, template}) => {
-    if (!labels[id]) {
-      const label = document.createElement('visbug-label')
+    const label = document.createElement('visbug-label')
 
-      label.text = template
-      label.position = {
-        boundingRect:   el.getBoundingClientRect(),
-        node_label_id:  id,
-        isFixed: isFixed(el),
-      }
-
-      document.body.appendChild(label)
-
-      $(label).on('query', ({detail}) => {
-        if (!detail.text) return
-
-        queryPage('[data-pseudo-select]', el =>
-          el.removeAttribute('data-pseudo-select'))
-
-        queryPage(detail.text + ':not([data-selected])', el =>
-          detail.activator === 'mouseenter'
-            ? el.setAttribute('data-pseudo-select', true)
-            : select(el))
-      })
-
-      $(label).on('mouseleave', e => {
-        e.preventDefault()
-        e.stopPropagation()
-        queryPage('[data-pseudo-select]', el =>
-          el.removeAttribute('data-pseudo-select'))
-      })
-
-      labels[labels.length] = label
-
-      handles.forEach(handle => {
-        handle.hidePopover && handle.hidePopover()
-        handle.showPopover && handle.showPopover()
-      })
-
-      return label
+    label.text = template
+    label.position = {
+      boundingRect:   el.getBoundingClientRect(),
+      node_label_id:  id,
+      isFixed: isFixed(el),
     }
+
+    document.body.appendChild(label)
+
+    $(label).on('query', ({detail}) => {
+      if (!detail.text) return
+
+      queryPage('[data-pseudo-select]', el =>
+        el.removeAttribute('data-pseudo-select'))
+
+      queryPage(detail.text + ':not([data-selected])', el =>
+        detail.activator === 'mouseenter'
+          ? el.setAttribute('data-pseudo-select', true)
+          : select(el))
+    })
+
+    $(label).on('mouseleave', e => {
+      e.preventDefault()
+      e.stopPropagation()
+      queryPage('[data-pseudo-select]', el =>
+        el.removeAttribute('data-pseudo-select'))
+    })
+
+    labels[labels.length] = label
+
+    handles.forEach(handle => {
+      handle.hidePopover && handle.hidePopover()
+      handle.showPopover && handle.showPopover()
+    })
+
+    return label
   }
 
   const createHandle = ({el, id}) => {
-    if (!handles[id]) {
-      const handle = document.createElement('visbug-handles')
+    const handle = document.createElement('visbug-handles')
 
-      handle.position = { el, node_label_id: id }
+    handle.position = { el, node_label_id: id }
 
-      document.body.appendChild(handle)
+    document.body.appendChild(handle)
 
-      handles[handles.length] = handle
-      return handle
-    }
+    handles[handles.length] = handle
+    return handle
   }
 
   const createHover = el => {

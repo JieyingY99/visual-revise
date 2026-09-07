@@ -5,12 +5,14 @@
 import {
   takeSnapshot, diffSnapshot, diffText, diffAttrs,
   revertProp, revertText, revertAttr, revertAll, elementId, adoptId, readText,
-  readInline, readAttrs, TRACKED_ATTRS, textNodesOf,
+  readInline, readInlineImportant, readAttrs, TRACKED_ATTRS, textNodesOf,
 } from './snapshot.js'
+import { winningDeclaration } from './cascade.js'
 import {
   collectAnchors, resolveElement, stableClasses, textLandmarks,
 } from './anchors.js'
 import { createHistory } from './history.js'
+import { stripEditorMarks } from './editor-marks.js'
 
 const createStore = () => {
   const snapshots = new Map()
@@ -26,19 +28,23 @@ const createStore = () => {
   // 被搬过家的元素。跟 removals 一样按 id 存一条，记的是「从哪儿到哪儿」：
   // 同一个元素反复拖只留一条（from 取第一次、to 取最后一次），拖回原位就删掉。
   const moves      = new Map()   // id      → { el, fromParent, fromNext, toParent, toNext, ... }
+  // 本次会话新造出来的元素（分组的外壳、⌘V 粘进来的副本）。跟 removals 对称：
+  // 撤销就是把节点摘出 DOM，记录仍持有它，重做再放回同一个节点。
+  const inserts    = new Map()   // id      → { el, parent, next, parentAnchors, ... }
   let commentSeq  = 0
   let removalSeq  = 0
   let moveSeq     = 0
+  let insertSeq   = 0
 
   const notify = () => listeners.forEach(fn => fn(read()))
 
   // ── 写入原语 ──
   // 这几个只管把值落到 DOM，不记历史。undo / redo 直接用它们回放，
   // 对外的 applyXxx 则在调用它们之后补一条历史。
-  const writeProp = (el, prop, value) => {
+  const writeProp = (el, prop, value, important = false) => {
     value === '' || value == null
       ? el.style.removeProperty(prop)
-      : el.style.setProperty(prop, value)
+      : el.style.setProperty(prop, value, important ? 'important' : '')
   }
 
   const writeAttr = (el, attr, value) => {
@@ -68,13 +74,22 @@ const createStore = () => {
   const captureAll = () => ({
     styles: Array.from(snapshots.values())
       .filter(snap => snap.el.isConnected)
-      .map(snap => ({ el: snap.el, cssText: snap.el.getAttribute('style'), attrs: readAttrs(snap.el) })),
+      // 文案也要存：undoEverything 里的 revertAll 会把文案改回去，
+      // 快照不带它的话，撤销这次重置就只还原样式、文案有去无回
+      .map(snap => ({
+        el:        snap.el,
+        cssText:   snap.el.getAttribute('style'),
+        attrs:     readAttrs(snap.el),
+        textNodes: textNodesOf(snap.el).map(n => n.nodeValue),
+      })),
     comments:   Array.from(comments.values()).map(c => ({ ...c, images: (c.images || []).slice() })),
     commentSeq,
     removals:   Array.from(removals.values()).map(r => ({ ...r })),
     removalSeq,
     moves:      Array.from(moves.values()).map(m => ({ ...m })),
     moveSeq,
+    inserts:    Array.from(inserts.values()).map(r => ({ ...r })),
+    insertSeq,
     // 记录里的 to 是「当初移到哪儿」，而元素此刻实际在哪儿可能又变过。
     // 撤销「重置全部」要还原的是此刻这个位置，不是记录里的那个。
     positions:  Array.from(moves.values())
@@ -82,6 +97,8 @@ const createStore = () => {
                   .map(m => ({ el: m.el, parent: m.el.parentElement, nextSibling: m.el.nextElementSibling })),
     // 被删掉的元素此刻不在 DOM 上，恢复时要按记录插回去
     detached:   Array.from(removals.values()).filter(r => !r.el.isConnected).map(r => r.id),
+    // 跟 detached 对称的一份：新增的元素此刻在不在 DOM 上（可能刚被 ⌘Z 摘掉）
+    attached:   Array.from(inserts.values()).filter(r => r.el.isConnected).map(r => r.id),
     // 失联记录不在 styles 里（那里只收还连着的），单独存一份，
     // 否则撤销重置时它们回不来
     frozen:     Array.from(snapshots.values()).filter(s => s.frozen)
@@ -89,9 +106,15 @@ const createStore = () => {
   })
 
   const restoreAll = state => {
-    for (const { el, cssText, attrs } of state.styles) {
+    for (const { el, cssText, attrs, textNodes } of state.styles) {
       cssText === null ? el.removeAttribute('style') : el.setAttribute('style', cssText)
       for (const name of TRACKED_ATTRS) writeAttr(el, name, attrs[name] ?? '')
+      // 节点数对不上说明这棵子树的结构变过了，逐个写回只会张冠李戴
+      if (textNodes) {
+        const nodes = textNodesOf(el)
+        if (nodes.length === textNodes.length)
+          nodes.forEach((n, i) => { n.nodeValue = textNodes[i] })
+      }
     }
 
     for (const snap of snapshots.values()) {
@@ -108,6 +131,19 @@ const createStore = () => {
     comments.clear()
     state.comments.forEach(c => comments.set(c.id, { ...c, images: (c.images || []).slice() }))
     commentSeq = state.commentSeq
+
+    // 新增先于移动还原：分组是「先插外壳、再把子元素搬进去」，
+    // 外壳不先回到页面上，那些移动就没有落点
+    inserts.clear()
+    ;(state.inserts || []).forEach(r => inserts.set(r.id, { ...r }))
+    insertSeq = state.insertSeq || 0
+
+    for (const r of inserts.values()) {
+      const shouldBeAttached = (state.attached || []).includes(r.id)
+      if (shouldBeAttached && !r.el.isConnected)
+        putBack({ el: r.el, parent: r.parent, nextSibling: r.next })
+      if (!shouldBeAttached && r.el.isConnected) r.el.remove()
+    }
 
     // 移动先于删除还原：删除那一步要把元素插回记录里的父节点，
     // 而那个父节点自己也可能是被搬过家的，得先回到该在的地方
@@ -144,7 +180,9 @@ const createStore = () => {
 
     switch (op.kind) {
       case 'prop':
-        writeProp(op.el, op.prop, value)
+        // priority 跟值一起存在 op 里，重放不再去问「此刻的样式表长什么样」——
+        // 那会让 undo 的结果取决于回放的时机，而历史的前提是用数据描述操作
+        writeProp(op.el, op.prop, value, dir === 'undo' ? op.beforeImportant : op.afterImportant)
         break
 
       case 'attr':
@@ -163,6 +201,21 @@ const createStore = () => {
 
         const record = dir === 'undo' ? op.beforeRecord : op.afterRecord
         record ? removals.set(op.id, { ...record }) : removals.delete(op.id)
+        break
+      }
+
+      // 本次会话新造出来的元素：在不在 DOM 上，以及它在 inserts 里的登记。
+      // 撤销只是把节点摘出 DOM——记录仍持有它，重做放回去的还是同一个节点，
+      // 挂在它身上的那些 prop / move 记录因此照样有效。
+      case 'insert': {
+        const attached = dir === 'undo' ? op.beforeAttached : op.afterAttached
+        if (attached) {
+          if (canMoveInto(op.el, op.parent))
+            putBack({ el: op.el, parent: op.parent, nextSibling: op.next })
+        } else op.el.remove()
+
+        const record = dir === 'undo' ? op.beforeRecord : op.afterRecord
+        record ? inserts.set(op.id, { ...record }) : inserts.delete(op.id)
         break
       }
 
@@ -270,6 +323,25 @@ const createStore = () => {
         for (const el of outermost) {
           track(el)
           const id = elementId(el)
+
+          // 这个元素是本次会话自己造出来的（分组的外壳、⌘V 粘进来的副本）：
+          // 原页面里它从来不存在，记一条「删除的元素」等于给 AI 下一条执行
+          // 不了的指令。直接把那条 insert 记录对消掉，两边一起归零。
+          const inserted = inserts.get(id)
+          if (inserted) {
+            history.push({
+              kind: 'insert', id, el,
+              // 落点取此刻的位置：新增之后它可能又被搬过家
+              parent: el.parentElement, next: el.nextElementSibling,
+              beforeAttached: true,  beforeRecord: { ...inserted },
+              afterAttached: false,  afterRecord: null,
+            })
+            inserts.delete(id)
+            el.remove()
+            ids.push(id)
+            continue
+          }
+
           const record = {
             id,
             seq:         ++removalSeq,
@@ -433,6 +505,127 @@ const createStore = () => {
     return moveElement(rec.el, rec.fromParent, rec.fromNext)
   }
 
+  // ── 新增元素 ────────────────────────────────────────────────
+  // 分组的外壳、⌘V 粘进来的副本：页面上多出一个原来没有的节点。
+  // 这既不是「改样式」也不是「搬家」，导出给 AI 时要说的是「请新建这个元素」，
+  // 所以单开一类记录。
+
+  // 记录里存的 HTML 是给人和 AI 看的，编辑器自己的记号不该跟着走出去
+  const outerHtmlOf = el => {
+    const clone = stripEditorMarks(el.cloneNode(true))
+    // 快照读计算值时会临时写一次 transition 再删掉，留下一个空的 style=""。
+    // 那不是用户写的东西，别让它进提示词。
+    for (const node of [clone, ...clone.querySelectorAll('*')])
+      if (node.getAttribute('style') === '') node.removeAttribute('style')
+    return clone.outerHTML
+  }
+
+  const insertElement = (el, parent, next = null, label = '新增元素') => {
+    if (!canMoveInto(el, parent)) return false
+
+    // 落点归一化，同 moveElement：不再是 parent 的孩子就当「放到末尾」
+    const anchor = next?.isConnected && next.parentElement === parent && next !== el
+      ? next
+      : null
+
+    // 这两份锚点必须在插入之前采。选择器里带 :nth-of-type，插进去会把同一
+    // 容器下所有同类兄弟的下标顶开一位，事后再采就指向别人了。
+    const parentAnchors = collectAnchors(parent)
+    const nextAnchors   = anchor ? collectAnchors(anchor) : null
+
+    putBack({ el, parent, nextSibling: anchor })
+    track(el)
+
+    const id = elementId(el)
+    const record = {
+      id,
+      seq:      ++insertSeq,
+      el,
+      parent,
+      next:     anchor,
+      parentAnchors,
+      nextAnchors,
+      atEnd:    !anchor,
+      html:     outerHtmlOf(el),
+      label,
+      anchors:  collectAnchors(el),
+      identity: identityOf(el),
+      tag:      el.tagName.toLowerCase(),
+      text:     readText(el).slice(0, 80),
+    }
+
+    inserts.set(id, record)
+    history.push({
+      kind: 'insert', id, el,
+      parent, next: anchor,
+      beforeAttached: false, beforeRecord: null,
+      afterAttached: true,   afterRecord: { ...record },
+    }, label)
+
+    notify()
+    return true
+  }
+
+  const insertList = () =>
+    Array.from(inserts.values())
+      .sort((a, b) => a.seq - b.seq)
+      // html 要现采，不能只留插入那一刻的：分组是「先插一个空 <div>、再把子元素
+      // 搬进去」，插入那一刻它还是 `<div></div>`——提示词照着它写，AI 建出来的
+      // 就是个空壳。粘进来的那一块之后也可能继续被编辑。
+      // 元素还在页面上就以页面上那份为准，并回写进记录：被 ⌘Z 摘出 DOM 之后
+      // 就只剩记录里这一份了（失联时同理，那时页面上已经没有可采的东西）。
+      .map(r => {
+        if (r.el.isConnected) r.html = outerHtmlOf(r.el)
+        return r
+      })
+
+  // 分组 / 取消分组落在 store 里而不是 selectable.js：这两件事各是
+  // 「一次插入 + n 次移动」和它的逆运算，记录语义（不生成指向已删外壳的
+  // 落点锚点、不给本次才造出来的元素记一条删除）只有在这里才收得住。
+  const groupElements = els => {
+    const list = Array.from(els || []).filter(el => el?.nodeType === 1 && el.isConnected)
+    if (!list.length) return null
+
+    // 调用方给的顺序是选中顺序（而且是倒序），跟文档顺序无关。
+    // 外壳要插在「最靠前那个」原来的位置上，所以先按文档顺序排一遍。
+    const ordered = list.slice().sort((a, b) =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1)
+
+    const first  = ordered[0]
+    const parent = first.parentElement
+    if (!parent || parent === document.documentElement) return null
+
+    return history.batch('分组', () => {
+      const wrapper = document.createElement('div')
+      // 插在最靠前那个元素之前：把它搬进外壳之后，外壳正好落在它原来的下标上。
+      // 顺带让子元素的 fromNext 保持为它原来的后邻，取消分组时才回得到原位、
+      // 那条移动记录也才会自动对消。
+      if (!insertElement(wrapper, parent, first, '分组')) return null
+
+      for (const el of ordered) moveElement(el, wrapper, null)
+      return wrapper
+    })
+  }
+
+  const ungroupElement = wrapper => {
+    if (!wrapper?.isConnected) return []
+    const parent = wrapper.parentElement
+    if (!parent || parent === document.documentElement) return []
+
+    const kids = Array.from(wrapper.children)
+    // 落点不能是 wrapper 自己：它马上就要没了，锚点会指向一个结果页面里
+    // 不存在的元素，导出的提示词就成了「移到 div:nth-of-type(k) 之前」。
+    const wrapperNext = wrapper.nextElementSibling
+
+    return history.batch('取消分组', () => {
+      for (const child of kids) moveElement(child, parent, wrapperNext)
+      // 外壳若是本次会话自己造的，removeElements 会把那条 insert 对消掉，
+      // 不留「删除的元素」假记录
+      removeElements([wrapper])
+      return kids
+    })
+  }
+
   const commentList = () =>
     Array.from(comments.values())
       // 失联但没被重定位回来的不能直接丢：那正是「标注莫名其妙消失」的成因。
@@ -502,6 +695,7 @@ const createStore = () => {
 
   const captureLive = snap => ({
     props:     readInline(snap.el),
+    important: readInlineImportant(snap.el),
     attrs:     readAttrs(snap.el),
     textNodes: snap.edited ? textNodesOf(snap.el).map(n => n.nodeValue) : null,
   })
@@ -509,7 +703,10 @@ const createStore = () => {
   // 新节点是框架照自己的 state 渲出来的，身上没有我们写过的任何东西。
   // 光改绑只能救回记录、救不回画面，所以要把改动重新贴上去。
   const replayOnto = (el, live) => {
-    for (const [prop, value] of Object.entries(live.props)) writeProp(el, prop, value)
+    // priority 跟着 readInline 那一侧一起带过来：新节点身上没有我们写过的任何
+    // 东西，少带一个 !important 就等于这条改动在带 important 的页面上重贴失败
+    for (const [prop, value] of Object.entries(live.props))
+      writeProp(el, prop, value, live.important?.has(prop))
 
     // 属性要逐个覆盖而不是只写有值的：用户把 srcset 清空过的话，
     // 只写有值的那些会让新节点带着自己的 srcset 把换的图盖回去
@@ -682,6 +879,9 @@ const createStore = () => {
       for (const snap of snapshots.values()) {
         // 这个元素是被我们删掉的，它的快照不该再去页面上找替代品
         if (removals.has(snap.id)) continue
+        // 这个元素是我们自己造出来的：⌘Z 把它摘出 DOM 是预期动作，
+        // 不挡住的话会冒出一条「元素已消失」的幽灵记录
+        if (inserts.has(snap.id)) continue
         if (snap.el.isConnected || snap.fighting) continue
         // 已经标成失联、这一轮又没冒出任何替代品，就没什么可试的
         if (snap.orphaned && !canRebind) continue
@@ -761,18 +961,38 @@ const createStore = () => {
     comments: commentList(),
     removals: removalList(),
     moves:    moveList(),
+    inserts:  insertList(),
   })
 
-  const applyProp = (el, prop, value) => {
-    track(el)
+  // 这条属性要不要带 important。
+  //
+  // 样式表里写了 `.wall-line { color: var(--x) !important }` 的元素，面板往 inline
+  // 写普通声明是压不过它的：画面纹丝不动，看着就是「点了没反应」——unlink、眼睛
+  // 按钮、拖标签调值全都静默失败。
+  //
+  // winningDeclaration 把 inline 也放进同一场层叠比较，所以「样式表赢家带
+  // important」和「inline 已经是 important」一次问完。结果按 (el, prop) 缓存在
+  // 快照上：写入是高频的（拖动每帧一次、写一次背景是 5 条属性），而这个查询要
+  // 对全部规则逐条 el.matches，规则数以千计的页面上是看得见的掉帧。
+  const needsImportant = (snap, el, prop) => {
+    const cache = snap.sheetImportant || (snap.sheetImportant = new Map())
+    if (!cache.has(prop)) cache.set(prop, !!winningDeclaration(el, prop)?.important)
+    return cache.get(prop) || el.style.getPropertyPriority(prop) === 'important'
+  }
+
+  const applyProp = (el, prop, value, { important: forced } = {}) => {
+    const snap = track(el)
 
     const before = el.style.getPropertyValue(prop)
+    const beforeImportant = el.style.getPropertyPriority(prop) === 'important'
     const after = value == null ? '' : String(value)
+    // 移除声明时 priority 无从谈起，别让它在下面的比较里制造一次假改动
+    const afterImportant = after === '' ? false : (forced ?? needsImportant(snap, el, prop))
     // 值没变就不记：面板每次重绘都会回写一遍字段，不挡住的话历史里会塞满空操作
-    if (before === after) return
+    if (before === after && beforeImportant === afterImportant) return
 
-    writeProp(el, prop, after)
-    history.push({ kind: 'prop', el, prop, before, after }, prop)
+    writeProp(el, prop, after, afterImportant)
+    history.push({ kind: 'prop', el, prop, before, after, beforeImportant, afterImportant }, prop)
     notify()
   }
 
@@ -897,12 +1117,17 @@ const createStore = () => {
     const snap = snapshots.get(id)
     if (!snap) return
 
+    const priority = () => snap.el.style.getPropertyPriority(prop) === 'important'
     const before = snap.el.style.getPropertyValue(prop)
+    const beforeImportant = priority()
     revertProp(snap, prop)
     const after = snap.el.style.getPropertyValue(prop)
+    const afterImportant = priority()
 
-    if (before !== after)
-      history.push({ kind: 'prop', el: snap.el, prop, before, after }, `还原 ${prop}`)
+    if (before !== after || beforeImportant !== afterImportant)
+      history.push({
+        kind: 'prop', el: snap.el, prop, before, after, beforeImportant, afterImportant,
+      }, `还原 ${prop}`)
     refreeze(snap)
     notify()
   }
@@ -951,6 +1176,14 @@ const createStore = () => {
     moves.clear()
     moveSeq = 0
 
+    // 新增的元素最后摘：分组的外壳要等里面的子元素先搬回原位，
+    // 否则连着子树一起被拿走
+    Array.from(inserts.values())
+      .sort((a, b) => b.seq - a.seq)
+      .forEach(r => r.el.remove())
+    inserts.clear()
+    insertSeq = 0
+
     snapshots.forEach(revertAll)
 
     // 失联记录的改动是「冻结」在 frozen 里的，不跟着 DOM 走。不显式清掉的话，
@@ -980,14 +1213,16 @@ const createStore = () => {
     // 不是「撤销它们」，那是 undoEverything 的事
     removals.clear()
     moves.clear()
+    inserts.clear()
     commentSeq = 0
     removalSeq = 0
     moveSeq = 0
+    insertSeq = 0
     notify()
   }
 
   const stats = () => {
-    const { edits, comments: cs, removals: rm, moves: mv } = read()
+    const { edits, comments: cs, removals: rm, moves: mv, inserts: ins } = read()
     const props = edits.reduce((n, e) => n + e.changes.length, 0)
     const texts = edits.filter(e => e.text).length
     const attrs  = edits.reduce((n, e) => n + (e.attrs?.length || 0), 0)
@@ -1003,7 +1238,8 @@ const createStore = () => {
       comments: cs.length,
       removals: rm.length,
       moves:    mv.length,
-      total:    props + texts + attrs + cs.length + rm.length + mv.length,
+      inserts:  ins.length,
+      total:    props + texts + attrs + cs.length + rm.length + mv.length + ins.length,
     }
   }
 
@@ -1013,6 +1249,7 @@ const createStore = () => {
     addComment, updateComment, removeComment, setCommentImages,
     recordRemoval, removeElements, restoreRemoval, canRestore,
     moveElement, moveBack, canMoveBack,
+    insertElement, groupElements, ungroupElement,
     undoProp, undoText, undoAttr, undoElement, undoEverything, clear,
     read, stats, touch, reconcile, observe, unobserve,
     snapshots,

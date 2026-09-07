@@ -60,6 +60,13 @@ export const parseColor = input => {
   return { r, g, b, a, valid: true }
 }
 
+// 两个颜色字符串是不是同一个颜色（#fff 与 rgb(255, 255, 255) 算同一个）。
+// 变量绑定的最后一道保险：解析出的颜色对不上 computed 就当没绑定。
+export const sameColor = (a, b) => {
+  const x = parseColor(a), y = parseColor(b)
+  return x.valid && y.valid && x.r === y.r && x.g === y.g && x.b === y.b && Math.abs(x.a - y.a) < .01
+}
+
 export const formatColor = ({ r, g, b, a }, format) => {
   if (format === 'RGB') return a < 1 ? `rgba(${r}, ${g}, ${b}, ${round(a)})` : `rgb(${r}, ${g}, ${b})`
 
@@ -83,7 +90,7 @@ export const CHECKER = `
   background-position: 0 0, 5px 5px;`
 
 export const PANEL_STYLE = `
-  position: fixed; z-index: 2147483647; padding: 12px;
+  position: fixed; z-index: 2147483647; box-sizing: border-box; padding: 12px;
   background: #1e1e1e; border-radius: 12px;
   box-shadow: 0 10px 40px rgb(0 0 0 / .55), inset 0 0 0 1px rgb(255 255 255 / .07);
   font: 400 12px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: #fff;`
@@ -217,7 +224,11 @@ export const createPicker = (root, { onChange, format = 'Hex' } = {}) => {
 
   q('.val').addEventListener('change', e => {
     const c = parseColor(e.target.value)
-    if (!c.valid) return sync()
+    // 非法颜色要当场回滚成当前色值，而不是交给 sync()——change 是 Enter 触发的，
+    // 此刻焦点还在这个框里，sync 里那条「正在输入的字段不覆盖」的守卫（给外部 sync 用的）
+    // 会把回滚这一句跳过，于是「这不是颜色」一直挂在框里，跟元素真实颜色对不上，
+    // 连拖色相条都盖不掉它（拖动 preventDefault，焦点没离开）。
+    if (!c.valid) { e.target.value = formatColor(rgba(), fmt); return }
     hsv = rgbToHsv(c.r, c.g, c.b)
     alpha = c.a
     emit()

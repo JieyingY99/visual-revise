@@ -8,6 +8,8 @@
 // 面板挂到 body 而不是 shadow 内：属性面板本身有 overflow:auto，
 // 放在里面会被裁掉。
 
+import { mountPopover } from './popover-host.js'
+
 const MENU_ID = 'visual-revise-menu'
 
 // 与 select / fill 弹层互斥：同时开两个会互相遮挡
@@ -20,6 +22,7 @@ const SIBLING_PANELS = [
 const PANEL_CSS = `
   position: fixed;
   z-index: 2147483647;
+  box-sizing: border-box;
   min-width: 180px;
   max-height: 70vh;
   overflow-y: auto;
@@ -119,31 +122,35 @@ const POPOVER_CSS = `
 `
 
 // items: [{ id, label, icon?, checked?, disabled?, hint? } | { separator: true }]
+//
+// 色圈与「对勾挪到最右」是变量菜单独有的版式，那个菜单已经退役（变量列表搬进了
+// 颜色弹层的「变量」页，见 color-popover.js 的 renderVariableList）。留着就是一段
+// 没有调用方、也没有测试覆盖的死代码，所以删掉；[data-item] 保留，select 与测试都在用。
 export const openMenu = (anchor, items, onPick, { align = 'left' } = {}) => {
   // 点同一个触发器就是关掉它
   if (anchorEl === anchor) return closeMenu()
   closeMenu()
 
-  const panel = document.createElement('div')
-  panel.id = MENU_ID
-  panel.setAttribute('data-visual-revise-ui', '')
-  panel.style.cssText = PANEL_CSS
+  const { host: panel, root } = mountPopover(MENU_ID, PANEL_CSS)
 
   for (const item of items) {
     if (item.separator) {
       const hr = document.createElement('div')
       hr.style.cssText = 'height:1px;margin:5px 6px;background:rgb(255 255 255 / .1)'
-      panel.appendChild(hr)
+      root.appendChild(hr)
       continue
     }
 
     const row = document.createElement('div')
+    // 行在 shadow root 里，外面按 [data-item] 找（`>` 子代选择器不跨 shadow）
+    row.dataset.item = String(item.id ?? '')
     row.style.cssText = ITEM_CSS
     if (item.disabled) row.style.cssText += ';opacity:.4;cursor:not-allowed'
 
     // 勾选位固定占宽，有没有勾选文字都不会左右跳
+    const check = `<span style="flex:none;width:12px;display:grid;place-items:center">${item.checked ? CHECK : ''}</span>`
     row.innerHTML =
-      `<span style="flex:none;width:12px;display:grid;place-items:center">${item.checked ? CHECK : ''}</span>` +
+      check +
       (item.icon ? `<span style="flex:none;display:grid;place-items:center;opacity:.75">${item.icon}</span>` : '') +
       `<span style="flex:1">${item.label}</span>` +
       (item.hint ? `<span style="flex:none;opacity:.45">${item.hint}</span>` : '')
@@ -165,10 +172,8 @@ export const openMenu = (anchor, items, onPick, { align = 'left' } = {}) => {
       })
     }
 
-    panel.appendChild(row)
+    root.appendChild(row)
   }
-
-  document.body.appendChild(panel)
 
   // 定位：默认贴触发器下方，下方装不下就向上翻
   const rect = anchor.getBoundingClientRect()
@@ -192,20 +197,16 @@ export const openPopover = (anchor, buildContent, { align = 'left', width } = {}
   if (anchorEl === anchor) return closeMenu()
   closeMenu()
 
-  const panel = document.createElement('div')
-  panel.id = MENU_ID
-  panel.setAttribute('data-visual-revise-ui', '')
-  panel.style.cssText = PANEL_CSS + (width ? `;width:${width}px` : '')
+  const { host: panel, root } = mountPopover(MENU_ID, PANEL_CSS + (width ? `;width:${width}px` : ''))
 
-  // 样式要在 buildContent 之后插：调用方多半用 innerHTML 铺内容，
+  // 内容铺在 shadow root 里：调用方拿到的是 root，innerHTML / querySelector
+  // 用法不变。样式要在 buildContent 之后插：调用方多半用 innerHTML 铺内容，
   // 先插会被整块冲掉
-  buildContent(panel, closeMenu)
+  buildContent(root, closeMenu)
 
   const style = document.createElement('style')
   style.textContent = POPOVER_CSS
-  panel.appendChild(style)
-
-  document.body.appendChild(panel)
+  root.appendChild(style)
 
   const rect = anchor.getBoundingClientRect()
   const h = panel.offsetHeight

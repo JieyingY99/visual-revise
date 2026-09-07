@@ -76,13 +76,13 @@ await panel('.mode[data-axis="width"]').click()
 await page.waitForTimeout(350)
 ok(await page.locator('#visual-revise-menu').count() === 1, '点模式按钮弹出菜单')
 
-const items = await page.locator('#visual-revise-menu > div').allTextContents()
+const items = await page.locator('#visual-revise-menu [data-item]').allTextContents()
 ok(items.some(t => t.includes('贴合内容')) && items.some(t => t.includes('填满容器')),
    `菜单含三种模式：${items.filter(Boolean).slice(0, 3).join(' / ')}`)
 ok(items.some(t => t.includes('添加最小宽度')) && items.some(t => t.includes('添加最大宽度')),
    '菜单里能添加尺寸限制（min/max 不再常年占两行）')
 
-await page.locator('#visual-revise-menu > div').filter({ hasText: '贴合内容' }).first().click()
+await page.locator('#visual-revise-menu [data-item]').filter({ hasText: '贴合内容' }).first().click()
 await page.waitForTimeout(450)
 ok(await page.evaluate(() => document.querySelector('.rz-fixed').style.width) === 'fit-content',
    '选「贴合内容」写入 fit-content')
@@ -90,7 +90,7 @@ ok(await page.evaluate(() => document.querySelector('.rz-fixed').style.width) ==
 // ── 填满：flex 主轴上写 flex-grow 而不是 100% ───────────────
 await panel('.mode[data-axis="width"]').click()
 await page.waitForTimeout(300)
-await page.locator('#visual-revise-menu > div').filter({ hasText: '填满容器' }).first().click()
+await page.locator('#visual-revise-menu [data-item]').filter({ hasText: '填满容器' }).first().click()
 await page.waitForTimeout(450)
 
 const filled = await page.evaluate(() => {
@@ -104,7 +104,7 @@ ok(filled.grow === '1' && !filled.width,
 await select('.rz-block')
 await panel('.mode[data-axis="width"]').click()
 await page.waitForTimeout(300)
-await page.locator('#visual-revise-menu > div').filter({ hasText: '填满容器' }).first().click()
+await page.locator('#visual-revise-menu [data-item]').filter({ hasText: '填满容器' }).first().click()
 await page.waitForTimeout(450)
 ok(await page.evaluate(() => document.querySelector('.rz-block').style.width) === '100%',
    '非 flex 场景下「填满」写 width:100%')
@@ -132,7 +132,7 @@ ok(beforeFill === 120, `起始按样式表的 120px：${beforeFill}`)
 
 await panel('.mode[data-axis="width"]').click()
 await page.waitForTimeout(300)
-await page.locator('#visual-revise-menu > div').filter({ hasText: '填满容器' }).first().click()
+await page.locator('#visual-revise-menu [data-item]').filter({ hasText: '填满容器' }).first().click()
 await page.waitForTimeout(500)
 
 const fillWrote = await page.evaluate(() => {
@@ -153,7 +153,7 @@ ok(await mode('.rz-sheet-w', 'width') === 'fill',
 // 切回贴合要清掉 fill 留下的痕迹，否则切回来毫无变化
 await panel('.mode[data-axis="width"]').click()
 await page.waitForTimeout(300)
-await page.locator('#visual-revise-menu > div').filter({ hasText: '贴合内容' }).first().click()
+await page.locator('#visual-revise-menu [data-item]').filter({ hasText: '贴合内容' }).first().click()
 await page.waitForTimeout(500)
 const afterHug = await page.evaluate(() => {
   const s = document.querySelector('.rz-sheet-w').style
@@ -173,7 +173,7 @@ await page.evaluate(() => {
 await select('.rz-cross')
 await panel('.mode[data-axis="width"]').click()
 await page.waitForTimeout(300)
-await page.locator('#visual-revise-menu > div').filter({ hasText: '填满容器' }).first().click()
+await page.locator('#visual-revise-menu [data-item]').filter({ hasText: '填满容器' }).first().click()
 await page.waitForTimeout(500)
 ok(await page.evaluate(() => document.querySelector('.rz-cross').style.alignSelf) === 'stretch',
    '交叉轴的填满写 align-self:stretch——写 100% 会算错，交叉轴百分比参照的是内容框，遇到 padding 就溢出')
@@ -216,7 +216,7 @@ ok(await panel('input[data-prop="min-width"]').count() === 0,
 
 await panel('.mode[data-axis="width"]').click()
 await page.waitForTimeout(300)
-await page.locator('#visual-revise-menu > div').filter({ hasText: '添加最小宽度' }).first().click()
+await page.locator('#visual-revise-menu [data-item]').filter({ hasText: '添加最小宽度' }).first().click()
 await page.waitForTimeout(400)
 
 ok(await panel('input[data-prop="min-width"]').count() === 1, '添加后字段出现')
@@ -342,7 +342,7 @@ ok(inBox.icon, '限制行的前缀是设计稿里的图标（>|< / |↔| 及其�
 await page.locator('visual-revise-panel .mode[data-axis="width"]').click()
 await page.waitForTimeout(350)
 const menuTexts = await page.evaluate(() =>
-  [...document.querySelectorAll('#visual-revise-menu div')].map(d => d.textContent.trim()).filter(Boolean))
+  [...document.getElementById('visual-revise-menu').shadowRoot.querySelectorAll('div')].map(d => d.textContent.trim()).filter(Boolean))
 ok(menuTexts.length >= 5 && !menuTexts.some(t => /CSS 变量/.test(t)),
    `尺寸菜单里没有「使用 CSS 变量」（${menuTexts.filter(t => t.length < 12).join(' / ')}）`)
 await page.keyboard.press('Escape')

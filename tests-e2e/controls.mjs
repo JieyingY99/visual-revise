@@ -25,7 +25,7 @@ await page.waitForTimeout(350)
 const menu = await page.evaluate(() => {
   const p = document.getElementById('visual-revise-select-panel')
   if (!p) return null
-  const items = Array.from(p.children)
+  const items = Array.from(p.shadowRoot.children)
   const selected = items.find(i => i.style.background.includes('13, 153, 255') || i.style.background === 'rgb(13, 153, 255)')
   return {
     count: items.length,
@@ -43,9 +43,9 @@ ok(parseFloat(menu?.radius) >= 10, `圆角面板（${menu?.radius}）`)
 
 // 选中一项应写入页面（用真实点击，走完整事件序列）
 const flexIndex = await page.evaluate(() =>
-  Array.from(document.getElementById('visual-revise-select-panel').children)
+  Array.from(document.getElementById('visual-revise-select-panel').shadowRoot.children)
     .findIndex(i => i.textContent === 'dashed'))
-await page.locator('#visual-revise-select-panel > div').nth(flexIndex).click()
+await page.locator('#visual-revise-select-panel [data-item]').nth(flexIndex).click()
 await page.waitForTimeout(400)
 ok(await page.evaluate(() => document.querySelectorAll('.curve-card')[1].style.borderStyle) === 'dashed',
    '选择选项后写入页面')
@@ -86,14 +86,14 @@ const picker = await page.evaluate(() => {
   const p = document.getElementById('visual-revise-color-panel')
   if (!p) return null
   return {
-    sv:        !!p.querySelector('.sv'),
-    hue:       !!p.querySelector('.hue'),
-    alpha:     !!p.querySelector('.alpha'),
-    eyedropper:!!p.querySelector('.eye'),
-    format:    p.querySelector('.format')?.getAttribute('value'),
-    value:     p.querySelector('.val')?.value,
-    alphaVal:  p.querySelector('.alpha-val')?.value,
-    svBg:      p.querySelector('.sv')?.style.background,
+    sv:        !!p.shadowRoot.querySelector('.sv'),
+    hue:       !!p.shadowRoot.querySelector('.hue'),
+    alpha:     !!p.shadowRoot.querySelector('.alpha'),
+    eyedropper:!!p.shadowRoot.querySelector('.eye'),
+    format:    p.shadowRoot.querySelector('.format')?.getAttribute('value'),
+    value:     p.shadowRoot.querySelector('.val')?.value,
+    alphaVal:  p.shadowRoot.querySelector('.alpha-val')?.value,
+    svBg:      p.shadowRoot.querySelector('.sv')?.style.background,
   }
 })
 ok(!!picker, '点击色块展开色盘')
@@ -115,7 +115,7 @@ await page.waitForTimeout(400)
 const typed = await page.evaluate(() => ({
   recorded: window.__visualRevise.store.read().edits
     .flatMap(e => e.changes).find(c => c.prop === 'border-color')?.to || '',
-  field: document.getElementById('visual-revise-color-panel')?.querySelector('.val')?.value,
+  field: document.getElementById('visual-revise-color-panel')?.shadowRoot.querySelector('.val')?.value,
 }))
 ok(/255,\s*136,\s*0|ff8800/i.test(typed.recorded),
    `输入色值写入并记录：${typed.recorded}`)
@@ -126,8 +126,8 @@ ok(/255,\s*136,\s*0|ff8800/i.test(typed.recorded),
 await ensurePicker()
 const formatSpec = await page.evaluate(() => {
   const p = document.getElementById('visual-revise-color-panel')
-  const fmt = p?.querySelector('.format')
-  const alphaField = p?.querySelector('.alpha-val')
+  const fmt = p?.shadowRoot.querySelector('.format')
+  const alphaField = p?.shadowRoot.querySelector('.alpha-val')
   return {
     options: fmt?.getAttribute('options'),
     value: fmt?.getAttribute('value'),
@@ -152,7 +152,7 @@ const afterHue = await page.evaluate(() => {
   const entry = window.__visualRevise.store.read().edits[0]
   return {
     recorded: entry?.changes.find(c => c.prop === 'border-color')?.to || '',
-    field: document.getElementById('visual-revise-color-panel')?.querySelector('.val')?.value,
+    field: document.getElementById('visual-revise-color-panel')?.shadowRoot.querySelector('.val')?.value,
   }
 })
 ok(!!afterHue.recorded,

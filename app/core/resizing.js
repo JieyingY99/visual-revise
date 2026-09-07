@@ -4,6 +4,8 @@
  */
 // W/H 的尺寸模式：对应 Figma 的 Fixed / Hug contents / Fill container。
 
+import { declaredVariables as declaredIn } from './cascade.js'
+
 export const AXES = {
   width:  { size: 'width',  min: 'min-width',  max: 'max-width',  prefix: 'W', label: '宽' },
   height: { size: 'height', min: 'min-height', max: 'max-height', prefix: 'H', label: '高' },
@@ -215,28 +217,9 @@ export const currentSize = el => {
 }
 
 // 页面上已定义的 CSS 自定义属性，供「使用变量」的候选。
-// 只扫 :root / html 上的声明——组件局部变量对别的元素多半用不上，
-// 全量扫描的代价也不值得。
-export const cssVariables = () => {
-  const out = new Set()
-
-  for (const sheet of Array.from(document.styleSheets || [])) {
-    let rules
-    try { rules = sheet.cssRules } catch { continue }
-
-    for (const rule of Array.from(rules || [])) {
-      if (!rule.selectorText || !rule.style) continue
-      if (!/^(:root|html)\b/.test(rule.selectorText)) continue
-
-      for (const name of Array.from(rule.style)) {
-        if (name.startsWith('--')) out.add(name)
-      }
-    }
-  }
-
-  for (const name of Array.from(document.documentElement.style || [])) {
-    if (name.startsWith('--')) out.add(name)
-  }
-
-  return Array.from(out).sort()
-}
+//
+// 早先这里自己扫每张表的顶层 :root / html 规则，跟 cascade.js 的层叠遍历是两套
+// 口径：@layer / @media / adoptedStyleSheets / 容器作用域里的 token 一个都收不到，
+// 而 chip 那边认得出——「面板显示绑在 --role-bg 上，变量列表里却找不到这一项」。
+// 现在统一走 cascade.js 那一份铺平结果。
+export const declaredVariables = () => declaredIn(document)

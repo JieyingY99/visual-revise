@@ -281,7 +281,7 @@ await check('属性 tab · 全部展开')
 await P('section[data-group="fill"] .add').click(); await page.waitForTimeout(350)
 for (const l of ['投影', '图层模糊', '噪点', '玻璃']) {
   await P('.add[data-add="effects"]').click(); await page.waitForTimeout(250)
-  await page.locator('#visual-revise-menu > div').filter({ hasText: l }).first().click()
+  await page.locator('#visual-revise-menu [data-item]').filter({ hasText: l }).first().click()
   await page.waitForTimeout(300)
 }
 await check('填充两层 + 效果四条')
@@ -406,7 +406,7 @@ for (let i = n; i > 0; i--) {
 const panelIssues = []
 for (const kind of KINDS) {
   await P('.add[data-add="effects"]').click(); await page.waitForTimeout(250)
-  await page.locator('#visual-revise-menu > div').filter({ hasText: kind }).first().click()
+  await page.locator('#visual-revise-menu [data-item]').filter({ hasText: kind }).first().click()
   await page.waitForTimeout(350)
 
   const opener = P('section[data-group="effects"] [data-effect-open="0"]')
@@ -414,10 +414,12 @@ for (const kind of KINDS) {
   await opener.click(); await page.waitForTimeout(400)
 
   const got = await page.evaluate(() => {
-    const hosts = [...document.querySelectorAll('[data-visual-revise-ui]')].filter(n => n.querySelector?.('[data-fx]'))
-    const host = hosts[hosts.length - 1]
-    if (!host) return { missing: true }
-    const box = host.getBoundingClientRect()
+    // 弹层内容在宿主的 shadow root 里：盒子量宿主，字段在 root 里查
+    const hosts = [...document.querySelectorAll('[data-visual-revise-ui]')].filter(n => n.shadowRoot?.querySelector('[data-fx]'))
+    const outer = hosts[hosts.length - 1]
+    if (!outer) return { missing: true }
+    const host = outer.shadowRoot
+    const box = outer.getBoundingClientRect()
     const bad = []
 
     // ① 弹层内没有元素越界

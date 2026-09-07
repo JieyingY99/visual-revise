@@ -6,11 +6,14 @@
 // 在深色浮层里显示为系统浅色菜单，与整体割裂。
 // 弹出面板挂到 body 而非 shadow 内——面板本身有 overflow: auto，
 // 放在里面会被裁掉。
+import { mountPopover } from './popover-host.js'
+
 const PANEL_ID = 'visual-revise-select-panel'
 
 const PANEL_CSS = `
   position: fixed;
   z-index: 2147483647;
+  box-sizing: border-box;
   min-width: 160px;
   max-height: 320px;
   overflow-y: auto;
@@ -35,8 +38,35 @@ const OPTION_CSS = `
 `
 
 let openInstance = null
+// 当前打开的下拉里的选项（{ el, pick }）与键盘高亮的下标。
+// 鼠标悬停和上下键改的是同一个下标，Enter 选的就是高亮的那一项。
+let items = []
+let active = -1
+
+const highlight = i => {
+  if (!items.length) return
+  active = (i + items.length) % items.length
+  items.forEach(({ el, isCurrent }, k) => {
+    // 当前值那一项始终是蓝底，其余只有高亮的那一项有浅底
+    el.style.background = isCurrent ? '#0d99ff' : k === active ? 'rgb(255 255 255 / .09)' : 'transparent'
+  })
+  items[active].el.scrollIntoView({ block: 'nearest' })
+}
+
+// 上下键在下拉里移动、Enter 选中。字体列表几百项，没有键盘只能拖滚动条一个个找。
+addEventListener('keydown', e => {
+  if (!openInstance || !items.length) return
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault(); e.stopPropagation()
+    highlight(active + (e.key === 'ArrowDown' ? 1 : -1))
+  } else if (e.key === 'Enter') {
+    e.preventDefault(); e.stopPropagation()
+    items[active]?.pick()
+  }
+}, true)
 
 const closePanel = () => {
+  items = []; active = -1
   document.getElementById(PANEL_ID)?.remove()
   openInstance?.removeAttribute('data-open')
   openInstance = null
@@ -49,7 +79,25 @@ document.addEventListener('pointerdown', e => {
   closePanel()
 }, true)
 
-addEventListener('scroll', () => closePanel(), true)
+// 页面或面板滚动时关掉：锚点跟着走了，下拉留在原地就成了孤儿。
+// 但下拉自己内部的滚动不算——字体列表有几百项、自带滚动条，
+// 一滚就关等于永远只能选到最上面几个。跟 menu.js 那条是同一个坑。
+// Esc 关掉弹层。面板那边的 Esc 分支只是「有弹层时把这一下让给弹层」，
+// 让完之后并没有人接手——焦点在弹层的输入框里时 Esc 毫无作用；焦点在
+// 别处时则一路走到「取消选中」，面板整个收起、弹层跟着被动消失，看着像
+// 关了其实是选中没了。stopPropagation 是必须的，不拦住就会继续走到取消选中。
+addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || !document.getElementById(PANEL_ID)) return
+  e.preventDefault()
+  e.stopPropagation()
+  closePanel()
+}, true)
+
+addEventListener('scroll', e => {
+  const panel = document.getElementById(PANEL_ID)
+  if (panel && e.target instanceof Node && panel.contains(e.target)) return
+  closePanel()
+}, true)
 addEventListener('resize', () => closePanel())
 
 export class VrSelect extends HTMLElement {
@@ -68,7 +116,6 @@ export class VrSelect extends HTMLElement {
     this.addEventListener('click', () => this.#toggle())
     this.addEventListener('keydown', e => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.#toggle() }
-      if (e.key === 'Escape') closePanel()
     })
     this.tabIndex = 0
   }
@@ -137,39 +184,33 @@ export class VrSelect extends HTMLElement {
     if (openInstance === this) return closePanel()
     closePanel()
 
-    const panel = document.createElement('div')
-    panel.id = PANEL_ID
-    panel.setAttribute('data-visual-revise-ui', '')
-    panel.style.cssText = PANEL_CSS
+    const { host: panel, root } = mountPopover(PANEL_ID, PANEL_CSS)
 
     const current = this.value
-    for (const opt of this.options) {
+    items = []
+    this.options.forEach((opt, i) => {
       const [val, label] = Array.isArray(opt) ? opt : [opt, opt]
       const item = document.createElement('div')
-
+      // 行在 shadow root 里，外面按 [data-item] 找（`>` 子代选择器不跨 shadow）
+      item.dataset.item = String(val)
       item.style.cssText = OPTION_CSS
       item.textContent = label
-      if (val === current) item.style.background = '#0d99ff'
 
-      item.addEventListener('pointerenter', () => {
-        if (val !== current) item.style.background = 'rgb(255 255 255 / .09)'
-      })
-      item.addEventListener('pointerleave', () => {
-        if (val !== current) item.style.background = 'transparent'
-      })
-      item.addEventListener('click', e => {
-        e.stopPropagation()
+      const pick = () => {
         closePanel()
         this.value = val
         this.dispatchEvent(new CustomEvent('vr-select', {
           bubbles: true, composed: true, detail: { value: val },
         }))
-      })
+      }
+      item.addEventListener('pointerenter', () => highlight(i))
+      item.addEventListener('click', e => { e.stopPropagation(); pick() })
 
-      panel.appendChild(item)
-    }
-
-    document.body.appendChild(panel)
+      items.push({ el: item, pick, isCurrent: val === current })
+      root.appendChild(item)
+    })
+    // 键盘起点落在当前值上，没有当前值就从第一项开始
+    highlight(Math.max(0, items.findIndex(x => x.isCurrent)))
 
     // 定位：默认贴在触发器下方，空间不足时向上翻
     const rect = this.getBoundingClientRect()

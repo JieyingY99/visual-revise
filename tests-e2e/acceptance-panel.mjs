@@ -14,11 +14,12 @@ console.log('\n[PRD 验收] 批次 2：属性面板逐控件\n')
 await page.goto(origin); await injectVisBug(page, origin)
 await page.waitForTimeout(400)
 
-// 一个能让 7 组都显示的元素
+// 一个能让 7 组都显示的元素。第一段是**直接文字**：Typography 和「文字色」
+// 只给直接承载文字的元素，纯容器上那两块整个不渲染（AC-6.35）
 await page.evaluate(() => {
   const d = document.createElement('div'); d.id = 'rich'
   d.style.cssText = 'position:absolute;left:20px;top:400px;width:300px;height:120px;display:flex;gap:8px;padding:12px;background:#456;border:2px solid #789;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.3);font-size:14px;color:#fff;opacity:.95;font-family:Poppins, "PingFang TC", sans-serif'
-  d.innerHTML = '<span>子 A</span><span>子 B</span>'
+  d.innerHTML = '直接文字<span>子 A</span><span>子 B</span>'
   document.body.appendChild(d)
 })
 const select = async () => { await page.keyboard.press('Escape'); await page.waitForTimeout(150); await page.locator('#rich').click({ position: { x: 4, y: 4 } }); await page.waitForTimeout(500) }
@@ -134,8 +135,30 @@ AC('AC-6.7', clipOn === 'hidden' && (await inline('overflow')) === '', `裁剪�
 
 // ── 6.8 Appearance ──
 console.log('── 6.8 Appearance')
-await write('opacity', 0.5); await write('border-radius', 13)
+// 不透明度在面板里是百分比（Figma 的写法）：敲 50 → opacity: 0.5
+await write('opacity', 50); await write('border-radius', 13)
 AC('AC-6.8', await inline('opacity') === '0.5' && await inline('border-radius') === '13px', `不透明度 ${await inline('opacity')} · 圆角 ${await inline('border-radius')}`)
+
+// 6.8b 不透明度按百分比显示与步进：1 → 100 %，框里敲 30% / 30 都写 0.3，↑ 一步 1%，Shift+↑ 10%
+{
+  await write('opacity', 95)
+  const shown = await page.evaluate(() => {
+    const sr = document.querySelector('visual-revise-panel').shadowRoot
+    const inp = sr.querySelector('input[data-prop="opacity"]')
+    return { value: inp?.value, suffix: inp?.parentElement.querySelector('.suffix')?.textContent ?? null }
+  })
+  await write('opacity', '30%')
+  const pct = await inline('opacity')
+  const inp = P('input[data-prop="opacity"]').first()
+  await inp.click(); await inp.press('ArrowUp'); await page.waitForTimeout(250)
+  const up1 = await inline('opacity')
+  await inp.press('Shift+ArrowUp'); await page.waitForTimeout(250)
+  const up10 = await inline('opacity')
+  await page.keyboard.press('Escape'); await page.waitForTimeout(150)
+  AC('AC-6.8b', shown.value === '95' && shown.suffix === '%' && pct === '0.3' && up1 === '0.31' && up10 === '0.41',
+     `不透明度显示 ${shown.value}${shown.suffix}，敲 30% 写 ${pct}，↑ 一步 ${up1}，Shift+↑ ${up10}`)
+  await select()
+}
 
 // ── 6.9 Typography ──
 console.log('── 6.9 Typography')
@@ -177,6 +200,48 @@ AC('AC-6.10b', /linear-gradient/.test(await inline('background-image')),
 await color('color', 'rgb(1, 2, 3)')
 AC('AC-6.10c', await inline('color') === 'rgb(1, 2, 3)', `文字色写 color（${await inline('color')}）`)
 
+// ── 6.36 描边行的隐藏 / 移除（照 Fill 的层行）──
+// #rich 建的时候带 border:2px solid #789。隐藏写透明色：盒子尺寸不变、宽度样式都留着；
+// 移除整组一起走，分区退回空状态，⌘Z 一次整组回来。放在 6.11 之前：那段会改描边值。
+console.log('── 6.36 描边行 隐藏 / 移除')
+await select()
+const strokeRow = () => page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+  const sec = sr.querySelector('section[data-group="stroke"]')
+  const el = document.getElementById('rich')
+  const cs = getComputedStyle(el)
+  return {
+    eye: !!sec.querySelector('[data-stroke-eye]'), del: !!sec.querySelector('[data-stroke-del]'),
+    off: !!sec.querySelector('.layer-row.off'), colorBox: !!sec.querySelector('vr-color[data-prop="border-color"]'),
+    addDisabled: sec.querySelector('.add')?.hasAttribute('disabled') ?? null,
+    color: cs.borderTopColor, width: cs.borderTopWidth, style: cs.borderTopStyle,
+    inlineColor: el.style.borderColor, inlineStyle: el.style.borderStyle, inlineWidth: el.style.borderWidth,
+    total: window.__visualRevise.store.stats().total,
+  }
+})
+let sr0 = await strokeRow()
+AC('AC-6.36a', sr0.eye && sr0.del && sr0.colorBox && sr0.addDisabled === true,
+   `描边颜色行右侧有眼睛和减号，加号在有描边时禁用（${JSON.stringify({ eye: sr0.eye, del: sr0.del, add: sr0.addDisabled })}）`)
+const sEye = P('section[data-group="stroke"] [data-stroke-eye]').first()
+await sEye.scrollIntoViewIfNeeded(); await sEye.click(); await page.waitForTimeout(400)
+let sr1 = await strokeRow()
+AC('AC-6.36b', sr1.off && sr1.color === 'rgba(0, 0, 0, 0)' && sr1.width === '2px' && sr1.style === 'solid' && sr1.colorBox,
+   `点眼睛隐藏：颜色透明、宽度样式不动、行压暗、颜色框仍显示原色（${sr1.color} / ${sr1.width} / ${sr1.style}）`)
+await P('section[data-group="stroke"] [data-stroke-eye]').first().click(); await page.waitForTimeout(400)
+let sr2 = await strokeRow()
+AC('AC-6.36c', !sr2.off && sr2.color === sr0.color && sr2.inlineColor === sr0.inlineColor,
+   `再点眼睛恢复：颜色回到 ${sr0.color}，inline 原样（"${sr2.inlineColor}"）`)
+const sDel = P('section[data-group="stroke"] [data-stroke-del]').first()
+await sDel.scrollIntoViewIfNeeded(); await sDel.click(); await page.waitForTimeout(450)
+let sr3 = await strokeRow()
+AC('AC-6.36d', sr3.inlineStyle === 'none' && sr3.inlineWidth === '0px' && sr3.inlineColor === '' && !sr3.colorBox && sr3.addDisabled === false
+  && sr3.total > sr2.total,
+   `点减号移除整组：style none / width 0 / 颜色清掉，分区退回空状态、加号可点，进改动记录（${sr3.inlineStyle} / ${sr3.inlineWidth} / 记录 ${sr2.total}→${sr3.total}）`)
+await page.keyboard.press('Meta+z'); await page.waitForTimeout(450)
+let sr4 = await strokeRow()
+AC('AC-6.36e', sr4.style === 'solid' && sr4.width === '2px' && sr4.color === sr0.color && sr4.colorBox && sr4.total === sr2.total,
+   `⌘Z 一次整组回来（${sr4.style} / ${sr4.width} / ${sr4.color}，记录 ${sr4.total}）`)
+
 // ── 6.11 Stroke ──
 console.log('── 6.11 Stroke')
 await color('border-color', 'rgb(200, 100, 50)')
@@ -204,7 +269,7 @@ const fxBase = await fxRows()
 
 const addFx = async label => {
   await P('.add[data-add="effects"]').click(); await page.waitForTimeout(300)
-  await page.locator('#visual-revise-menu > div').filter({ hasText: label }).first().click()
+  await page.locator('#visual-revise-menu [data-item]').filter({ hasText: label }).first().click()
   await page.waitForTimeout(400)
 }
 await addFx('投影'); await addFx('图层模糊'); await addFx('背景模糊')
@@ -232,9 +297,10 @@ await P('section[data-group="effects"] [data-effect-eye="0"]').click(); await pa
 // 参数面板：只列 CSS 真的做得到的几项
 await P('section[data-group="effects"] [data-effect-open="0"]').click(); await page.waitForTimeout(400)
 const fxFields = await page.evaluate(() => {
-  const hosts = [...document.querySelectorAll('[data-visual-revise-ui]')].filter(n => n.querySelector?.('[data-fx]'))
+  // 弹层内容在宿主的 shadow root 里
+  const hosts = [...document.querySelectorAll('[data-visual-revise-ui]')].filter(n => n.shadowRoot?.querySelector('[data-fx]'))
   const host = hosts[hosts.length - 1]
-  return host ? [...host.querySelectorAll('[data-fx]')].map(i => i.dataset.fx) : []
+  return host ? [...host.shadowRoot.querySelectorAll('[data-fx]')].map(i => i.dataset.fx) : []
 })
 AC('AC-6.12f', JSON.stringify(fxFields) === JSON.stringify(['x', 'y', 'blur', 'spread', 'color']),
    `投影的参数面板：${fxFields.join(' / ')}`)
@@ -278,41 +344,56 @@ AC('AC-6.12i', wasFolded && !(await page.evaluate(() => document.querySelector('
   .querySelector('section[data-group="effects"]').hasAttribute('folded'))),
    '在收起的分区上点加号会自动展开')
 
-// 变量菜单很长、自带滚动条，在它上面滚动不能把它关掉——一滚就关等于只能选最上面几项
-await P('section[data-group="fill"] .var-btn').click({ force: true }); await page.waitForTimeout(350)
-const menuBox = await page.locator('#visual-revise-menu').boundingBox()
-if (menuBox) {
-  await page.mouse.move(menuBox.x + menuBox.width / 2, menuBox.y + menuBox.height / 2)
-  await page.mouse.wheel(0, 150); await page.waitForTimeout(300)
-  AC('AC-6.24b', await page.evaluate(() => !!document.getElementById('visual-revise-menu')),
-     '在菜单内部滚动不会把菜单关掉')
-  await page.keyboard.press('Escape'); await page.waitForTimeout(200)
-} else AC('AC-6.24b', false, '变量菜单没弹出')
-
-// 绑定态：一整块 chip 代替色块/色值/不透明度三段，hover 出现 unlink
-// 一并放进字体、长度、纯数字，验菜单只列得出颜色那几个
+// 变量列表在颜色弹层的「变量」页里，自带滚动条：在它上面滚动不能把弹层关掉
+// ——一滚就关等于只能选最上面几项
 await page.addStyleTag({ content: ':root{--vr-test-accent:#ff4704;--vr-test-font:Inter, sans-serif;'
-  + '--vr-test-gap:12px;--vr-test-scale:1.25}' })
+  + '--vr-test-gap:12px;--vr-test-scale:1.25;'
+  + Array.from({ length: 20 }, (_, i) => `--vr-bulk-${i}:#${((i * 53) % 4096).toString(16).padStart(3, '0')};`).join('') + '}' })
 await page.waitForTimeout(200)
-// 上一条用 Esc 关的菜单——确认它真的关了，否则 openMenu 会把「再点同一个
-// 按钮」当成关闭它，下面就永远打不开
-AC('AC-6.24b2', !(await page.evaluate(() => !!document.getElementById('visual-revise-menu'))),
-   'Esc 能关掉菜单')
-// 用当前选中的 #rich（容器，主填充是背景色）。#lnk 要到后面 6.18 段才创建
+
+const COLORPOP = 'visual-revise-color-panel'
+const popRows = () => page.evaluate(id => {
+  const m = document.getElementById(id)
+  return m ? [...m.shadowRoot.querySelectorAll('[data-item]')].map(r => r.textContent.trim()) : null
+}, COLORPOP)
+
+// #rich 有直接文字，Fill 的主填充是字色，标题栏那个按钮绑的就是 color
 await P('section[data-group="fill"] .var-btn').click({ force: true }); await page.waitForTimeout(400)
-const varItems = await page.evaluate(() => {
-  const m = document.getElementById('visual-revise-menu')
-  return m ? [...m.children].map(c => c.textContent.trim()) : null
-})
+const listBox = await page.evaluate(id => {
+  const list = document.getElementById(id)?.shadowRoot.querySelector('[data-item]')?.parentElement
+  if (!list) return null
+  const r = list.getBoundingClientRect()
+  return { x: r.x, y: r.y, w: r.width, h: r.height, can: list.scrollHeight > list.clientHeight }
+}, COLORPOP)
+if (listBox) {
+  await page.mouse.move(listBox.x + listBox.w / 2, listBox.y + listBox.h / 2)
+  await page.mouse.wheel(0, 150); await page.waitForTimeout(300)
+  AC('AC-6.24b', await page.evaluate(id => !!document.getElementById(id), COLORPOP),
+     `在变量列表里滚动不会把弹层关掉（可滚=${listBox.can}）`)
+  await page.keyboard.press('Escape'); await page.waitForTimeout(200)
+} else AC('AC-6.24b', false, '变量页没弹出')
+
+// Effects 没有「绑定变量」：效果模型从 computed 反解，var() 存不住，绑了也活不过一次编辑
+AC('AC-6.23c', (await P('section[data-group="fill"] .var-btn').count()) === 1
+  && (await P('section[data-group="stroke"] .var-btn').count()) === 1
+  && (await P('section[data-group="effects"] .var-btn').count()) === 0,
+   'Fill / Stroke 标题栏有「绑定变量」，Effects 没有')
+
+// 上一条用 Esc 关的弹层——确认它真的关了，否则「再点同一个按钮」会被当成关闭它
+AC('AC-6.24b2', !(await page.evaluate(id => !!document.getElementById(id), COLORPOP)),
+   'Esc 能关掉颜色弹层')
+
+await P('section[data-group="fill"] .var-btn').click({ force: true }); await page.waitForTimeout(400)
+const varItems = await popRows()
 // 挑颜色时不该看到字体栈和 12px——点了也 apply 不上，只是让人多翻几屏
 const leaked = (varItems || []).filter(t => /--vr-test-(font|gap|scale)/.test(t))
 AC('AC-6.24e', varItems !== null && leaked.length === 0
   && (varItems || []).some(t => t.includes('--vr-test-accent')),
-   `变量菜单按类型过滤，颜色格里只列颜色变量${leaked.length ? '（混进了：' + leaked.join(',') + '）' : ''}`)
+   `变量页按类型过滤，颜色格里只列颜色变量${leaked.length ? '（混进了：' + leaked.join(',') + '）' : ''}`)
 
-const accentItem = page.locator('#visual-revise-menu > div').filter({ hasText: '--vr-test-accent' }).first()
+const accentItem = page.locator(`#${COLORPOP} [data-item="--vr-test-accent"]`).first()
 if (!varItems || !(await accentItem.count())) {
-  AC('AC-6.24c', false, `变量菜单里找不到测试变量（菜单：${varItems ? varItems.slice(0, 4).join(',') : '没弹出'}）`)
+  AC('AC-6.24c', false, `变量页里找不到测试变量（列表：${varItems ? varItems.slice(0, 4).join(',') : '没弹出'}）`)
   AC('AC-6.24d', false, '同上，跳过 unlink')
 } else {
 await accentItem.click()
@@ -320,15 +401,15 @@ await page.waitForTimeout(450)
 
 const boundRow = () => page.evaluate(() => {
   const sr = document.querySelector('visual-revise-panel').shadowRoot
-  const chip = sr.querySelector('section[data-group="fill"] .var-chip')
+  const row = sr.querySelector('section[data-group="fill"] .layer-row.bound')
   const el = document.getElementById('rich')
   return {
-    name: chip?.querySelector('.var-name')?.textContent ?? null,
-    hasUnlink: !!sr.querySelector('section[data-group="fill"] [data-unlink]'),
+    name: row?.querySelector('.var-name')?.textContent ?? null,
+    hasUnlink: !!row?.querySelector('[data-unlink]'),
     // 绑定态不该再出现可编辑的色值框
-    hasColorBox: !!sr.querySelector('section[data-group="fill"] .var-chip ~ vr-fill, section[data-group="fill"] .layer-row.bound vr-fill'),
-    inline: el.style.getPropertyValue('background-color'),
-    computed: getComputedStyle(el).backgroundColor,
+    hasColorBox: !!row?.querySelector('vr-color'),
+    inline: el.style.getPropertyValue('color'),
+    computed: getComputedStyle(el).color,
   }
 })
 const bound = await boundRow()
@@ -342,6 +423,102 @@ const unlinked = await boundRow()
 AC('AC-6.24d', unlinked.name === null && unlinked.inline === beforeColor && unlinked.computed === beforeColor,
    `unlink 用当前解析值顶替 var()：绑定断了、颜色不变（inline="${unlinked.inline}"）`)
 }
+
+// ── 样式表里的变量绑定 ──
+// 绝大多数页面的 var() 写在样式表里而不是 inline。三个元素：
+//   #fx-bound  .vr-fx { background: var(--vr-fx-surface); color: var(--vr-fx-ink); border: 2px solid var(--vr-fx-line) }
+//   #fx-bound-p  它的子元素，自己没写 color，字色继承自父级的变量
+//   #fx-over   多了 .vr-fx-over { background: #112233 }——更高优先级的非变量声明压掉了变量
+console.log('── 样式表里的变量绑定')
+await page.addStyleTag({ content: ':root{--vr-fx-surface:#223344;--vr-fx-ink:#ffcc00;--vr-fx-line:#ff00aa}'
+  + '.vr-fx{position:absolute;top:400px;width:200px;height:80px;padding:8px;background:var(--vr-fx-surface);color:var(--vr-fx-ink);border:2px solid var(--vr-fx-line)}'
+  + '#fx-bound{left:400px}#fx-over{left:640px}.vr-fx.vr-fx-over{background:#112233}' })
+await page.evaluate(() => {
+  for (const [id, cls] of [['fx-bound', 'vr-fx'], ['fx-over', 'vr-fx vr-fx-over']]) {
+    const d = document.createElement('div'); d.id = id; d.className = cls
+    d.innerHTML = `<p id="${id}-p" style="margin:0">child of ${id}</p>`
+    document.body.appendChild(d)
+  }
+})
+const pickEl = async (sel, pos) => { await page.keyboard.press('Escape'); await page.waitForTimeout(150); await page.locator(sel).click({ position: pos }); await page.waitForTimeout(500) }
+// 填充层的 chip 是那一层 vr-fill 自己的触发器（弹层是实例方法，行里没有实例
+// 的话 chip 点了无处可去），内容在它的 shadow root 里
+const chips = () => page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+  const q = sel => sr.querySelector(sel)
+  const layer = q('section[data-group="fill"] .layers vr-fill[bound]')
+  return {
+    fill: layer?.getAttribute('bound') ?? null,
+    fillName: layer?.shadowRoot?.querySelector('.var-name')?.textContent ?? null,
+    text: q('section[data-group="fill"] .field .var-chip .var-name')?.textContent ?? null,
+    stroke: q('section[data-group="stroke"] .var-chip .var-name')?.textContent ?? null,
+    strokeTitle: q('section[data-group="stroke"] .var-chip')?.getAttribute('title') ?? '',
+    textTitle: q('section[data-group="fill"] .field .var-chip')?.getAttribute('title') ?? '',
+  }
+})
+
+await pickEl('#fx-bound', { x: 190, y: 70 })
+let c = await chips()
+AC('AC-6.24f', c.fill === '--vr-fx-surface' && c.fillName === '--vr-fx-surface'
+  && c.stroke === '--vr-fx-line',
+   `样式表里的 var() 也识别为绑定：fill=${c.fill}（长手）、stroke=${c.stroke}（border 简写里的一段）`)
+AC('AC-6.24f2', /\.vr-fx \{ border: 2px solid var\(--vr-fx-line\) \}/.test(c.strokeTitle),
+   `chip 的 title 说明来源规则（${c.strokeTitle}）`)
+
+await pickEl('#fx-bound-p', { x: 5, y: 5 })
+c = await chips()
+AC('AC-6.24g', c.text === '--vr-fx-ink' && /继承自 <div#fx-bound\.vr-fx>/.test(c.textTitle),
+   `继承来的字色也显示成 chip，title 注明来自哪个祖先（text=${c.text}，${c.textTitle}）`)
+
+await pickEl('#fx-over', { x: 190, y: 70 })
+c = await chips()
+AC('AC-6.24h', c.fill === null && c.stroke === '--vr-fx-line',
+   `被更高优先级的非变量声明压掉的不显示 chip（fill=${c.fill}），没被压的照常（stroke=${c.stroke}）`)
+
+// 点 chip 重开变量页：当前那个勾着、对勾在最右、左边是色圈；挑别的就换绑
+await pickEl('#fx-bound', { x: 190, y: 70 })
+// 面板本身是滚动容器，Stroke 分区多半在折叠线以下，先滚到看得见再点
+const strokeChip = P('section[data-group="stroke"] .var-chip').first()
+await strokeChip.scrollIntoViewIfNeeded(); await strokeChip.click(); await page.waitForTimeout(400)
+const popRows2 = await page.evaluate(() => {
+  const m = document.getElementById('visual-revise-color-panel')
+  if (!m) return null
+  return [...m.shadowRoot.querySelectorAll('[data-item]')].map(row => {
+    const kids = [...row.children]
+    return {
+      text: row.textContent.trim(),
+      current: row.hasAttribute('data-current'),
+      first: kids[0]?.hasAttribute('data-swatch')
+        ? { radius: getComputedStyle(kids[0]).borderRadius, bg: kids[0].style.background,
+            w: kids[0].offsetWidth, h: kids[0].offsetHeight }
+        : null,
+      lastIsCheck: !!kids.at(-1)?.querySelector('svg'),
+      checkFirst: !!kids[0]?.querySelector('svg'),
+    }
+  })
+})
+const lineRow = popRows2?.find(r => r.text.includes('--vr-fx-line'))
+const accentRow = popRows2?.find(r => r.text.includes('--vr-test-accent'))
+AC('AC-6.24i', !!popRows2 && !!lineRow?.lastIsCheck && !lineRow.checkFirst && lineRow.current
+  && popRows2.filter(r => r.lastIsCheck).length === 1,
+   `点 chip 重开变量页，当前绑定的那项勾着、对勾在最右（${popRows2 ? popRows2.length + ' 项' : '弹层没出来'}）`)
+AC('AC-6.24j', !!lineRow?.first && lineRow.first.radius === '50%' && lineRow.first.w === 16 && lineRow.first.h === 16
+  && /rgb\(255, 0, 170\)/.test(lineRow.first.bg) && !!accentRow?.first && /rgb\(255, 71, 4\)/.test(accentRow.first.bg),
+   `列表项最左是 16px 色圈，颜色就是变量的值（${JSON.stringify(lineRow?.first)}）`)
+
+if (accentRow) {
+  await page.locator('#visual-revise-color-panel [data-item="--vr-test-accent"]').first().click()
+  await page.waitForTimeout(450)
+  const after = await page.evaluate(() => ({
+    inline: document.getElementById('fx-bound').style.getPropertyValue('border-color'),
+    computed: getComputedStyle(document.getElementById('fx-bound')).borderTopColor,
+  }))
+  c = await chips()
+  AC('AC-6.24i2', after.inline === 'var(--vr-test-accent)' && c.stroke === '--vr-test-accent' && after.computed === 'rgb(255, 71, 4)',
+     `从变量页挑别的变量就换绑：inline 写 var()、chip 跟着换（${after.inline} → ${c.stroke}）`)
+} else AC('AC-6.24i2', false, '变量页里没有 --vr-test-accent，跳过换绑')
+// 后面的用例都以 #rich 为对象
+await select()
 
 // 删干净，别影响后面的分组用例
 for (let i = await fxRows(); i > 0; i--) {
@@ -445,7 +622,10 @@ AC('AC-6.20a', fillNoPop && colorNoPop,
    `点色值框是敲值、不弹色盘（填充 ${fillNoPop ? '✓' : '✗'} / 文字色 ${colorNoPop ? '✓' : '✗'}）`)
 await P('section[data-group="fill"] vr-fill .swatch').click(); await page.waitForTimeout(350)
 AC('AC-6.20b', await popped('visual-revise-fill-panel'), '点色块打开填充弹层')
-// Esc 关掉弹层后会继续往下走到「取消选中」，面板跟着收起——重新选一次
+// Esc 一次只做一件事：第一下关弹层（选中还在），第二下才取消选中。
+// 以前是弹层组件不接 Esc、一路走到取消选中，弹层跟着面板被动消失——
+// 那是假的「Esc 关弹层」。现在要真的清掉选中再重选，否则 handles 会拦点击。
+await page.keyboard.press('Escape'); await page.waitForTimeout(200)
 await page.keyboard.press('Escape'); await page.waitForTimeout(250)
 await page.locator('#lnk').click({ position: { x: 4, y: 4 } }); await page.waitForTimeout(500)
 

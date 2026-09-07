@@ -1,6 +1,7 @@
 # 跨容器重排 — 实施计划（v2，已按评审修正）
 
 > 关联：产品验收见 [../PRD.md](../PRD.md) §7；工作日志见 [../../.work-log-可视化改稿扩展.md](../../.work-log-可视化改稿扩展.md)。
+> 本方案涉及的交互在全量功能清单里的位置：[feature-inventory.md](feature-inventory.md) §2.13（结构树拖拽）、§4.4（页面直接拖拽）。
 > 仓库：`/Volumes/Jieying/OPC 探索/插件开发/visual-revise`。基线提交 `709df66`，全量回归 910 通过 / 0 失败。
 
 ## 0. 一句话

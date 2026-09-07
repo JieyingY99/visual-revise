@@ -2,6 +2,15 @@ import $ from 'blingblingjs'
 import { HandleStyles } from '../styles.store'
 import { clamp } from '../../utilities/numbers'
 
+// 计算值形如 'none' / '40px' / '40px 30px'（只设了 x 时 y 会省掉）
+const parseTranslate = value => {
+  if (!value || value === 'none') return { x: 0, y: 0 }
+  const [x = '0', y = '0'] = String(value).trim().split(/\s+/)
+  return { x: parseFloat(x) || 0, y: parseFloat(y) || 0 }
+}
+
+const shift = (base, dx, dy) => `${base.x + dx}px ${base.y + dy}px`
+
 export class Handle extends HTMLElement {
 
   constructor() {
@@ -47,7 +56,17 @@ export class Handle extends HTMLElement {
     const initialStyle = getComputedStyle(sourceEl)
     const initialWidth = parseFloat(initialStyle.width)
     const initialHeight = parseFloat(initialStyle.height)
-    const initialTransform = new DOMMatrix(initialStyle.transform)
+    // 固定对边靠的是位移。写 CSS 独立属性 translate，不写 transform：
+    //   · transform 的计算值是 matrix(...)，解析不回来，所以它一直没法进
+    //     TRACKED_PROPS——用户拖完看着元素挪了位，导出给 AI 的却只有尺寸；
+    //   · 写 transform 是整条覆盖，页面自己的 rotate / scale 会一起没掉。
+    // translate 的计算值就是 `40px 30px`，既能被跟踪、导出，也和页面原有的
+    // transform 叠加而不是顶掉它。
+    //
+    // 基数必须读 translate 自己：getComputedStyle().transform 不含独立的
+    // translate/rotate/scale，拿 transform 当基数的话，松手再拖第二次会先
+    // 跳回原点再重新位移。
+    const initialTranslate = parseTranslate(initialStyle.translate)
 
     const originalElTransition = sourceEl.style.transition
     const originalDocumentCursor = document.body.style.cursor
@@ -72,44 +91,44 @@ export class Handle extends HTMLElement {
         case 'top-start': {
           const newWidth = initialWidth - diffX
           const newHeight = initialHeight - diffY
-          const newTranslate = initialTransform.translate(diffX, diffY).transformPoint()
+          const t = shift(initialTranslate, diffX, diffY)
 
           requestAnimationFrame(() => {
             sourceEl.style.width = `${newWidth}px`
             sourceEl.style.height = `${newHeight}px`
-            sourceEl.style.transform = `translate(${newTranslate.x}px, ${newTranslate.y}px)`
+            sourceEl.style.translate = t
           })
           break
         }
         case 'top-center': {
           const newHeight = initialHeight - diffY
-          const newTranslate = initialTransform.translate(0, diffY).transformPoint()
+          const t = shift(initialTranslate, 0, diffY)
 
           requestAnimationFrame(() => {
             sourceEl.style.height = `${newHeight}px`
-            sourceEl.style.transform = `translate(${newTranslate.x}px, ${newTranslate.y}px)`
+            sourceEl.style.translate = t
           })
           break
         }
         case 'top-end': {
           const newWidth = initialWidth + diffX
           const newHeight = initialHeight - diffY
-          const newTranslate = initialTransform.translate(0, diffY).transformPoint()
+          const t = shift(initialTranslate, 0, diffY)
 
           requestAnimationFrame(() => {
             sourceEl.style.width = `${newWidth}px`
             sourceEl.style.height = `${newHeight}px`
-            sourceEl.style.transform = `translate(${newTranslate.x}px, ${newTranslate.y}px)`
+            sourceEl.style.translate = t
           })
           break
         }
         case 'middle-start': {
           const newWidth = initialWidth - diffX
-          const newTranslate = initialTransform.translate(diffX).transformPoint()
+          const t = shift(initialTranslate, diffX, 0)
 
           requestAnimationFrame(() => {
             sourceEl.style.width = `${newWidth}px`
-            sourceEl.style.transform = `translate(${newTranslate.x}px, ${newTranslate.y}px)`
+            sourceEl.style.translate = t
           })
           break
         }
@@ -124,12 +143,12 @@ export class Handle extends HTMLElement {
         case 'bottom-start': {
           const newWidth = initialWidth - diffX
           const newHeight = initialHeight + diffY
-          const newTranslate = initialTransform.translate(diffX, 0).transformPoint()
+          const t = shift(initialTranslate, diffX, 0)
 
           requestAnimationFrame(() => {
             sourceEl.style.width = `${newWidth}px`
             sourceEl.style.height = `${newHeight}px`
-            sourceEl.style.transform = `translate(${newTranslate.x}px, ${newTranslate.y}px)`
+            sourceEl.style.translate = t
           })
           break
         }

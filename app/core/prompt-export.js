@@ -19,6 +19,9 @@ const collapseShorthand = changes => {
   for (const base of ['padding', 'margin']) {
     const parts = SIDES.map(side => byProp.get(`${base}-${side}`))
     if (!parts.every(Boolean)) continue
+    // 只要有一条带 important 就逐条输出：折叠成简写就得把 !important 拼进值里，
+    // `padding: 4px !important 8px !important …` 是一条非法声明
+    if (parts.some(p => p.important)) continue
 
     const allSame = vals => vals.every(v => sameValue(v, vals[0]))
     const tos   = parts.map(p => p.to)
@@ -106,9 +109,12 @@ const imageLine = entry => {
 const changeTable = (changes, refs) => [
   '| 属性 | 原值 | 新值 |',
   '|---|---|---|',
+  // important 在这里才拼回值里：AI 拿到的要是一条能直接抄进样式表的声明，
+  // 而记录和 JSON 里它一直是独立字段（拼进字符串会毁掉简写折叠与导入）
   ...changes.map(c =>
     `| ${c.prop}${c.note ? ` <sub>${c.note}</sub>` : ''} `
-    + `| \`${displayValue(c.from, refs)}\` | \`${displayValue(c.to, refs)}\` |`),
+    + `| \`${displayValue(c.from, refs)}\` `
+    + `| \`${displayValue(c.to, refs)}${c.important ? ' !important' : ''}\` |`),
 ].join('\n')
 
 // 文案改动单独成段：它要改的是源码里的字符串或文案数据，
@@ -329,6 +335,47 @@ const moveSection = moves => {
   ].join('\n')
 }
 
+// 新增单独成段：页面上多出了一个原来没有的元素，AI 要做的是「把它写出来」，
+// 既不是改样式也不是搬家。位置复用 placeLine，跟移动那一段说的是同一种话。
+const INSERT_HTML_LIMIT = 400
+
+const insertSection = inserts => {
+  if (!inserts.length) return ''
+
+  const blocks = inserts.map((r, i) => {
+    const html = r.html || ''
+    // 粘一整块页面进来时 outerHTML 可能有几十 KB，整段塞进提示词会把真正要说
+    // 的改动淹掉。截断并注明，AI 至少知道自己看到的不是全部。
+    const snippet = html.length > INSERT_HTML_LIMIT
+      ? `${html.slice(0, INSERT_HTML_LIMIT)}…（已截断，原文共 ${html.length} 字符）`
+      : html
+
+    return [
+      `### ${i + 1}. ${r.label || '新增元素'}：${describeElement(r.anchors || {})}`,
+      '',
+      `- 位置：${placeLine(r.parentAnchors, r.nextAnchors, r.atEnd)}`,
+      '',
+      '```html',
+      snippet,
+      '```',
+      '',
+    ].join('\n')
+  })
+
+  return [
+    '---',
+    '',
+    '## 新增的元素',
+    '',
+    '以下元素是在页面上新加出来的，原页面里没有：',
+    '',
+    blocks.join('\n'),
+    '> 请在源码里真的把这些元素写出来（JSX / 模板 / 组件），不要用伪元素或',
+    '> 脚本注入去模拟——那样 DOM 里没有它，读屏与 Tab 顺序也读不到。',
+    '',
+  ].join('\n')
+}
+
 const FOOTER = `## 给 AI 的说明
 
 以上改动是在浏览器中可视化调整后导出的，数值为实测有效值。
@@ -346,8 +393,11 @@ const FOOTER = `## 给 AI 的说明
 不要静默忽略。`
 
 export const buildPrompt = (state, meta = {}, refs = null) => {
-  const { edits = [], comments = [], removals = [], moves = [] } = state
-  if (!edits.length && !comments.length && !removals.length && !moves.length) return ''
+  // inserts 要给默认值：老调用点（以及测试里手搓的 state）没有这个键，
+  // 少了默认值这里直接抛错，整条导出通道断掉
+  const { edits = [], comments = [], removals = [], moves = [], inserts = [] } = state
+  if (!edits.length && !comments.length && !removals.length && !moves.length && !inserts.length)
+    return ''
 
   // 面板里手动改的 order 照常进属性表：它是一条普通样式改动，
   // 和「移动元素」是两回事——后者改的是 DOM 结构，单独成段。
@@ -369,6 +419,7 @@ export const buildPrompt = (state, meta = {}, refs = null) => {
   if (styleCount) summary.push(`${styleCount} 处元素样式`)
   if (textCount)  summary.push(`${textCount} 处文案`)
   if (imageCount) summary.push(`${imageCount} 处图片替换`)
+  if (inserts.length)    summary.push(`${inserts.length} 处新增`)
   if (moves.length)      summary.push(`${moves.length} 处移动`)
   if (removals.length)   summary.push(`${removals.length} 处删除`)
   if (comments.length)   summary.push(`${comments.length} 条交互备注`)
@@ -444,14 +495,16 @@ export const buildPrompt = (state, meta = {}, refs = null) => {
 
   // 结尾的分隔线和 FOOTER 要拼成一段：filter(Boolean) 会把中间那个空行滤掉，
   // 让 --- 和下一个标题贴在一起
-  return [head.join('\n'), ...sections, moveSection(moves), removalSection(removals),
-    commentSection, refSection(refs), `---\n\n${FOOTER}\n`]
+  // 新增排在移动之前：分组是「先造出外壳、再把子元素搬进去」，
+  // 读的人得先知道那个容器是哪儿来的
+  return [head.join('\n'), ...sections, insertSection(inserts), moveSection(moves),
+    removalSection(removals), commentSection, refSection(refs), `---\n\n${FOOTER}\n`]
     .filter(Boolean).join('\n')
 }
 
 export const copyPrompt = async (state, meta) => {
-  const { edits = [], comments = [], removals = [], moves = [] } = state || {}
-  if (!edits.length && !comments.length && !removals.length && !moves.length)
+  const { edits = [], comments = [], removals = [], moves = [], inserts = [] } = state || {}
+  if (!edits.length && !comments.length && !removals.length && !moves.length && !inserts.length)
     return { ok: false, reason: 'empty' }
 
   // 落盘要在生成提示词之前：正文里写的就是落盘后的绝对路径。

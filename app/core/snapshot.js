@@ -44,6 +44,7 @@ export const takeSnapshot = el => {
     el,
     inlineStyle: el.getAttribute('style'),
     inline:      readInline(el),
+    inlineImportant: readInlineImportant(el),
     computed:    readComputed(el),
     text:        readText(el),
     textNodes:   textNodesOf(el).map(n => n.nodeValue),
@@ -84,6 +85,20 @@ export const readInline = el => {
     if (val) acc[prop] = val.trim()
     return acc
   }, {})
+}
+
+// priority 单独存一份，不拼进值字符串。
+//
+// 拼成 "red !important" 的话：sameValue / normalizeValue 不认这个后缀，简写折叠
+// 会拼出 `padding: 4px !important 8px !important …` 这种非法声明，而 CSSOM 的
+// setProperty 干脆不收值里带 !important 的参数——写进去是静默 no-op。
+// 所以值归值、priority 归 priority，两条并行的数据。
+export const readInlineImportant = el => {
+  const style = el.style
+  const out = new Set()
+  for (const prop of TRACKED_PROPS)
+    if (style.getPropertyPriority(prop) === 'important') out.add(prop)
+  return out
 }
 
 // <img> 的 src 不是 CSS 属性，上面那套快照/diff 只覆盖 CSS，换图要改的正是它。
@@ -132,17 +147,24 @@ const revertAllAttrs = snapshot => {
 // 该属性原本没有 inline 声明时才回落到计算值（用户在屏幕上看到的起点）。
 export const diffSnapshot = (snapshot, { detached = false } = {}) => {
   const { el, computed, inline: original = {} } = snapshot
+  const wasImportant = snapshot.inlineImportant || new Set()
   if (!detached && !el.isConnected) return []
 
   const current = readInline(el)
+  const nowImportant = readInlineImportant(el)
   const changes = []
 
   for (const [prop, value] of Object.entries(current)) {
-    if (sameValue(value, original[prop])) continue
+    const bang = nowImportant.has(prop)
+    // 值没变、只把 priority 翻过来也是一次真实改动：样式表里有 important 时，
+    // 面板必须写成 important 才压得过它，画面确实变了。只比值的话这条改动在
+    // 记录和导出里都看不见，undo 也无从下手。
+    if (sameValue(value, original[prop]) && bang === wasImportant.has(prop)) continue
     changes.push({
       prop,
       from: original[prop] || computed[prop] || '',
       to:   value,
+      ...(bang ? { important: true } : {}),
     })
   }
 
@@ -163,7 +185,7 @@ export const diffSnapshot = (snapshot, { detached = false } = {}) => {
   // 重排会给每个兄弟元素都写 order，其中恰好落回原位的那个
   // 会得到一条 "0→0" 的记录，既污染改动列表也污染提示词。
   return changes
-    .filter(c => !sameValue(c.from, c.to))
+    .filter(c => c.important || !sameValue(c.from, c.to))
     .sort((a, b) => TRACKED_PROPS.indexOf(a.prop) - TRACKED_PROPS.indexOf(b.prop))
 }
 

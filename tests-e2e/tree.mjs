@@ -340,5 +340,38 @@ ok(deep.rows > 30 && deep.scrollable,
    `内容超出时树可纵向滚动（${deep.rows} 行）`)
 await page.evaluate(() => document.getElementById('deepwrap')?.remove())
 
+// ── 在树里点一行选中：行留在原位，不跳到底边 ──────────────────
+// 面板每次 render() 用 innerHTML 整块重建，会把持久的树元素连同旧插槽一起摘下来
+// 再挂回新插槽，浏览器在重挂那一刻把 .list 的 scrollTop 归零；紧接着的
+// scrollIntoView({block:'nearest'}) 发现选中行在可视区之下，就把它对齐到底边。
+// 重建前记下、挂回后还原，行才不会跑。
+console.log('── 树里点一行：位置不动')
+await page.evaluate(() => {
+  const box = document.createElement('div'); box.id = 'tall-box'
+  for (let i = 0; i < 80; i++) { const d = document.createElement('div'); d.id = `tall-${i}`; d.textContent = `tall ${i}`; box.appendChild(d) }
+  document.body.appendChild(box)
+})
+await page.keyboard.press('Escape'); await page.waitForTimeout(150)
+await page.locator('#tall-30').click(); await page.waitForTimeout(400)
+await page.locator('visual-revise-panel .tab[data-tab="structure"]').click(); await page.waitForTimeout(500)
+const treeList = () => page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot.querySelector('visual-revise-tree').shadowRoot
+  const list = sr.querySelector('.list'); const lr = list.getBoundingClientRect()
+  const rows = [...sr.querySelectorAll('.row')].map(r => ({ id: r.dataset.id, top: r.getBoundingClientRect().top - lr.top, selected: r.hasAttribute('data-selected') }))
+  return { scrollTop: list.scrollTop, height: lr.height, canScroll: list.scrollHeight > list.clientHeight, rows }
+})
+const t0 = await treeList()
+// 挑一行：在可视区 30%–60% 之间、不是当前选中的
+const mid = t0.rows.find(r => r.top > t0.height * 0.3 && r.top < t0.height * 0.6 && !r.selected)
+ok(t0.canScroll && !!mid, `树能滚动（scrollTop=${t0.scrollTop}），可视区中段有一行可点（${mid?.id}）`)
+if (mid) {
+  await tree(`.row[data-id="${mid.id}"]`).click({ position: { x: 80, y: 8 } }); await page.waitForTimeout(500)
+  const t1 = await treeList()
+  const after = t1.rows.find(r => r.id === mid.id)
+  ok(after?.selected, `点的那一行被选中（${mid.id}）`)
+  ok(Math.abs(t1.scrollTop - t0.scrollTop) <= 1 && Math.abs(after.top - mid.top) <= 1,
+     `列表没滚、行留在原位（scrollTop ${t0.scrollTop} → ${t1.scrollTop}，行 top ${Math.round(mid.top)} → ${Math.round(after.top)}）`)
+}
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

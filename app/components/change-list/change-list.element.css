@@ -62,7 +62,11 @@ header:active { cursor: grabbing; }
 }
 .icon-btn:hover { background: var(--vr-bg-hover); color: var(--vr-text); }
 
-.items { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; display: grid; gap: 6px; align-content: start; }
+/* grid-auto-rows 必须写死 max-content：隐式行默认是 auto，负剩余空间会被摊到每一行上，
+   条目一多就把每行压成几像素（40 条时 9.6px，光标题栏就要 35px），
+   .item 的 overflow:hidden 再把内容裁掉——× / ↺ 按钮点不到，容器也永远
+   scrollHeight === clientHeight 而滚不动。行按自然高度排，溢出才会交给滚动条。 */
+.items { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; display: grid; gap: 6px; align-content: start; grid-auto-rows: max-content; }
 .items::-webkit-scrollbar { width: 8px; }
 .items::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
 
@@ -145,6 +149,8 @@ footer button {
 .badge[data-kind="removal"] { background: #4a2b2b; color: #ff8a8a; }
 /* 移动项：蓝色徽标。它和删除一样是结构改动，但可逆得多，不该用警示色 */
 .badge[data-kind="move"] { background: #1e3a52; color: #6fc0ff; }
+/* 新增项：绿色徽标。它是「页面上多了个东西」，和「少了 / 挪了」得一眼分开 */
+.badge[data-kind="insert"] { background: #1f3f2b; color: #7bd88f; }
 .icon-btn.restore:disabled,
 .icon-btn.move-back:disabled { opacity: .35; cursor: not-allowed; }
 

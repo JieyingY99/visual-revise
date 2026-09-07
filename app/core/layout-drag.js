@@ -14,6 +14,14 @@ const HINT_STYLE_ID = 'visual-revise-drag-hints'
 // 页面上的「点一下选中」就再也点不动了——这正是重排只能待在结构 tab 里的原因。
 const DRAG_SLOP = 4
 
+// 这几个上游工具自己用鼠标做事（Position 是按下拖着改 left/top）。页面拖拽
+// 一旦 armed，4px 处就会 beginDrag → onDragStart → unselect_all，把这些工具挂
+// 在选中项上的 draggable / 监听整套拆掉，手势被整个抢走，工具那边一点反应都没有。
+// 判断放在「按下那一刻」而不是靠 setActive 同步一个状态位：mode（select /
+// browse / comment）与 visbug.activeTool 是两个维度，而切工具的 toolSelected()
+// 定义在 <vis-bug> 元素上，钩不进去。
+const MOUSE_TOOLS = new Set(['position', 'move'])
+
 // 用属性 + 全局样式表标记落点容器，而不是写 inline style——
 // 后者会被快照 diff 当成用户改动记进提示词。
 //
@@ -192,7 +200,7 @@ const moveGhost = (ghost, offX, offY, clientX, clientY) => {
 
 const removeGhost = () => document.getElementById(GHOST_ID)?.remove()
 
-export const createLayoutDrag = ({ onDone, onDragStart } = {}) => {
+export const createLayoutDrag = ({ onDone, onDragStart, activeTool } = {}) => {
   let active = false
   let armed = null    // 已按下、还没越过 slop
   let drag = null     // 真的在拖了
@@ -200,6 +208,7 @@ export const createLayoutDrag = ({ onDone, onDragStart } = {}) => {
   // 去掉 pointerdown 的 preventDefault 之后，浏览器会开始原生的文本拖选。
   // 越过 slop 才拦：在此之前用户可能只是想选中一段文字。
   const onSelectStart = e => { if (drag) e.preventDefault() }
+
 
   // 松手后浏览器通常还会补一次 click，而 VisBug 的选中就挂在 click 上
   // （selectable.js 在 body 的捕获阶段）。它会拿松手处的坐标重新命中——
@@ -228,12 +237,14 @@ export const createLayoutDrag = ({ onDone, onDragStart } = {}) => {
   const disarm = () => {
     document.removeEventListener('pointermove', onPointerMove, true)
     document.removeEventListener('pointerup', onPointerUp, true)
+    document.removeEventListener('pointercancel', onPointerCancel, true)
     document.removeEventListener('selectstart', onSelectStart, true)
     armed = null
   }
 
   const onPointerDown = e => {
     if (!active || e.button !== 0) return
+    if (MOUSE_TOOLS.has(activeTool?.())) return
     if (isEditorUI(e)) return
 
     // 不能用 path[0]：选中框等覆盖层会挡在页面元素前面
@@ -244,6 +255,7 @@ export const createLayoutDrag = ({ onDone, onDragStart } = {}) => {
     armed = { el, startX: e.clientX, startY: e.clientY }
     document.addEventListener('pointermove', onPointerMove, true)
     document.addEventListener('pointerup', onPointerUp, true)
+    document.addEventListener('pointercancel', onPointerCancel, true)
     document.addEventListener('selectstart', onSelectStart, true)
   }
 
@@ -306,6 +318,18 @@ export const createLayoutDrag = ({ onDone, onDragStart } = {}) => {
     if (!drag) { disarm(); return }
     endDrag({ commit: true })
   }
+
+  // 浏览器把这次手势升级成原生 HTML5 拖放时（<img> 和 [draggable] 上很容易
+  // 命中）会先发一次 pointercancel，此后 pointermove / pointerup 一次都不再
+  // 派发给页面。不收这一条，endDrag 就永远跑不到：dragging 卡在 true、拖影
+  // 一直浮在页面上、源元素停在 opacity:.25，而用户下一次普通点击会被
+  // onPointerUp 当成这次拖拽的落点，把元素静默搬走。
+  // 取消而非提交：手势是被中断的，不该落下一次移动。
+  //
+  // 这里只退出、不去 preventDefault 那次 dragstart：上游的 imageswap（把一张图
+  // 拖到另一张图上换 src）用的正是原生拖放。原生拖放接管时我们干净地让位，
+  // 两套手势各归各的，比抢过来更对。
+  const onPointerCancel = () => endDrag({ commit: false })
 
   return {
     get active() { return active },

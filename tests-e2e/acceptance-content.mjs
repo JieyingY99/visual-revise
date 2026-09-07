@@ -179,7 +179,7 @@ const pads = await page.evaluate(() => [...document.querySelectorAll('.curve-car
 AC('AC-7.6b', pads.every(p => p === '20px'), `改一处，三张同构卡片同步（${JSON.stringify(pads)}）`)
 await page.locator('visual-revise-panel .shared').click(); await page.waitForTimeout(300)
 const op = page.locator('visual-revise-panel input[data-prop="opacity"]')
-await op.fill('0.5'); await op.press('Enter'); await page.waitForTimeout(300)
+await op.fill('50'); await op.press('Enter'); await page.waitForTimeout(300)   // 面板里是百分比
 const ops = await page.evaluate(() => [...document.querySelectorAll('.curve-card')].map(c => c.style.opacity))
 // 只断言「恰好一张被改」，不锁是第几张——选中项由前面的步骤决定，
 // 写死下标会让这条随上文顺序漂移

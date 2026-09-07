@@ -35,8 +35,19 @@ export const isEditorUI = eventOrNode => {
 // 否则输入 "correct" 会触发评论模式与重排模式。
 // VisBug 的双击文本编辑会把普通元素变成 contenteditable，同样要排除。
 export const isTypingTarget = event => {
-  const node = event.composedPath?.()[0] || event.target
+  let node = event.composedPath?.()[0] || event.target
   if (!node || node.nodeType !== 1) return false
+
+  // 上游工具条（<vis-bug>）活在 closed shadow root 里：它自己的 Search 输入框
+  // 发出的按键冒到 document 时，composedPath()[0] 已经被重定向成宿主元素，
+  // 只看这一层永远判不出「用户正在打字」，a / f / v / c / l / p 就被吃掉了。
+  // 所以从宿主起沿 shadow root 逐层下钻到真正的 activeElement 再判类型。
+  // open 的用 shadowRoot；上游 closed 的把自己那份挂在元素的 $shadow 上。
+  for (let depth = 0; depth < 10; depth++) {
+    const inner = (node.shadowRoot || node.$shadow)?.activeElement
+    if (!inner || inner === node) break
+    node = inner
+  }
 
   const tag = node.tagName
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true

@@ -4,9 +4,13 @@
  */
 import { ChangeStore } from '../../core/change-store.js'
 import {
-  imagesFromDataTransfer, pickImages, canRenderDataUrl, fmtBytes,
+  imagesFromDataTransfer, pickImages, canRenderDataUrl, fmtBytes, totalBytes,
 } from '../../core/image-assets.js'
 import { default as layer_css } from './comment-layer.element.css'
+
+// 会话累计上限的基数：已经入库的资产（换过的图、别条评论的参考图）都算数。
+// 只按「本批」算的话，连着粘三次每次 19MB 照样过得去。
+const usedBytes = () => ({ base: totalBytes(ChangeStore.allAssets()) })
 
 const esc = v => String(v ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
@@ -454,7 +458,7 @@ export class CommentLayer extends HTMLElement {
     bubble.querySelector('.add-image').addEventListener('click', async e => {
       e.preventDefault()
       this.#rememberRange()          // 文件弹窗会抢走焦点，先把光标位置留下
-      this.#addImages(await pickImages())
+      this.#addImages(await pickImages(usedBytes()))
     })
 
     editor.addEventListener('input', () => {
@@ -479,7 +483,7 @@ export class CommentLayer extends HTMLElement {
 
       if (hasImage) {
         this.#rememberRange()
-        this.#addImages(await imagesFromDataTransfer(e.clipboardData))
+        this.#addImages(await imagesFromDataTransfer(e.clipboardData, usedBytes()))
         return
       }
       const text = e.clipboardData?.getData('text/plain') || ''
@@ -507,7 +511,7 @@ export class CommentLayer extends HTMLElement {
     bubble.addEventListener('drop', async e => {
       e.preventDefault()
       bubble.removeAttribute('data-drop')
-      this.#addImages(await imagesFromDataTransfer(e.dataTransfer))
+      this.#addImages(await imagesFromDataTransfer(e.dataTransfer, usedBytes()))
     })
   }
 

@@ -26,7 +26,12 @@ export const GROUPS = [
     widgets: ['align'],
     props: [
       'position', 'left', 'top', 'right', 'bottom',
-      'z-index', 'rotate',
+      // translate 是缩放把手「固定对边」写出去的那条位移。跟 rotate 是同一条
+      // 取舍：独立属性的计算值好解析（`40px 30px`），transform 的是 matrix。
+      // 面板里不给它渲染字段（controls.js 没有对应的 spec，#renderField 对
+      // 缺失的 spec 返回空串，那一行会被 filter(Boolean) 丢掉），只让它进记录、
+      // 进提示词——否则用户拖完看着元素挪了位，交给 AI 的却只有尺寸变化。
+      'z-index', 'rotate', 'translate',
       // 对齐按钮组写入，面板里不单独渲染字段
       'align-self', 'justify-self',
     ],

@@ -222,5 +222,63 @@ await page.evaluate(() => {
   document.getElementById('lz')?.remove()
 })
 
+// ── 新增记录：分组造出来的元素也要看得见、点得到、撤得掉 ──────
+// ⌘G 是「insert 一个 wrapper + n 条 move」，改动列表以前只认四种记录，
+// 新造出来的元素一行都渲染不出来，用户看不到自己刚做了什么。
+await page.evaluate(() => {
+  const store = window.__visualRevise.store
+  store.undoEverything()
+  store.history.clear()
+  document.getElementById('lg')?.remove()
+  const g = document.createElement('div')
+  g.id = 'lg'
+  g.style.cssText = 'position:absolute;left:30px;top:760px'
+  g.innerHTML = '<p class="gg" id="gg1">甲</p><p class="gg" id="gg2">乙</p>'
+  document.body.appendChild(g)
+  store.groupElements([document.getElementById('gg1'), document.getElementById('gg2')])
+  const list = window.__visualRevise.list
+  list.hidden = false
+  list.render()
+})
+await page.waitForTimeout(400)
+
+const insertRow = page.locator('visual-revise-list .item[data-kind="insert"]')
+ok(await insertRow.count() === 1, `列表里出现一条「新增」记录（${await insertRow.count()} 条）`)
+const insertText = (await insertRow.textContent()).replace(/\s+/g, ' ').trim()
+ok(/分组|新增元素/.test(insertText) && /(放在|插在)/.test(insertText),
+   `记录写明加了什么、加在哪儿：「${insertText}」`)
+
+const gCounts = await page.evaluate(() => ({
+  tabs: document.querySelector('visual-revise-list').shadowRoot
+    .querySelector('.tabs').textContent.replace(/\s+/g, ' ').trim(),
+  stats: window.__visualRevise.store.stats(),
+}))
+ok(new RegExp(`全部\\s*${gCounts.stats.total}`).test(gCounts.tabs) &&
+   new RegExp(`配置\\s*${gCounts.stats.total}`).test(gCounts.tabs),
+   `「全部」「配置」两个计数都跟 stats() 对得上（${gCounts.tabs}；total=${gCounts.stats.total} inserts=${gCounts.stats.inserts} moves=${gCounts.stats.moves}）`)
+
+// 点整行定位到那个新造出来的元素
+await insertRow.first().scrollIntoViewIfNeeded()
+await insertRow.first().click({ position: { x: 30, y: 26 } })
+await page.waitForTimeout(400)
+ok(await page.evaluate(() => {
+  const sel = document.querySelector('[data-selected]')
+  return !!sel && sel.parentElement?.id === 'lg' && sel.querySelectorAll('.gg').length === 2
+}), '点这条记录能定位并选中新造出来的容器')
+
+// ↺ 把这个新增元素撤掉：记录对消，不该留下一条「已删除」的假记录
+await page.locator('visual-revise-list .remove-insert').first().scrollIntoViewIfNeeded()
+await page.locator('visual-revise-list .remove-insert').first().click()
+await page.waitForTimeout(400)
+const afterUndoInsert = await page.evaluate(() => window.__visualRevise.store.stats())
+ok(afterUndoInsert.inserts === 0 && afterUndoInsert.removals === 0,
+   `撤掉新增元素时对消那条 insert，不记成「删除的元素」（inserts=${afterUndoInsert.inserts} removals=${afterUndoInsert.removals}）`)
+ok(await insertRow.count() === 0, '列表里那一行没了')
+
+await page.evaluate(() => {
+  window.__visualRevise.store.undoEverything()
+  document.getElementById('lg')?.remove()
+})
+
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

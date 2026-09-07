@@ -34,6 +34,23 @@ export const coerceNumber = raw => {
   return v === '' ? '' : v
 }
 
+// 不透明度在面板里按百分比走（Figma 的写法：1 就是 100%）。框里敲的是 0–100，
+// 写进 CSS 的是 0–1；末尾带不带 % 都认，越界夹回 0–100。
+export const coercePercent = raw => {
+  const v = String(raw).trim().replace(/%$/, '').trim()
+  if (v === '') return ''
+  const n = parseFloat(v)
+  if (!Number.isFinite(n)) return v
+  const clamped = Math.min(100, Math.max(0, n))
+  return String(Math.round(clamped * 1000) / 1000 / 100)
+}
+
+// CSS 的 0–1 → 面板显示的 0–100
+export const fractionToPercent = value => {
+  const n = parseFloat(value)
+  return Number.isFinite(n) ? String(Math.round(n * 100 * 100) / 100) : String(value ?? '')
+}
+
 // 角度：裸数字补 deg；'none' 与各种写法的 0 都视为「没有旋转」，
 // 写成 0deg 会在改动列表里留下一条什么都没做的记录
 export const coerceAngle = raw => {
@@ -97,7 +114,7 @@ export const CONTROLS = {
   'text-decoration-line': sel('装饰线', ['none', 'underline', 'line-through', 'overline']),
 
   // 外观
-  'opacity':       plain('不透明度', { step: 0.05, min: 0, max: 1 }),
+  'opacity':       plain('不透明度', { step: 1, min: 0, max: 100, unit: '%', coerce: coercePercent, toDisplay: fractionToPercent }),
   'border-radius': num('圆角'),
   'overflow':      sel('溢出', ['visible', 'hidden', 'scroll', 'auto', 'clip']),
 
@@ -207,7 +224,9 @@ export const stripDefaultUnit = (prop, value) => {
 export const displayValue = (prop, value) =>
   (BLANK_WHEN[prop] || []).includes(String(value ?? '').trim())
     ? ''
-    : stripDefaultUnit(prop, value)
+    : CONTROLS[prop]?.toDisplay
+      ? CONTROLS[prop].toDisplay(value)
+      : stripDefaultUnit(prop, value)
 
 // 间距组用合并控件呈现，不逐条渲染
 export const SIDE_GROUPS = [
@@ -241,23 +260,55 @@ const KEYWORD_START = {
   'rotate': '0deg',
 }
 
+// CONTROLS 里声明的 min / max 一直是两个没人读的死键，于是不透明度能按到
+// -0.1、拖一把到 -4.9，浏览器渲染时自己夹到 0（画面看不出来），导出的提示词里
+// 却是一个非法区间的数字。所有步进都从这里出，夹一次就够。
+const clampToSpec = (prop, n) => {
+  const spec = CONTROLS[prop]
+  if (!spec) return n
+  if (typeof spec.min === 'number' && n < spec.min) return spec.min
+  if (typeof spec.max === 'number' && n > spec.max) return spec.max
+  return n
+}
+
+// 这条属性的默认单位：拿它自己的 coerce 去问，而不是在这里再抄一份属性名清单
+// （coerceAngle('1') === '1deg'、coerceLength('1') === '1px'、coerceNumber 不补）。
+const defaultUnit = prop => {
+  const coerce = CONTROLS[prop]?.coerce
+  if (typeof coerce !== 'function') return ''
+  return String(coerce('1')).match(/[a-z%]+$/i)?.[0] || ''
+}
+
 // 步进一个数值：无法数值化的值（normal / auto / inherit）回落到计算值；
 // 仍无法数值化时，要么落到 KEYWORD_START，要么返回 null
 // 表示这次按键应当忽略，而不是写入一个会被 CSSOM 丢弃的垃圾值。
 export const stepValue = (prop, raw, delta, fallback = '') => {
   const usable = v => /^-?[\d.]/.test(String(v ?? '').trim())
-  const source = usable(raw) ? String(raw).trim() : String(fallback ?? '').trim()
+  // 步进在「面板显示」的空间里算：不透明度的框里是 0–100，计算值却是 0–1，
+  // fallback 得先换到显示空间，min / max 也是按显示空间声明的
+  const shown = CONTROLS[prop]?.toDisplay ? CONTROLS[prop].toDisplay(fallback) : fallback
+  const source = usable(raw) ? String(raw).trim() : String(shown ?? '').trim()
 
   if (!usable(source)) return KEYWORD_START[prop] ?? null
 
   const num = parseFloat(source)
   if (!Number.isFinite(num)) return KEYWORD_START[prop] ?? null
 
-  const next = Math.round((num + delta) * 1000) / 1000
+  const next = clampToSpec(prop, Math.round((num + delta) * 1000) / 1000)
 
+  // 显示空间里算完，交出去的得是 CSS 值：不透明度 31 → 0.31。调用方拿它直接
+  // 写（coerce: false），再用 displayValue 换回框里显示的 31
+  if (CONTROLS[prop]?.toDisplay) return CONTROLS[prop].coerce(String(next))
   if (UNITLESS.has(prop)) return String(next)
 
+  // 框里的文本推不出单位时不能一律补 px：旋转框在 Enter 之后仍聚焦，#syncValues
+  // 跳过聚焦中的字段，框里留着用户敲的裸数字「45」，补 px 就写出 rotate:46px——
+  // 非法声明被 CSSOM 静默丢弃，元素纹丝不动而框里显示 46px，此后怎么敲都写不进去。
+  // 所以先看 fallback（计算值 '45deg'）带的单位，再问这条属性的 coerce 该补什么。
+  const fallbackText = String(fallback ?? '').trim()
   const unit = source.match(/[a-z%]+$/i)?.[0]
+    || (usable(fallbackText) ? fallbackText.match(/[a-z%]+$/i)?.[0] : '')
+    || defaultUnit(prop)
   if (!unit) return UNITLESS_OR_LENGTH.has(prop) ? String(next) : `${next}px`
 
   return `${next}${unit}`

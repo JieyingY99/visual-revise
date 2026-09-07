@@ -17,9 +17,9 @@ const select = async (prop, value) => {
   await panel(`vr-select[data-prop="${prop}"]`).click()
   await page.waitForTimeout(300)
   const i = await page.evaluate(v =>
-    Array.from(document.getElementById('visual-revise-select-panel').children)
+    Array.from(document.getElementById('visual-revise-select-panel').shadowRoot.children)
       .findIndex(x => x.textContent === v), value)
-  await page.locator('#visual-revise-select-panel > div').nth(i).click()
+  await page.locator('#visual-revise-select-panel [data-item]').nth(i).click()
   await page.waitForTimeout(350)
 }
 
@@ -28,17 +28,27 @@ await page.waitForTimeout(500)
 
 // ── 分区顺序 ────────────────────────────────────────────────
 const ids = await panel('section').evaluateAll(els => els.map(el => el.dataset.group))
-// 实测 Figma Desktop：选中文本图层时 Typography 插在 Appearance 与 Fill 之间，
-// 不是排在最后。这里对所有元素都用同一顺序——顺序随选中跳动会毁掉肌肉记忆。
-const EXPECTED = ['position', 'layout', 'appearance', 'typography', 'fill', 'stroke', 'effects']
+// 容器（<article> 里只有子元素，没有直接文字）不渲染 Typography——
+// 那些属性确实会继承下去，但用户改的是子元素的样子
+const EXPECTED = ['position', 'layout', 'appearance', 'fill', 'stroke', 'effects']
 ok(JSON.stringify(ids) === JSON.stringify(EXPECTED), `分区顺序：${ids.join(' → ')}`)
 
 const titles = await panel('section h3 .title').evaluateAll(els => els.map(el => el.textContent))
 ok(titles[0] === 'Position' && titles.at(-1) === 'Effects',
    `分区标题用 Figma 命名：${titles.join(' / ')}`)
-ok(titles.indexOf('Typography') === titles.indexOf('Appearance') + 1 &&
-   titles.indexOf('Typography') === titles.indexOf('Fill') - 1,
-   'Typography 夹在 Appearance 与 Fill 之间（Figma 的位置）')
+
+// 实测 Figma Desktop：选中文本图层时 Typography 插在 Appearance 与 Fill 之间，
+// 不是排在最后。顺序对所有渲染出它的元素都一样——随选中跳动会毁掉肌肉记忆。
+await page.keyboard.press('Escape'); await page.waitForTimeout(200)
+await page.locator('.card-title').nth(1).click({ position: { x: 4, y: 4 } })
+await page.waitForTimeout(450)
+const textTitles = await panel('section h3 .title').evaluateAll(els => els.map(el => el.textContent))
+ok(textTitles.indexOf('Typography') === textTitles.indexOf('Appearance') + 1 &&
+   textTitles.indexOf('Typography') === textTitles.indexOf('Fill') - 1,
+   `文字元素上 Typography 夹在 Appearance 与 Fill 之间（${textTitles.join(' / ')}）`)
+await page.keyboard.press('Escape'); await page.waitForTimeout(200)
+await page.locator('.curve-card').nth(1).click({ position: { x: 130, y: 8 } })
+await page.waitForTimeout(450)
 
 // ── Position 分区内容 ──────────────────────────────────────
 const posProps = await panel('section[data-group="position"] [data-prop]')
@@ -195,16 +205,25 @@ await page.waitForTimeout(400)
 ok(await appearance.evaluate(el => el.hasAttribute('data-dirty')), '改动后 Appearance 标脏')
 ok(await panel('section[data-group="appearance"] .undo').isVisible(), '「重置本组」出现')
 
-// 另一组的改动不应被这次重置牵连
+// 另一组的改动不应被这次重置牵连。容器上已经没有 Typography 分区，
+// 字号改在这张卡的标题上——「另一组的改动」这件事不变
+await page.keyboard.press('Escape'); await page.waitForTimeout(200)
+await page.locator('.card-title').nth(1).click({ position: { x: 4, y: 4 } })
+await page.waitForTimeout(450)
 const fontSize = panel('input[data-prop="font-size"]')
 await fontSize.fill('20px')
 await fontSize.press('Enter')
 await page.waitForTimeout(400)
+await page.keyboard.press('Escape'); await page.waitForTimeout(200)
+await page.locator('.curve-card').nth(1).click({ position: { x: 130, y: 8 } })
+await page.waitForTimeout(450)
 
 await panel('section[data-group="appearance"] .undo').click()
 await page.waitForTimeout(400)
+const titleStyle = prop => page.evaluate(
+  p => document.querySelectorAll('.card-title')[1].style.getPropertyValue(p), prop)
 ok(await style('border-radius') === '', '重置 Appearance 后圆角改动被撤销')
-ok(await style('font-size') === '20px', 'Typography 的改动不受影响')
+ok(await titleStyle('font-size') === '20px', 'Typography 的改动不受影响')
 ok(await page.evaluate(() => window.__visualRevise.store.stats().props) === 1,
    '改动记录只剩另一组的 1 项')
 

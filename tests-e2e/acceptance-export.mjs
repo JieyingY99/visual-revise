@@ -25,7 +25,7 @@ await page.goto(origin); await injectVisBug(page, origin); await page.waitForTim
 console.log('── 8.1 记录列表')
 await card(0).click({ position: { x: 120, y: 12 } }); await page.waitForTimeout(450)
 await write('border-radius', 25)   // 卡片自带 18px，写相等值会被值等价判断跳过
-await write('opacity', 0.8)
+await write('opacity', 80)   // 面板里是百分比
 await deselect(); await setMode('comment'); await page.waitForTimeout(200)
 await card(1).click({ position: { x: 120, y: 12 } }); await page.waitForTimeout(400)
 await page.locator('visual-revise-comment-layer .editor').click(); await page.keyboard.type('hover 时上浮 4px')
@@ -54,7 +54,7 @@ await page.locator('visual-revise-toolbar .list').click(); await page.waitForTim
 console.log('── 8.3 撤销 / 重做')
 await page.evaluate(() => { window.__visualRevise.store.clear(); window.__visualRevise.store.history?.clear?.(); document.querySelectorAll('.curve-card').forEach(c => c.removeAttribute('style')) })
 await deselect(); await card(0).click({ position: { x: 120, y: 12 } }); await page.waitForTimeout(400)
-await write('border-radius', 9); await write('opacity', 0.6)
+await write('border-radius', 9); await write('opacity', 60)
 await page.locator('body').click({ position: { x: 4, y: 4 } }); await page.waitForTimeout(100)
 await page.keyboard.press('Meta+z'); await page.waitForTimeout(250)
 const afterOne = { r: await inline(0, 'border-radius'), o: await inline(0, 'opacity') }
@@ -140,7 +140,7 @@ console.log('── 8.7 JSON')
 // 那是合理行为，不该拿来判定导入是否工作。
 await page.evaluate(() => { window.__visualRevise.store.clear(); window.__visualRevise.store.history?.clear?.(); document.querySelectorAll('.curve-card').forEach(c => c.removeAttribute('style')) })
 await deselect(); await card(0).click({ position: { x: 120, y: 12 } }); await page.waitForTimeout(450)
-await write('border-radius', 22); await write('opacity', 0.7)
+await write('border-radius', 22); await write('opacity', 70)
 await deselect()
 const before = await stats()
 const data = await page.evaluate(() => window.__visualRevise.lib.exportJSON({ note: 'acc' }))
@@ -149,7 +149,7 @@ const mid = await stats()
 await page.evaluate(d => window.__visualRevise.lib.importJSON(d), data); await page.waitForTimeout(500)
 const after = await stats()
 const applied = await inline(0, 'border-radius')
-AC('AC-8.7', data.schema === 3 && mid.total === 0 && after.total === before.total && applied === '22px',
+AC('AC-8.7', data.schema === 5 && mid.total === 0 && after.total === before.total && applied === '22px',
    `导出 schema v${data.schema}；清空后导入，记录回到 ${after.total} 条（导出时 ${before.total}）且样式重新应用（radius=${applied}）`)
 
 // 移动只出不进的话，「导入后记录数一致」就是假的

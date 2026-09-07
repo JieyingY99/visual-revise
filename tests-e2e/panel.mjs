@@ -117,7 +117,7 @@ ok(clip.includes('Thinking Five'), '提示词含文本锚点')
 const nudge = async (prop, key = 'ArrowDown') => {
   const input = page.locator(`visual-revise-panel input[data-prop="${prop}"]`)
   if (!(await input.count())) return { skipped: true }
-  // 字段可能落在折叠的分区里（Typography 对非文字元素默认折叠）。
+  // 字段可能落在折叠的分区里（Typography 选中文字元素之外都是折叠的）。
   // 折叠只隐藏 .rows，input 仍在 DOM 中但无法聚焦，按键会静默落空。
   await input.evaluate(el => el.closest('section')?.removeAttribute('folded'))
   await input.focus()
@@ -133,16 +133,26 @@ const nudge = async (prop, key = 'ArrowDown') => {
 }
 
 const opacity = await nudge('opacity')
-ok(opacity.applied === '0.95' && !opacity.field.includes('px'),
+// 面板里不透明度是百分比：从 100% 按 ↓ 一步是 99%，写进 CSS 是 0.99
+ok(opacity.applied === '0.99' && !opacity.field.includes('px'),
    `opacity 按 ↓ 得到合法值：字段=${opacity.field} 生效=${opacity.applied}`)
 
 const zIndex = await nudge('z-index', 'ArrowUp')
 ok(!zIndex.skipped ? !String(zIndex.field).includes('px') : true,
    `z-index 不补单位：${zIndex.skipped ? '（当前元素不适用，已跳过）' : zIndex.field}`)
 
+// line-height 在 Typography 里，容器上那一整块不渲染——要验它得站在一个
+// 真有文字的元素上，否则 nudge 直接 skip、断言真空通过
+await page.keyboard.press('Escape'); await page.waitForTimeout(200)
+await page.locator('.card-body').nth(1).click({ position: { x: 4, y: 4 } })
+await page.waitForTimeout(450)
 const lineHeight = await nudge('line-height', 'ArrowUp')
-ok(lineHeight.applied !== '' && !/NaN|normal\d/.test(String(lineHeight.field)),
+ok(!lineHeight.skipped && lineHeight.applied !== ''
+  && !/NaN|normal\d/.test(String(lineHeight.field)),
    `line-height 从 normal 回落到计算值再步进：字段=${lineHeight.field} 生效=${lineHeight.applied}`)
+await page.keyboard.press('Escape'); await page.waitForTimeout(200)
+await page.locator('.curve-card').nth(1).click({ position: { x: 4, y: 4 } })
+await page.waitForTimeout(450)
 
 await expandPadding()
 const padding = await nudge('padding-top', 'ArrowUp')

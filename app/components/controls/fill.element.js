@@ -20,8 +20,12 @@ import {
   reverseStops, createGradient, stopsPreview, TYPE_LABELS,
 } from '../../core/gradient.js'
 
+import { mountPopover } from './popover-host.js'
+import { renderVariableList } from './color-popover.js'
+
 const PANEL_ID = 'visual-revise-fill-panel'
-const SIBLING_PANELS = ['visual-revise-select-panel', 'visual-revise-color-panel']
+const SIBLING_PANELS = ['visual-revise-select-panel', 'visual-revise-color-panel',
+  'visual-revise-menu']
 
 let openInstance = null
 
@@ -30,6 +34,17 @@ const closePanel = () => {
   openInstance?.removeAttribute('data-open')
   openInstance = null
 }
+
+// Esc 关掉弹层。面板那边的 Esc 分支只是「有弹层时把这一下让给弹层」，
+// 让完之后并没有人接手——焦点在弹层的输入框里时 Esc 毫无作用；焦点在
+// 别处时则一路走到「取消选中」，面板整个收起、弹层跟着被动消失，看着像
+// 关了其实是选中没了。stopPropagation 是必须的，不拦住就会继续走到取消选中。
+addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || !document.getElementById(PANEL_ID)) return
+  e.preventDefault()
+  e.stopPropagation()
+  closePanel()
+}, true)
 
 document.addEventListener('pointerdown', e => {
   if (!openInstance) return
@@ -110,14 +125,22 @@ const S = {
 
 export class VrFill extends HTMLElement {
   #shadow
-  #panel = null
+  #panel = null   // shadow root，内容都在这里
+  #host = null    // 宿主盒子，定位用
   #picker = null
   #tab = 'none'
+  #page = 'custom'      // Custom（无 / 纯色 / 渐变 / 图片）还是「变量」
   #grad = null          // 渐变编辑中的模型
   #stop = 0             // 当前选中的色标下标
   #format = 'Hex'
 
-  static get observedAttributes() { return ['color', 'image'] }
+  // 由面板在 render 之后挂上：() => ({ variables, others })。
+  // 变量列表几十项，走属性会被序列化进每一个控件、还会触发一次整块重建
+  variablesProvider = null
+
+  // bound 是每层一个短字符串（变量名），走属性没有列表那份代价，
+  // 而且面板重绘时它得跟着层一起更新
+  static get observedAttributes() { return ['color', 'image', 'bound'] }
 
   constructor() {
     super()
@@ -143,6 +166,8 @@ export class VrFill extends HTMLElement {
 
   get color() { return this.getAttribute('color') || '' }
   get image() { return this.getAttribute('image') || '' }
+  // 这一层的填充绑在哪个 CSS 变量上（没绑就是空串）
+  get bound() { return this.getAttribute('bound') || '' }
 
   // 当前值落在哪个标签上
   get #kind() {
@@ -173,6 +198,10 @@ export class VrFill extends HTMLElement {
   }
 
   #renderTrigger() {
+    // 绑了变量的层：触发行整块换成 chip（圆点 + 变量名）。绑了变量色值就不该
+    // 在这里改，要改是去改那个变量；点它开的还是本控件的弹层，只不过停在变量页。
+    if (this.bound) return this.#renderChip()
+
     const solid = this.#kind === 'solid'
     const c = solid ? parseColor(this.color) : null
 
@@ -232,6 +261,39 @@ export class VrFill extends HTMLElement {
     if (solid) this.#bindFields(c)
   }
 
+  // 跟面板里文字色 / 描边色的 chip 逐条对齐：同样的高度、底色、圆点尺寸。
+  // 三处 chip 上下相邻，差一个像素都看得出来。
+  #renderChip() {
+    this.#shadow.innerHTML = `
+      <style>
+        :host { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+        .var-chip {
+          flex: 1 1 auto; min-width: 0;
+          display: flex; align-items: center; gap: 8px;
+          height: 32px; padding: 0 10px; box-sizing: border-box;
+          background: #383838; border-radius: 5px;
+        }
+        :host(:hover) .var-chip { background: #444; }
+        .var-dot {
+          flex: none; width: 16px; height: 16px; border-radius: 50%;
+          border: 1px solid rgb(255 255 255 / .18);
+        }
+        .var-name {
+          flex: 1; min-width: 0;
+          font: 400 11px/1 ui-monospace, Menlo, monospace; color: #fff;
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+      </style>
+      <span class="var-chip" role="button" title="绑定到 ${this.bound}（点击换绑）">
+        <span class="var-dot"></span>
+        <span class="var-name"></span>
+      </span>`
+
+    // 颜色和变量名都来自页面，走属性赋值而不是拼进 HTML
+    this.#shadow.querySelector('.var-dot').style.background = this.color || 'transparent'
+    this.#shadow.querySelector('.var-name').textContent = this.bound
+  }
+
   #bindFields(c) {
     const $ = sel => this.#shadow.querySelector(sel)
 
@@ -262,8 +324,15 @@ export class VrFill extends HTMLElement {
     }))
   }
 
+  // 面板的分区标题栏「绑定变量」要能直接打开这一层的变量页。弹层是实例方法、
+  // 状态全挂在实例上，模块外只有这一个入口进得来。
+  openVariables() {
+    if (openInstance === this) closePanel()
+    this.#toggle('variable')
+  }
+
   // ── 弹层 ────────────────────────────────────────────────
-  #toggle() {
+  #toggle(page) {
     if (openInstance === this) return closePanel()
     closePanel()
 
@@ -271,33 +340,91 @@ export class VrFill extends HTMLElement {
     this.#tab = kind === 'image' ? 'solid' : kind
     this.#grad = parseGradient(this.image) || null
     this.#stop = 0
+    // 打开时按当前状态停页：绑着变量就直接看到变量页并勾着当前项
+    this.#page = page || (this.bound ? 'variable' : 'custom')
 
-    const panel = document.createElement('div')
-    panel.id = PANEL_ID
-    panel.setAttribute('data-visual-revise-ui', '')
-    panel.style.cssText = `${PANEL_STYLE} width: 264px;
-      max-height: min(560px, calc(100vh - 32px)); overflow: auto;`
-    panel.innerHTML = `
-      <div class="tabs" style="display:flex;gap:2px;padding:2px;background:#2a2a2a;border-radius:7px"></div>
-      <div class="body" style="margin-top:12px"></div>`
+    // 宿主是盒子（定位、滚动），内容在它的 shadow root 里，页面 CSS 碰不到
+    const { host, root } = mountPopover(PANEL_ID, `${PANEL_STYLE} width: 264px;
+      max-height: min(560px, calc(100vh - 32px)); overflow: auto;`)
+    // data-page 跟填充自己那排 data-tab 分开：两排标签在同一个选择器空间里
+    // 会互相串，测试和样式都分不清点的是哪一排
+    root.innerHTML = `
+      <div class="pages" style="display:flex;gap:2px;padding:2px;background:#2a2a2a;border-radius:7px"></div>
+      <div class="page" style="margin-top:12px"></div>`
 
-    document.body.appendChild(panel)
-    this.#panel = panel
+    this.#host = host
+    this.#panel = root
 
     // 先铺内容再定位：定位要用 panel.offsetHeight 把弹层夹回视口内，
     // 而此刻它还是个空壳，量出来接近 0，夹了等于没夹。
-    this.#renderTabs()
-    this.#renderBody()
+    this.#renderPages()
+    this.#renderPage()
     this.#place()
 
     this.setAttribute('data-open', '')
     openInstance = this
   }
 
+  #renderPages() {
+    const pages = this.#panel.querySelector('.pages')
+    // 已绑定的层只给变量列表，不出两页：绑了变量，色值就不该在这里改，
+    // 要改颜色先 unlink。整排藏掉而不是禁用，免得留一排点不动的按钮。
+    if (this.bound) {
+      pages.innerHTML = ''
+      pages.style.display = 'none'
+      return
+    }
+    pages.style.display = ''
+    pages.innerHTML = [['custom', '自定义'], ['variable', '变量']].map(([id, label]) =>
+      `<button data-page="${id}" style="${S.tabBtn}${id === this.#page
+        ? ';background:#454545;color:#fff' : ''}">${label}</button>`).join('')
+
+    pages.querySelectorAll('[data-page]').forEach(btn =>
+      btn.addEventListener('click', () => {
+        this.#page = btn.dataset.page
+        this.#renderPages()
+        this.#renderPage()
+        this.#place()
+      }))
+  }
+
+  #renderPage() {
+    const page = this.#panel.querySelector('.page')
+
+    if (this.#page === 'variable') {
+      // 渐变和图片层绑不了变量：CSS 里能写 var()，但读回来时层解析认不出它
+      // 属于哪一层，绑定活不过一次编辑。给一个点了没反应的列表比不给更糟。
+      if (this.#kind === 'gradient' || this.#kind === 'image') {
+        page.innerHTML = `<div style="padding:14px 8px;text-align:center;color:#8c8c8c;line-height:1.6">
+          渐变和图片层不能绑定变量</div>`
+        return
+      }
+      const { variables = null, others = 0 } = this.variablesProvider?.() || {}
+      renderVariableList(page, {
+        variables: variables || [], others, bound: this.bound,
+        onPick: name => {
+          closePanel()
+          // 层下标面板从 e.currentTarget.dataset.layer 取，事件里不带——
+          // 多一个来源就多一处可能对不上
+          this.dispatchEvent(new CustomEvent('vr-fill-variable', {
+            bubbles: true, composed: true, detail: { name },
+          }))
+        },
+      })
+      return
+    }
+
+    page.innerHTML = `
+      <div class="tabs" style="display:flex;gap:2px;padding:2px;background:#2a2a2a;border-radius:7px"></div>
+      <div class="body" style="margin-top:12px"></div>`
+    this.#renderTabs()
+    this.#renderBody()
+  }
+
   // 内容一变高就得重新夹一次。切到「渐变」会多出一整排色标编辑，
   // 打开时算好的位置到那时早就把弹层顶出屏幕底部了。
   #place() {
-    const panel = this.#panel
+    const panel = this.#host
     if (!panel) return
     const rect = this.getBoundingClientRect()
     const w = panel.offsetWidth || 272
@@ -515,8 +642,10 @@ export class VrFill extends HTMLElement {
 
       const pos = row.querySelector('[data-pos]')
       const hex = row.querySelector('[data-hex]')
-      if (document.activeElement !== pos) pos.value = round(s.pos)
-      if (document.activeElement !== hex) hex.value = s.color
+      // 输入框在 shadow root 里，document.activeElement 只看得到宿主
+      const focused = this.#panel.activeElement
+      if (focused !== pos) pos.value = round(s.pos)
+      if (focused !== hex) hex.value = s.color
     })
   }
 

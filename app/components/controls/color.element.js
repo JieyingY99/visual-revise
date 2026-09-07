@@ -2,36 +2,23 @@
  * Copyright 2026 Jieying Yang. Licensed under the Apache License 2.0.
  * Part of Visual Revise, built on Project VisBug. See NOTICE.
  */
-// 单色控件：一个色块 + 一个文本框，点开挂在 body 上的色盘弹层。
-// 色盘主体在 picker.js，渐变里的每个色标共用同一套。
-import {
-  CHECKER, PANEL_STYLE, clamp, parseColor, formatColor,
-  pickerMarkup, createPicker,
-} from './picker.js'
+// 单色控件：一个色块 + 一个文本框，点开挂在 body 上的颜色弹层。
+// 弹层本体（Custom 色盘 + 变量页）在 color-popover.js —— 它同时服务
+// chip 和分区标题栏的「绑定变量」，那两处够不到本控件的实例方法。
+import { CHECKER, clamp, parseColor, formatColor } from './picker.js'
 
 export { hsvToRgb, rgbToHsv, parseColor, formatColor } from './picker.js'
-
-const PANEL_ID = 'visual-revise-color-panel'
-let openInstance = null
-
-const closePanel = () => {
-  document.getElementById(PANEL_ID)?.remove()
-  openInstance?.removeAttribute('data-open')
-  openInstance = null
-}
-
-document.addEventListener('pointerdown', e => {
-  if (!openInstance) return
-  const path = e.composedPath?.() || []
-  if (path.some(n => n?.id === PANEL_ID || n === openInstance)) return
-  closePanel()
-}, true)
+import { openColorPopover, closeColorPopover, colorPopoverAnchor } from './color-popover.js'
 
 export class VrColor extends HTMLElement {
   #shadow
   #format = 'Hex'
-  #panel = null
-  #picker = null
+  #popover = null
+
+  // 由面板在 render 之后挂上：() => ({ variables, others, bound })。
+  // 没挂的（效果参数面板里的阴影色）只有 Custom 页——效果模型从 computed 反解，
+  // var() 存不住，给了变量页也是个绑不上的入口。
+  variablesProvider = null
 
   static get observedAttributes() { return ['value'] }
 
@@ -52,11 +39,12 @@ export class VrColor extends HTMLElement {
     })
   }
 
-  disconnectedCallback() { if (openInstance === this) closePanel() }
+  // 面板每次 render 都会换掉 vr-color 实例，这条是弹层不留孤儿的关键
+  disconnectedCallback() { if (colorPopoverAnchor() === this) closeColorPopover() }
 
   attributeChangedCallback() {
     if (this.#shadow.firstChild) this.#renderTrigger()
-    if (openInstance === this) this.#picker?.set(this.value)
+    if (colorPopoverAnchor() === this) this.#popover?.setValue(this.value)
   }
 
   get value() { return this.getAttribute('value') || '' }
@@ -143,38 +131,21 @@ export class VrColor extends HTMLElement {
   }
 
   #toggle() {
-    if (openInstance === this) return closePanel()
-    closePanel()
+    // 点同一个触发器就是关掉它
+    if (colorPopoverAnchor() === this) return closeColorPopover()
 
-    const panel = document.createElement('div')
-    panel.id = PANEL_ID
-    panel.setAttribute('data-visual-revise-ui', '')
-    panel.style.cssText = `${PANEL_STYLE} width: 264px;`
-    panel.innerHTML = pickerMarkup()
+    const { variables = null, others = 0, bound = null } = this.variablesProvider?.() || {}
 
-    document.body.appendChild(panel)
-    this.#panel = panel
-
-    this.#picker = createPicker(panel, {
+    this.#popover = openColorPopover(this, {
+      value: this.value,
       format: this.#format,
-      onChange: css => {
-        this.#format = this.#picker.format
-        this.#commit(css)
-      },
+      variables, others, bound,
+      onColor: (css, format) => { this.#format = format; this.#commit(css) },
+      onVariable: name => this.dispatchEvent(new CustomEvent('vr-color-variable', {
+        bubbles: true, composed: true, detail: { name },
+      })),
+      onClose: () => { this.#popover = null },
     })
-
-    // 定位放在 createPicker 之后：它要用 panel.offsetHeight 把弹层夹回视口内，
-    // 而在内容铺开之前那还是个空壳，量出来接近 0，夹了等于没夹——
-    // 弹层就会从屏幕底部漏出去。
-    const rect = this.getBoundingClientRect()
-    const w = panel.offsetWidth || 272
-    const h = panel.offsetHeight
-    panel.style.left = `${clamp(rect.left - w - 2, 8, Math.max(8, innerWidth - w - 8))}px`
-    panel.style.top = `${clamp(rect.top, 8, Math.max(8, innerHeight - h - 8))}px`
-    this.#picker.set(this.value)
-
-    this.setAttribute('data-open', '')
-    openInstance = this
   }
 }
 

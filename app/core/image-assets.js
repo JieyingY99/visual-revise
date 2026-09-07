@@ -103,20 +103,35 @@ export const readImageFile = async file => {
 
 // 拖拽与粘贴给的都是 DataTransfer，处理方式一致。
 // 逐个隔离：一张读失败不该连累同一批的其它图。
-export const readImageList = async files => {
+//
+// base 是「这次会话已经收下多少字节」，由调用方传进来（一般是
+// totalBytes(ChangeStore.allAssets())）。这个模块是纯函数集合，拿不到 store，
+// 让它反向依赖 store 才是更糟的耦合；而不给基数的话 MAX_TOTAL 只能管住
+// 单批，连着粘三次每次 19MB 照样过——那正是这条上限一直形同虚设的原因。
+export const readImageList = async (files, { base = 0 } = {}) => {
   const assets = []
   const errors = []
+  let used = Math.max(0, base || 0)
 
   for (const file of Array.from(files || [])) {
     if (!isAcceptedImage(file)) continue
+
+    if (used + (file.size || 0) > MAX_TOTAL) {
+      errors.push(`已超出会话累计上限（${fmtBytes(MAX_TOTAL)}）`)
+      continue
+    }
+
     const res = await readImageFile(file)
-    res.ok ? assets.push(res.asset) : errors.push(res.reason)
+    if (!res.ok) { errors.push(res.reason); continue }
+
+    assets.push(res.asset)
+    used += res.asset.bytes || 0
   }
 
   return { assets, errors }
 }
 
-export const imagesFromDataTransfer = dt => {
+export const imagesFromDataTransfer = (dt, opts) => {
   if (!dt) return { assets: [], errors: [] }
 
   // 粘贴来的截图在 items 里，拖进来的文件在 files 里；两边都取一遍再去重
@@ -126,16 +141,16 @@ export const imagesFromDataTransfer = dt => {
     .filter(Boolean)
 
   const all = fromItems.length ? fromItems : Array.from(dt.files || [])
-  return readImageList(all)
+  return readImageList(all, opts)
 }
 
 // 选文件对话框。放在这里而不是各组件里，免得三处入口各写一份。
-export const pickImages = () => new Promise(resolve => {
+export const pickImages = opts => new Promise(resolve => {
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = 'image/*'
   input.multiple = true
-  input.onchange = async () => resolve(await readImageList(input.files))
+  input.onchange = async () => resolve(await readImageList(input.files, opts))
   input.click()
 })
 

@@ -18,7 +18,7 @@ import { fingerprint, findSharedElements } from './shared-elements.js'
 import { loadLocalFonts, isSupported as fontsSupported } from './local-fonts.js'
 import { clearHighlight } from './highlight.js'
 import { applyPlacement } from './placement.js'
-import { resizeMode, planResize, currentSize, isMainAxis, cssVariables } from './resizing.js'
+import { resizeMode, planResize, currentSize, isMainAxis, declaredVariables } from './resizing.js'
 import { parseTracks, serializeTracks, readTracks, gridShape } from './grid.js'
 import { flowOf, planFlow, alignmentOf, planAlignment } from './layout.js'
 import { semanticName, describeNode, childrenOf } from './tree-model.js'
@@ -70,6 +70,10 @@ export const mountVisualRevise = visbug => {
   // 树发出的事件带 composed，会从面板的 shadow 冒上来，所以监听挂在面板上。
 
   const layoutDrag = createLayoutDrag({
+    // 有些上游工具自己吃鼠标（Position 是按下拖着改 left/top）。在 pointerdown
+    // 那一刻问一次当前工具，比靠 setActive 同步一个状态位可靠——mode 与
+    // activeTool 是两个维度，而切工具的 toolSelected() 不在这一层。
+    activeTool: () => visbug.activeTool,
     // 选中框浮在元素上方、四角还有拦指针的缩放把手，拖之前先让开
     onDragStart: () => engine.unselect_all(),
     onDone: ({ el, toParent }) => {
@@ -219,6 +223,44 @@ export const mountVisualRevise = visbug => {
       return
     }
 
+    // ⌥Delete / ⌥Backspace 清空选中元素的 inline style。
+    //
+    // 必须排在下面那道「带修饰键就放行」之前，于是它绕过了后面那两道守卫，
+    // 所以自己得把它们带上——否则会吃掉输入框里「往回删一个词」的
+    // ⌥Backspace，还会顺手把页面上选中元素的样式一起清掉。
+    //
+    // 从 selectable.js 的 hotkey 接管过来，是为了走 ChangeStore：上游那条
+    // 直接改 DOM，历史栈里没有对应条目，用户按 ⌘Z 想救回来，反而又丢掉
+    // 上一条无关操作；而且它调的 el.attr() 是 blingblingjs 挂在实例上的糖，
+    // 注入之后才出现的元素身上根本没有，功能当场抛错。
+    if (e.altKey && !e.metaKey && !e.ctrlKey
+      && (e.key === 'Delete' || e.key === 'Backspace')
+      && !interactive && !isTypingTarget(e) && !isEditorUI(e)) {
+      const targets = engine.selection().filter(el => el?.isConnected && !isEditorUI(el))
+      if (!targets.length) return
+
+      e.preventDefault()
+      e.stopPropagation()
+
+      // 逐条 applyProp 而不是 removeAttribute('style')：一键抹掉的每条声明都该
+      // 在改动记录里看得见，也才 ⌘Z 得回来。important 由 applyProp 自己处理。
+      let cleared = 0
+      ChangeStore.history.batch(
+        targets.length > 1 ? `清空 ${targets.length} 个元素的样式` : '清空样式',
+        () => targets.forEach(el => {
+          // 先取一份清单再删：边遍历边 removeProperty 会漏掉一半
+          for (const prop of [...el.style]) {
+            ChangeStore.applyProp(el, prop, '')
+            cleared++
+          }
+        }))
+
+      panel.toast(cleared
+        ? `已清空 ${cleared} 条 inline 样式 · ⌘Z 可撤销`
+        : '这些元素上没有 inline 样式')
+      return
+    }
+
     if (e.metaKey || e.ctrlKey || e.altKey) return
 
     // 面板内部只让出 Tab 与 Escape——这两个在面板里有自己的语义（切焦点、关弹窗）。
@@ -339,6 +381,27 @@ export const mountVisualRevise = visbug => {
       if (interactive) { e.preventDefault(); e.stopPropagation(); setMode('select'); return }
       if (comments.hasDraft) { e.preventDefault(); e.stopPropagation(); comments.cancelDraft(); return }
       if (mode !== 'select') { e.preventDefault(); e.stopPropagation(); setMode('select'); return }
+
+      // 正在编辑文案：Esc 的第一层语义是退出编辑态，第二下才取消选中。
+      //
+      // 判据是「事件 target 自己就是 contenteditable」，不能放宽成
+      // isTypingTarget——焦点在面板输入框里时 Esc 该做的是关弹层 / 取消选中。
+      //
+      // 自己做这三件事，不调 text.js 的 cleanup：它没 export，而且它里面的
+      // removeEditability 有一句 hotkeys.unbind('escape,esc')，会把全局所有
+      // esc 绑定（含快捷键帮助浮层自己的）一起解掉。
+      // 上游注册的 hotkeys('escape,esc', cleanup) 从来就没执行过：
+      // hotkeys-js 的默认 filter 在 contenteditable 上根本不派发。
+      const editing = e.composedPath?.()[0]
+      if (editing?.isContentEditable && !isEditorUI(editing)) {
+        e.preventDefault()
+        e.stopPropagation()
+        editing.blur()
+        editing.removeAttribute('contenteditable')
+        editing.removeAttribute('spellcheck')
+        getSelection()?.empty?.()
+        return
+      }
 
       // 已经在选择态，Esc 的下一层语义是取消选中。
       //
@@ -555,7 +618,11 @@ export const mountVisualRevise = visbug => {
     engine.unselect_all()
   })
   panel.addEventListener('vr-comment-toggle', () => setCommentMode(!comments.active))
-  list.addEventListener('vr-toast', e => toolbar.toast(e.detail.message, e.detail.kind))
+  // 监听挂在 document 上而不是某一个组件上：vr-toast 全是 bubbles + composed，
+  // 挂在 list 上就只有改动列表那一路有人接——评论层图片超限的报错、粘贴读不到
+  // 剪贴板的提示都派得出去、没人显示，用户点了「+」选了图，界面上什么都没发生。
+  const onToast = e => toolbar.toast(e.detail.message, e.detail.kind)
+  document.addEventListener('vr-toast', onToast)
 
   panel.addEventListener('vr-open-list', () => {
     list.hidden = !list.hidden
@@ -593,6 +660,7 @@ export const mountVisualRevise = visbug => {
       document.removeEventListener('input', onTextInput, true)
       document.removeEventListener('keydown', onKeydown, true)
       document.removeEventListener('click', onClickCapture, true)
+      document.removeEventListener('vr-toast', onToast)
       for (const type of PAGE_ISOLATED)
         document.body.removeEventListener(type, isolateFromPage)
       engine.removeSelectedCallback(onSelected)
@@ -622,7 +690,9 @@ export const mountVisualRevise = visbug => {
     fingerprint, findSharedElements,
     loadLocalFonts, fontsSupported,
     isTextElement,
-    resizeMode, planResize, currentSize, isMainAxis, cssVariables,
+    resizeMode, planResize, currentSize, isMainAxis,
+    // cssVariables 是旧名，调试台和外部脚本还在用，留着做别名
+    declaredVariables, cssVariables: declaredVariables,
     parseTracks, serializeTracks, readTracks, gridShape,
     flowOf, planFlow, alignmentOf, planAlignment,
     semanticName, describeNode, childrenOf, orderedChildren,

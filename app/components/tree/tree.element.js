@@ -24,6 +24,7 @@ export class ReviseTree extends HTMLElement {
   #shadow
   #expanded = new Set()
   #target = null
+  #lastScroll = 0   // .list 最近一次的 scrollTop，面板隐藏后布局没了只能靠它
   #rows = []              // 当前渲染出来的行：{ id, el, depth }
   #drag = null
   #unsubscribe = null
@@ -44,11 +45,14 @@ export class ReviseTree extends HTMLElement {
       <div class="tree-head">
         <span class="title">结构</span>
         <span class="hint">拖动行可移动</span>
-        <button class="tree-close" title="关闭">×</button>
       </div>
       <div class="list"><div class="drop-line" hidden></div></div>`
 
     this.#bind()
+    // 每次滚动记一份位置：面板隐藏 / 重挂时 .list 没有布局，scrollTop 读不到
+    this.#shadow.querySelector('.list').addEventListener('scroll', e => {
+      if (e.currentTarget.clientHeight) this.#lastScroll = e.currentTarget.scrollTop
+    }, { passive: true })
     // 移动改的是 DOM 结构，改完树得跟着重画
     this.#unsubscribe = ChangeStore.subscribe(() => this.schedule())
     this.#untrap = containScroll(this, () => this.#shadow.querySelector('.list'))
@@ -84,6 +88,21 @@ export class ReviseTree extends HTMLElement {
   // 树在 display:none 下算不出滚动（clientHeight 为 0，滚了等于没滚）。
   // 面板刚显示出来、或刚从属性 tab 切过来时，得由外面补叫一次。
   reveal() { this.#revealTarget() }
+
+  // 列表的滚动位置。面板整块重建时会把这棵树摘下来再挂回去，浏览器在重挂那一刻
+  // 把 .list 的 scrollTop 归零；更早一步，面板被 hidden（display:none）时 .list
+  // 就已经没有布局、scrollTop 直接读成 0——在树里点一行选中，走的正是
+  // 「取消选中（面板隐藏）→ 选中新元素」这条路。所以位置不能等到要用时才读，
+  // 每次滚动就记一份，没布局时拿这份缓存。
+  get scrollOffset() {
+    const list = this.#shadow.querySelector('.list')
+    return list && list.clientHeight ? list.scrollTop : this.#lastScroll
+  }
+  set scrollOffset(v) {
+    this.#lastScroll = v
+    const list = this.#shadow.querySelector('.list')
+    if (list) list.scrollTop = v
+  }
 
   #revealTarget() {
     if (!this.#target) return
@@ -151,9 +170,9 @@ export class ReviseTree extends HTMLElement {
     const shadow = this.#shadow
     const list = shadow.querySelector('.list')
 
-    shadow.querySelector('.tree-close').addEventListener('click', () =>
-      this.#emit('vr-tree-close'))
-
+    // 树头以前有个 × ：它只派发 vr-tree-close，全仓没有一处监听，点了什么都不会发生。
+    // 关闭这块 UI 是属性面板标题栏那个 × 的职责（宿主监听 vr-close），
+    // 这里不留一个点了没反应的控件。
     // 折叠箭头单独处理：它和「选中这一行」是两件事，不能互相触发
     list.addEventListener('click', e => {
       const twist = e.target.closest?.('.twist')

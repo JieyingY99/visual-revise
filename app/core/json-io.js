@@ -9,13 +9,21 @@ import { resolveElement } from './anchors.js'
 // 内嵌而不是只存文件名，是因为这份 JSON 的用途就是交给别人导入——
 // 图丢了，换图那条记录也就没意义了。
 // v3 起带上移动：重排从写 CSS order 换成了真的搬 DOM 节点。
-export const SCHEMA_VERSION = 3
+// v4 起每条改动带 important：样式表里有 !important 的属性，面板写的也是
+// !important，不带这个字段的话导入方压不过样式表，画面对不上。
+// v5 起带上新增：分组的外壳、⌘V 粘进来的副本，都是原页面里没有的元素。
+export const SCHEMA_VERSION = 5
 
 // 老版本导出的文件缺字段也能正常导入，所以照收
-const SUPPORTED = new Set([1, 2, 3])
+const SUPPORTED = new Set([1, 2, 3, 4, 5])
+
+// 新增记录带的是一段 HTML 原文，导入时要还原成节点。取 firstElementChild
+// 而不是 firstChild：原文前面可能带换行，那会先解析出一个文本节点。
+const htmlToElement = html =>
+  new DOMParser().parseFromString(String(html || ''), 'text/html').body.firstElementChild
 
 export const exportJSON = (meta = {}) => {
-  const { edits, comments, removals, moves } = ChangeStore.read()
+  const { edits, comments, removals, moves, inserts } = ChangeStore.read()
 
   return {
     schema:     SCHEMA_VERSION,
@@ -35,6 +43,17 @@ export const exportJSON = (meta = {}) => {
       anchors:  c.anchors,
       text:     c.text,
       images:   (c.images || []).map(i => i.id),
+    })),
+    // 新增只存「放在哪儿 + 这段 HTML 是什么」：DOM 节点带不走，
+    // 导入方要按锚点找到容器，再把 HTML 还原成节点插回去
+    inserts: (inserts || []).map(r => ({
+      seq:           r.seq,
+      label:         r.label,
+      tag:           r.tag,
+      parentAnchors: r.parentAnchors,
+      nextAnchors:   r.nextAnchors,
+      atEnd:         r.atEnd,
+      html:          r.html,
     })),
     // 移动存三方锚点：元素自己、原容器与后邻、新容器与后邻。
     // 主锚点用移动**之前**那一份——导入方页面上的元素还在原位，
@@ -90,7 +109,7 @@ export const importJSON = (data, { apply = true } = {}) => {
 
   const report = {
     ok: true, matched: [], missing: [], failed: [],
-    comments: 0, viaText: 0, images: 0, attrs: 0, removals: 0, moves: 0,
+    comments: 0, viaText: 0, images: 0, attrs: 0, removals: 0, moves: 0, inserts: 0,
   }
 
   // 资产要先入库：后面的换图记录与评论都按 id 引用它们
@@ -114,7 +133,10 @@ export const importJSON = (data, { apply = true } = {}) => {
 
       ChangeStore.track(el)
       if (apply) {
-        record.changes.forEach(c => ChangeStore.applyProp(el, c.prop, c.to))
+        // important 缺省（v3 以前的文件）时传 undefined，让 applyProp 自己按
+        // 导入方页面的层叠去判——比一律按 false 写更接近「样式看起来一样」
+        record.changes.forEach(c =>
+          ChangeStore.applyProp(el, c.prop, c.to, { important: c.important }))
         // 属性改动要在样式之后应用：换图会连带清 srcset，
         // 顺序颠倒的话清空动作会被原值覆盖回去
         ;(record.attrs || []).forEach(a => {
@@ -129,6 +151,36 @@ export const importJSON = (data, { apply = true } = {}) => {
       })
     } catch (err) {
       report.failed.push({ selector: record.selector, reason: err?.message || String(err) })
+    }
+  }
+
+  // 新增排在移动之前：分组是「先造出外壳、再把子元素搬进去」。
+  // 反过来的话，移动先跑时外壳还不存在，落点必然落空——整组分组静默丢失，
+  // 只在 report.missing 里留下一行。
+  for (const record of data.inserts || []) {
+    try {
+      const parent = record.parentAnchors
+        ? resolveElement({ anchors: record.parentAnchors }).el
+        : null
+      if (!parent) { report.missing.push(record.parentAnchors?.selector || '（新增元素的容器）'); continue }
+
+      // 同 moves：atEnd 是「本来就没有后邻」，跟「后邻没找着」是两回事
+      const next = record.atEnd || !record.nextAnchors
+        ? null
+        : resolveElement({ anchors: record.nextAnchors }).el
+
+      const node = htmlToElement(record.html)
+      if (!node) {
+        report.failed.push({ selector: record.parentAnchors?.selector, reason: 'HTML 解析不出元素' })
+        continue
+      }
+
+      if (apply)
+        ChangeStore.insertElement(node, parent,
+          next?.parentElement === parent ? next : null, record.label || '新增元素')
+      report.inserts++
+    } catch (err) {
+      report.failed.push({ selector: record.parentAnchors?.selector, reason: err?.message || String(err) })
     }
   }
 

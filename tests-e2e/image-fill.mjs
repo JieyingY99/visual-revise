@@ -148,8 +148,10 @@ await select('.test-plain')
 const plainRows = await fillRows()
 ok(!plainRows.some(r => r.startsWith('image:')), '无图元素不显示图片预览行')
 const plainProps = await fillProps()
-ok(plainProps.indexOf('color') === plainProps.length - 1,
-   `普通容器的 color 沉底（背景才是它的主填充）：${plainProps.join(', ')}`)
+// 「文字色」需要一个文字作为作用对象。空 div 自己没有文字，那一格改的是谁的
+// 颜色说不清楚——用户看到的就是「这个 div 没有文字色这个 property」
+ok(!plainProps.includes('color'),
+   `没有直接文字的容器不显示文字色：${plainProps.join(', ')}`)
 ok(!plainProps.includes('background-size'),
    '没有背景图时不显示背景尺寸/位置（避免无意义字段占位）')
 

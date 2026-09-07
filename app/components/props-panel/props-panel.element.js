@@ -3,13 +3,13 @@
  * Part of Visual Revise, built on Project VisBug. See NOTICE.
  */
 import { GROUPS, sameValue } from '../../core/tracked-props.js'
-import { parseFills, serializeFills, DEFAULT_FILL } from '../../core/fills.js'
+import { parseFills, serializeFills, bindFills, DEFAULT_FILL } from '../../core/fills.js'
 import { EFFECTS, EFFECT_LABEL, FIELDS as EFFECT_FIELDS, parseEffects, serializeEffects, defaultsFor } from '../../core/effects.js'
 import { splitTopLevel } from '../../core/gradient.js'
 import {
   CONTROLS, SIDE_GROUPS, FIELD_PAIRS, FIELD_PREFIX, HIDDEN_FIELDS, LABELED_PAIRS,
   isRelevant, coerceLength, stepValue, stepSize, displayValue,
-  alignSupported, alignPlan, isReplacedElement,
+  alignSupported, alignPlan, isReplacedElement, isTextlessElement,
 } from '../../core/controls.js'
 import { ChangeStore } from '../../core/change-store.js'
 import { moveTo, savePlacement } from '../../core/placement.js'
@@ -21,13 +21,14 @@ import { loadLocalFonts, isSupported as fontsSupported,
   primaryFont, withPrimaryFont, COMMON_FONTS } from '../../core/local-fonts.js'
 import { containScroll, isTextElement } from '../../core/dom-utils.js'
 import { imageSourceOf, measureNatural, describeSize } from '../../core/image-source.js'
-import { pickImages, canRenderDataUrl } from '../../core/image-assets.js'
+import { pickImages, canRenderDataUrl, totalBytes } from '../../core/image-assets.js'
 import {
   AXES, MODES, resizeMode, planResize, currentSize, isMainAxis,
 } from '../../core/resizing.js'
 import { openMenu, openPopover, closeMenu } from '../controls/menu.js'
-import { cssVariables } from '../../core/resizing.js'
-import { parseColor } from '../controls/picker.js'
+import { openColorPopover } from '../controls/color-popover.js'
+import { declaredVariables, winningDeclaration, wholeVar, varTokens } from '../../core/cascade.js'
+import { parseColor, sameColor } from '../controls/picker.js'
 import {
   TRACK_TYPES, TRACK_LABEL, DEFAULT_VALUE,
   readTracks, serializeTracks, trackProp, makeTracks, gridShape,
@@ -76,6 +77,9 @@ const ICON = {
   variable: svg('<circle cx="4.5" cy="4.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="11.5" cy="4.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="4.5" cy="11.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="11.5" cy="11.5" r="1.5" fill="currentColor" stroke="none"/>', 13),
 }
 
+// Typography 的可见性要按「这一组改过没有」兜底，先把它拎出来
+const GROUP_TYPOGRAPHY = GROUPS.find(g => g.id === 'typography')
+
 // 这三个分区改用 Figma 的「可增删的层列表」交互：标题右侧是 variable + 加号，
 // 元素本来没有填充/描边/效果时也要把标题和加号显示出来——空状态本身就是入口，
 // 整个分区不渲染的话，用户根本没有地方去添加第一条。
@@ -98,8 +102,14 @@ const varKind = value => {
   return 'other'
 }
 
-// 哪种控件收哪种变量
-const KIND_FOR_TYPE = { color: 'color', num: 'length' }
+// 面板管的颜色属性里会继承的只有字色；background / border 都不继承
+const INHERITED = new Set(['color'])
+
+// 给 chip 的 title 用：继承来的绑定要说清来自哪个祖先
+const describeNode = el => {
+  const cls = [...el.classList].slice(0, 2).map(c => `.${c}`).join('')
+  return `<${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}${cls}>`
+}
 
 // 拖过这么多像素才算拖，不然一次轻微的手抖就会把顺序换掉
 const DRAG_SLOP = 4
@@ -139,7 +149,10 @@ const ALIGN_BUTTONS = [
 // 这样一开一关是精确的往返，不会凭空给元素添上一条 inline 样式。
 const HIDEABLE = {
   fill:    { 'background-color': 'transparent', 'background-image': 'none' },
-  stroke:  { 'border-style': 'none' },
+  // 描边隐藏写透明色而不是 border-style: none：none 会把边框宽度一起收掉，
+  // 盒子变小、页面跳一下；而且 #canAdd 会把它当成「没有描边」，整行消失、
+  // 连恢复的入口都没了。透明色保住占位，眼睛还在原处。
+  stroke:  { 'border-color': 'transparent' },
   effects: { 'box-shadow': 'none', 'filter': 'none', 'backdrop-filter': 'none' },
 }
 
@@ -161,10 +174,21 @@ const LIMIT_RESET = {
   'max-width': 'none', 'max-height': 'none',
 }
 
-// 这两个属性决定了别的属性有没有意义：position 决定 X/Y/z-index 是否生效，
-// display 决定 flex 那一组是否生效。改了它们必须整块重画，
-// 否则刚变得可用的字段要等下次重新选中才看得见。
-const RERENDER_ON = new Set(['position', 'display'])
+// 这几个属性决定了别的属性有没有意义：position 决定 X/Y/z-index 是否生效，
+// display 决定 flex 那一组是否生效，border-style 选 none 就等于没有描边
+// （computed border-width 随之为 0），粗细/颜色/位置三行都不该再留着。
+// 改了它们必须整块重画，否则刚变得可用（或刚该消失）的字段要等下次重新选中才对得上——
+// 描边那条尤其糟：分区停在旧结构上，加号还 disabled 挂着「只有一层，不能再加」，
+// 而此刻明明一条描边都没有，唯一的添加入口是死的。
+// border-width 不能一起加：它是输入框，change 时重绘会把正在编辑的焦点冲掉。
+const RERENDER_ON = new Set(['position', 'display', 'border-style'])
+
+// 两段式间距的控件（`padding:vertical` 这种 data-pair）背后是一对属性。
+// 手柄和输入框都只带 data-pair，不带 data-prop——步进与提交都要先在这里换成属性名。
+const pairPropsOf = pair => {
+  const [kind, dir] = String(pair || '').split(':')
+  return SIDE_SETS[kind]?.[dir] || null
+}
 
 // 少数几个前缀用图形比用字符清楚：行高的「↕」和字距的「AV」摆在框里
 // 都认不出是什么，Figma 那边这两个位置也是图标。
@@ -221,6 +245,25 @@ const describeTarget = el => {
 
 const esc = v => String(v ?? '').replace(/"/g, '&quot;')
 
+// 三处眼睛按钮都是「存 inline 原文、再原样写回」。原文包含 priority：
+// 样式表里带 important 的元素上，只写回值压不过它，一开一关就回不去了。
+const inlineOf = (el, prop) => ({
+  value: el.style.getPropertyValue(prop),
+  important: el.style.getPropertyPriority(prop) === 'important',
+})
+
+// 两份 inline 快照是否已经对不上（元素数量或任何一条声明变了都算）。
+// 用来判断「关灯之后有没有别人动过这几条属性」——有就不能再原文写回。
+const stale = (before, now) => {
+  if (!before || before.length !== now.length) return true
+  return before.some((snap, i) => {
+    const cur = now[i]
+    if (!cur || cur.el !== snap.el) return true
+    return Object.entries(snap.props).some(([prop, v]) =>
+      cur.props[prop]?.value !== v.value || cur.props[prop]?.important !== v.important)
+  })
+}
+
 export class PropsPanel extends HTMLElement {
   #shadow
   #targets = []
@@ -252,16 +295,20 @@ export class PropsPanel extends HTMLElement {
   // 面板顶部的两个 tab：props = 属性分组，structure = 整页结构树
   #tab = 'props'
   #tree = null
+  #treeScroll = null   // 面板重建前记下的树滚动位置
   // 读过一次本地字体后留着，供字体下拉框列出来
   #localFonts = []
   #unsubscribe = null
   #releaseScroll = null
   #dirtyProps = new Set()
+  // 本次 render 里的颜色变量列表。每个颜色控件都会问一遍，铺一次样式表够用了
+  #varCache = null
   #shared = false
   #sharedEls = []
   #ratio = null           // 宽高比锁：null = 未锁，数字 = 锁定的 w/h
   #ratioBusy = false
   #hiddenSections = new Map()
+  #strokeShown = null   // 描边隐藏时行里该显示的颜色 / 绑定
 
   constructor() {
     super()
@@ -373,22 +420,27 @@ export class PropsPanel extends HTMLElement {
   // 改动可能来自面板之外：改动列表的撤销、整体重置、JSON 导入。
   // 只刷新 dirty 标记而不回读值，会让字段停留在已被撤销的旧数字上，
   // 下一次拖动标签就从那个旧数字继续，等于把撤销掉的改动又加回去。
+  // 分区的「形状」：Stroke 有没有描边。撤销 / 重做 / 导入这些外部改动只回写
+  // 已有的输入框，但它们可能让 Stroke 从空状态长出行来（撤销一次「移除描边」），
+  // 或反过来——那时输入框根本不存在，只能整块重绘。
+  // 只看描边，不看填充层数 / 效果条数：面板自己的写入也会走到这里，切个渐变
+  // 就重绘会把正开着的填充弹层关掉（vr-fill 实例被换掉）。
+  #structureKey() {
+    return String(this.#canAdd('stroke'))
+  }
+
   #syncValues() {
     const target = this.target
     if (!target?.isConnected) return
 
+    const shapeBefore = this.#structureKey()
     this.#computed = readComputed(target)
+    if (this.#structureKey() !== shapeBefore) return this.render()
     const active = this.#shadow.activeElement
 
+    // 层里的 vr-fill 带的是 data-layer 不是 data-prop，扫不到这里，也不该扫到：
+    // 它的值由 #renderFillLayers 按层写，整条 background 回写会把层序拍平
     for (const el of this.#shadow.querySelectorAll('[data-prop]')) {
-      if (el.tagName === 'VR-FILL') {
-        for (const [attr, p] of [['color', 'background-color'], ['image', 'background-image']]) {
-          const next = this.#computed[p] ?? ''
-          if (el.getAttribute(attr) !== next) el.setAttribute(attr, next)
-        }
-        continue
-      }
-
       const prop = el.dataset.prop
       if (!prop || prop.includes(',')) continue
 
@@ -476,7 +528,15 @@ export class PropsPanel extends HTMLElement {
     const scrollTop = sameTarget ? (this.#shadow.querySelector('.scroll')?.scrollTop || 0) : 0
     this.#renderedFor = this.target
 
+    // 结构树是持久实例，但 innerHTML 重建会把它连同插槽一起摘下来再挂回去，
+    // 重挂那一刻列表的 scrollTop 归零。换了元素也要留住树的位置：在树里点一行
+    // 选中，行不该跑到别处去——跟属性 tab「换元素从头看」是两回事。
+    // 只在树还挂着时记：在树里点一行会先「取消选中」再「选中新元素」，中间那次
+    // 重绘树已经被摘掉了，这时再记就把真正的位置覆盖成空。
+    if (this.#tree?.parentNode) this.#treeScroll = this.#tree.scrollOffset
+
     this.#dirtyProps = this.#dirtySet()
+    this.#varCache = null
 
     root.innerHTML = this.#subview === 'grid' && this.target
       ? this.#renderGridSettings()
@@ -589,6 +649,8 @@ export class PropsPanel extends HTMLElement {
       this.#tree.addEventListener('vr-tree-move', e => this.#applyMove(e.detail))
     }
     if (this.#tree.parentNode !== slot) slot.appendChild(this.#tree)
+    // 先把重建前的滚动位置还回去，再让树定位：行还在可视区里时 nearest 就是 no-op
+    if (this.#treeScroll != null) { this.#tree.scrollOffset = this.#treeScroll; this.#treeScroll = null }
     // 整页结构，当前选中项高亮——和 DevTools 一致
     this.#tree.setTarget(this.target)
   }
@@ -609,12 +671,37 @@ export class PropsPanel extends HTMLElement {
     return this.#canAdd(id) ? '添加描边' : 'CSS 的 border 只有一层，不能再加'
   }
 
+  // Typography 只给排得上版的元素。
+  //
+  // 选中一个只装着子元素的 div，面板给出一整块字体 / 字号 / 行高——那些属性
+  // 确实会继承下去，但用户改的是子元素的样子，面板却说这是这个 div 的属性。
+  // Figma 里容器图层根本没有 Typography 分区。
+  //
+  // 内联 <svg> 保留：它里面能放 <text>，也确实继承 font-*，但文字在子 <text>
+  // 里而不是它的直接文本子节点，isTextElement 认不出来，得单独放行。
+  //
+  // 最后一条是兜底：本组已经有改动时照常渲染（折叠态）。VisBug 的快捷键能在
+  // 任意元素上改字号，改动记录里躺着一条 font-size 却在面板上找不到地方改回去，
+  // 比多显示一个分区糟得多。
+  #showTypography(el) {
+    if (!el || isTextlessElement(el)) return false
+    if (isTextElement(el) || el.tagName.toLowerCase() === 'svg') return true
+    return GROUP_TYPOGRAPHY.props.some(p => this.#dirtyProps.has(p))
+  }
+
+  // 「文字色」独占一行的条件，跟 hideMapFor 用的是同一条规则
+  #showTextColor() {
+    const el = this.target
+    return !!el && isTextElement(el) && !isReplacedElement(el)
+  }
+
   #renderGroup(group) {
     // Layout 完全自定义渲染：它的控件是按 Flow 组织的，不是一条属性一行，
     // 通用循环表达不了（见 #layoutRows）
     const rows =
       group.id === 'layout'     ? this.#layoutRows()
-      : group.id === 'typography' ? this.#typographyRows()
+      : group.id === 'typography'
+        ? (this.#showTypography(this.target) ? this.#typographyRows() : [])
       : this.#defaultRows(group)
 
     const body = rows.filter(Boolean)
@@ -631,9 +718,13 @@ export class PropsPanel extends HTMLElement {
            title="${off ? '恢复本组' : '临时关闭本组'}">${off ? ICON.eyeOff : ICON.eye}</button>`
       : ''
 
-    // variable 平时不占视觉噪音，鼠标进标题栏才出现——跟 Figma 的 default / hover 两态一致
+    // variable 平时不占视觉噪音，鼠标进标题栏才出现——跟 Figma 的 default / hover 两态一致。
+    // Effects 不给：页面上的 CSS 变量几乎都是颜色，列出来绑到 box-shadow 上
+    // 没有意义；阴影变量另有一套（多段值、inset），等真有需求再单独做。
+    const varBtn = group.id === 'effects' ? ''
+      : `<button class="icon-btn var-btn" data-var="${group.id}" title="使用 CSS 变量">${ICON.variable}</button>`
     const adds = layered
-      ? `<button class="icon-btn var-btn" data-var="${group.id}" title="使用 CSS 变量">${ICON.variable}</button>
+      ? `${varBtn}
          <button class="icon-btn add" data-add="${group.id}"${this.#canAdd(group.id) ? '' : ' disabled'}
            title="${this.#addTitle(group.id)}">${ICON.plus}</button>`
       : ''
@@ -738,7 +829,12 @@ export class PropsPanel extends HTMLElement {
     if (flow === 'grid') rows.push(this.#renderGridRow())
 
     rows.push(this.#renderSidePair('padding'), this.#renderSidePair('margin'))
-    rows.push(this.#renderClip())
+
+    // 替换元素（img / video / canvas / iframe…）的内容不会溢出盒子，裁切归 object-fit
+    // 管，overflow 对它们无效。这一行以前无条件渲染，在 <img> 上显示成「已裁剪」
+    // （UA 表给替换元素的 overflow 就是 clip），点一下毫无反应——isRelevant 里那段
+    // 判定一直写着，只是从没人调用。
+    if (isRelevant('overflow', this.#computed, el)) rows.push(this.#renderClip())
 
     // order 属于「这个元素在父容器里排第几」，重排功能会写它
     if (isRelevant('order', this.#computed, el)) rows.push(this.#renderField('order'))
@@ -1019,7 +1115,7 @@ export class PropsPanel extends HTMLElement {
 
       // 文字元素的主填充是字色。它不是 background 的一层——CSS 里 color 和
       // background 是两件独立的事——所以固定占一行，不参与下面的层列表。
-      if (this.target && isTextElement(this.target) && !isReplacedElement(this.target)) {
+      if (this.#showTextColor()) {
         rows.push(this.#renderTextColorRow())
         consumed.add('color')
       }
@@ -1027,6 +1123,13 @@ export class PropsPanel extends HTMLElement {
       rows.push(this.#renderFillLayers())
       consumed.add('background-color')
       consumed.add('background-image')
+    }
+
+    // Stroke 的颜色行照 Fill 的层行：右侧带隐藏和移除。CSS 的 border 只有一层，
+    // 所以「移除」是整组一起走（宽度 / 样式 / 颜色），不是删掉某一层。
+    if (group.id === 'stroke') {
+      rows.push(this.#renderStrokeColorRow())
+      consumed.add('border-color')
     }
 
     // Effects 整块换成效果列表。原来那三个直接写 CSS 原值的输入框去掉了：
@@ -1046,6 +1149,9 @@ export class PropsPanel extends HTMLElement {
     const props = group.props
       .filter(prop => !WIDGET_OWNED.has(prop))
       .filter(prop => !HIDDEN_FIELDS.has(prop))
+      // 字色跟排版属性一样需要一个「文字」作为作用对象：选中一个只装着子元素
+      // 的 div，它自己没有文字，面板上却给一格文字色——改的是谁的颜色说不清楚
+      .filter(prop => prop !== 'color' || this.#showTypography(this.target))
       .filter(prop => isRelevant(prop, this.#computed, this.target))
 
     for (const prop of props) {
@@ -1097,7 +1203,7 @@ export class PropsPanel extends HTMLElement {
   // 面板看到的完整层列表 = CSS 里现存的层 + 被眼睛关掉、暂存在内存里的层，
   // 后者按当初的下标插回原位
   #fillLayers() {
-    const all = parseFills(this.#computed)
+    const all = bindFills(this.target, parseFills(this.#computed))
     for (const { at, layer } of this.#hiddenLayers.get('fill') || [])
       all.splice(Math.min(at, all.length), 0, { ...layer, hidden: true })
     return all
@@ -1109,8 +1215,10 @@ export class PropsPanel extends HTMLElement {
   // rerender 默认为真，但从色盘里改值那条路必须传 false：重绘会把 vr-fill
   // 整个换掉，而弹层认的是旧那个实例，一重绘正在调的色盘就当场消失。
   #writeFillLayers(all, { rerender = true } = {}) {
+    // 整层存下来，不做字段白名单：漏掉 bound 的话眼睛一关一开，
+    // 这一层的变量绑定就没了（跟旁边 #writeEffects 的写法对齐）
     const hidden = []
-    all.forEach((l, at) => { if (l.hidden) hidden.push({ at, layer: { kind: l.kind, value: l.value } }) })
+    all.forEach((l, at) => { if (l.hidden) hidden.push({ at, layer: { ...l, hidden: undefined } }) })
     hidden.length ? this.#hiddenLayers.set('fill', hidden) : this.#hiddenLayers.delete('fill')
 
     this.#writeBackground(all, this.#effectList(), '填充')
@@ -1137,6 +1245,12 @@ export class PropsPanel extends HTMLElement {
     this.#batch(label, () => {
       for (const [prop, value] of Object.entries(css)) this.#applyToAll(prop, value)
     })
+
+    // 任何一次背景写入都让「关灯时存下的那份 inline 原文」过期：它描述的是关灯之前
+    // 的状态，再开时原样写回会把这中间对别的层做的改动（改色、删层）静默回滚掉。
+    // 关灯自己那一次也会走到这里，所以 #toggleLayer 是在 #writeFillLayers 返回之后
+    // 才把这份原文落下来的。
+    this.#layerRestore = null
   }
 
   // 面板看到的效果列表 = CSS 里读出来的 + 关掉后暂存的，按当初的下标插回
@@ -1170,16 +1284,31 @@ export class PropsPanel extends HTMLElement {
     const KEYS = ['background-color', 'background-image']
     const targets = this.#scope()
 
+    const snapshot = () => targets.map(el => ({
+      el,
+      props: Object.fromEntries(KEYS.map(p => [p, inlineOf(el, p)])),
+    }))
+
     if (all[i].hidden) {
       all[i] = { ...all[i], hidden: false }
       const saved = this.#layerRestore
       this.#layerRestore = null
       // 只有「关掉之后没动过别的」才能原样放回；中途改了别的层，
-      // 那份原文已经过期，只能按当前层列表重新写
-      if (saved && saved.index === i) {
+      // 那份原文已经过期，只能按当前层列表重新写。
+      // 光比下标不够：以前这条守卫只问 saved.index === i，从不问「这中间有没有人
+      // 动过 background」，于是关灯期间改的底色、删掉的层，一开眼睛就被原文冲回去
+      // （连改动记录里都一并消失）。拿关灯那一刻写入的结果当对照，不等就走重算。
+      if (saved && saved.index === i && !stale(saved.after, snapshot())) {
+        // 原文写回等于这一层已经回到 CSS 里了，侧存储那条得跟着清掉。
+        // 不清的话下一次 #fillLayers() 会把它当成「还藏着的层」再插一次，
+        // 列表里凭空多出一行重复的层。
+        const rest = (this.#hiddenLayers.get('fill') || []).filter(h => h.at !== i)
+        rest.length ? this.#hiddenLayers.set('fill', rest) : this.#hiddenLayers.delete('fill')
+
         this.#batch('显示填充层', () => {
           saved.entries.forEach(({ el, props }) =>
-            Object.entries(props).forEach(([p, v]) => ChangeStore.applyProp(el, p, v)))
+            Object.entries(props).forEach(([p, { value, important }]) =>
+              ChangeStore.applyProp(el, p, value, { important })))
         })
         this.render()
         this.dispatchEvent(new CustomEvent('vr-change', { bubbles: true, composed: true }))
@@ -1188,15 +1317,15 @@ export class PropsPanel extends HTMLElement {
       return this.#writeFillLayers(all)
     }
 
-    this.#layerRestore = {
-      index: i,
-      entries: targets.map(el => ({
-        el,
-        props: Object.fromEntries(KEYS.map(p => [p, el.style.getPropertyValue(p)])),
-      })),
-    }
+    // 存原文要连 priority 一起存：样式表里带 important 的元素上，只写回值
+    // 压不过样式表，一开一关就还原不回去了
+    const entries = snapshot()
     all[i] = { ...all[i], hidden: true }
     this.#writeFillLayers(all)
+    // 写完之后才落这份记录：#writeBackground 会清掉 #layerRestore（那正是「别的写入
+    // 让原文过期」的机制），关灯这一次得排在它后面。after 是关灯写入的结果，
+    // 再开时拿它跟当时的 inline 比一比就知道中途有没有人动过。
+    this.#layerRestore = { index: i, entries, after: snapshot() }
   }
 
   // 文字色跟填充层长一样、也一样能关：对文本元素来说字色就是它的主填充，
@@ -1230,10 +1359,11 @@ export class PropsPanel extends HTMLElement {
       const saved = this.#textColorRestore
       this.#textColorRestore = null
       this.#batch('显示文字', () => {
-        saved.forEach(({ el, color }) => ChangeStore.applyProp(el, 'color', color))
+        saved.forEach(({ el, color }) =>
+          ChangeStore.applyProp(el, 'color', color.value, { important: color.important }))
       })
     } else {
-      this.#textColorRestore = targets.map(el => ({ el, color: el.style.getPropertyValue('color') }))
+      this.#textColorRestore = targets.map(el => ({ el, color: inlineOf(el, 'color') }))
       this.#batch('隐藏文字', () => {
         targets.forEach(el => ChangeStore.applyProp(el, 'color', 'transparent'))
       })
@@ -1364,6 +1494,10 @@ export class PropsPanel extends HTMLElement {
         if (e.button !== 0) return
         // 按在眼睛或减号上是点按钮，不是拖行
         if (e.target.closest?.('.icon-btn')) return
+        // 绑定层的 chip 在 vr-fill 的 shadow root 里，e.target 会被 retarget 成
+        // 宿主，closest 看不到它——按在 chip 上是要开弹层，手抖超过 DRAG_SLOP
+        // 不该变成重排。composedPath 才穿得过 shadow 边界。
+        if (e.composedPath?.().some(n => n?.classList?.contains?.('var-chip'))) return
 
         const from = Number(row.getAttribute(attr))
         const startY = e.clientY
@@ -1411,26 +1545,120 @@ export class PropsPanel extends HTMLElement {
 
   // 这一格是不是绑在 CSS 变量上。
   //
-  // 只能读 inline 原文：getComputedStyle 会把 var() 解析成最终颜色，从它身上
-  // 看不出这里绑着变量——面板之前显示成一个普通色值，就是因为读的是 computed。
+  // getComputedStyle 会把 var() 解析成最终颜色，从它身上看不出绑定，所以要去
+  // 读声明原文。原文不止 inline 一处：绝大多数页面的变量引用写在样式表里
+  // （.card { background: var(--surface) }），只看 inline 会把它们全当成死色值。
+  // 由 cascade.js 在 inline 和命中的样式表规则里挑出层叠赢家，这里只管判断
+  // 赢家是不是 var()。
+  //
+  // 字色会继承：<p> 自己没写 color，字色来自 .card { color: var(--ink) }。
+  // Figma 没有继承这回事，但用户看到的就是「这段字的颜色来自那个变量」，
+  // 所以顺着祖先往上找到第一条声明为止。
   #varBinding(prop) {
     const el = this.target
     if (!el) return null
-    const raw = (el.style.getPropertyValue(prop) || '').trim()
-    const m = raw.match(/^var\(\s*(--[\w-]+)\s*(?:,([\s\S]*))?\)$/)
-    return m ? { name: m[1], fallback: (m[2] || '').trim(), raw } : null
+
+    for (let node = el, depth = 0; node; node = node.parentElement, depth++) {
+      const decl = winningDeclaration(node, prop)
+      if (decl) {
+        // 显式 inherit 只是把问题往上推
+        if (decl.value === 'inherit' && INHERITED.has(prop)) continue
+        return this.#bindingFrom(el, node, decl, prop, depth)
+      }
+      if (!INHERITED.has(prop)) return null
+    }
+    return null
+  }
+
+  // 赢家声明 → 绑定信息，不是 var() 或者对不上就 null。
+  //
+  // 长手（background-color: var(--x)）要整条值就是那个 var()；简写
+  // （border: 1px solid var(--line)）允许它只是其中一段，但只能有一段，
+  // 而且解析出来得是颜色——border: var(--w) solid red 里的 var 不算。
+  //
+  // 最后拿解析出的颜色跟 computed 核对：层叠判定是近似的（@layer 的
+  // important 反转、@container 条件这些没做），核对不过就当没绑定——
+  // 宁可显示色值，也不显示一个错的变量名。
+  #bindingFrom(el, node, decl, prop, depth) {
+    const token = decl.prop === prop ? wholeVar(decl.value) : (() => {
+      const tokens = varTokens(decl.value)
+      return tokens.length === 1 ? tokens[0] : null
+    })()
+    if (!token) return null
+
+    const cs = getComputedStyle(el)
+    const resolved = cs.getPropertyValue(token.name).trim() || token.fallback
+    if (!parseColor(resolved).valid) return null
+    if (!sameColor(resolved, cs.getPropertyValue(prop))) return null
+
+    const where = decl.source === 'inline'
+      ? `${decl.prop}: ${decl.value}`
+      : `${decl.selector} { ${decl.prop}: ${decl.value} }`
+    return {
+      name: token.name,
+      fallback: token.fallback,
+      raw: depth ? `继承自 ${describeNode(node)}：${where}` : where,
+      source: decl.source,
+      inherited: depth > 0,
+    }
   }
 
   // 绑定态的行：一整块 chip（圆点 + 变量名），不再分色块 / 色值 / 不透明度三段。
-  // 绑了变量，色值就不该在这里改——要改是去改那个变量。
-  #renderBoundRow(prop, binding, tail) {
-    const shown = this.#computed[prop] || 'transparent'
+  // 绑了变量，色值就不该在这里改——要改是去改那个变量。点 chip 重开变量菜单换绑。
+  // dot / unlinkAttr 参数化：填充层的圆点取的是该层的解析色（不是整条属性的
+  // computed），unlink 也要落到那一层而不是把整条 background-image 拍平。
+  // 描边的颜色行。隐藏态下 computed 已经是透明色、inline 也不再是 var()，
+  // 行里显示的颜色和 chip 要从隐藏时记下的那份来，不然一关灯格子就变成
+  // 一块透明色、绑定的 chip 也没了，看着像设置被清掉。
+  #renderStrokeColorRow() {
+    const off = this.#hiddenSections.has('stroke')
+    const shown = off ? this.#strokeShown : null
+    const tail = `<button class="icon-btn layer-eye" data-stroke-eye
+        title="${off ? '显示描边' : '隐藏描边'}">${off ? ICON.eyeOff : ICON.eye}</button>
+      <button class="icon-btn layer-del" data-stroke-del title="移除描边">${ICON.minus}</button>`
+
+    const bound = off ? shown?.bound : this.#varBinding('border-color')
+    const color = off ? (shown?.color || 'transparent') : this.#computed['border-color']
+    const body = bound
+      ? this.#renderBoundRow('border-color', bound, tail, { dot: color })
+          .replace('class="layer-row bound"', `class="layer-row bound${off ? ' off' : ''}"`)
+      : `<div class="layer-row${off ? ' off' : ''}">
+           <vr-color data-prop="border-color" value="${esc(color)}"></vr-color>
+           ${tail}
+         </div>`
+
+    return `<div class="field">
+      <label class="name" data-prop="border-color">颜色</label>
+      ${body}
+    </div>`
+  }
+
+  // 移除描边：整组一起走。style 写 none 让它真的消失，width 归零让导出的
+  // 提示词一眼看出「这条边没了」，inline 的 border-color 清掉——再点加号是
+  // 一条新描边，不该带着旧颜色。一个 batch，⌘Z 一次整组回来。
+  #removeStroke() {
+    const targets = this.#scope()
+    if (!targets.length) return
+    this.#hiddenSections.delete('stroke')
+    this.#batch('移除描边', () => {
+      this.#applyToAll('border-style', 'none')
+      this.#applyToAll('border-width', '0')
+      targets.forEach(el => ChangeStore.applyProp(el, 'border-color', ''))
+    })
+    this.render()
+    this.#toast('已移除描边')
+    this.dispatchEvent(new CustomEvent('vr-change', { bubbles: true, composed: true }))
+  }
+
+  #renderBoundRow(prop, binding, tail, { dot, unlinkAttr } = {}) {
+    const shown = dot || this.#computed[prop] || 'transparent'
     return `<div class="layer-row bound">
-      <span class="var-chip" title="${esc(binding.raw)}">
+      <span class="var-chip" role="button" data-var-chip="${prop}"
+        title="${esc(binding.raw)}（点击换绑）">
         <span class="var-dot" style="background:${esc(shown)}"></span>
         <span class="var-name">${esc(binding.name)}</span>
       </span>
-      <button class="icon-btn unlink" data-unlink="${prop}"
+      <button class="icon-btn unlink" ${unlinkAttr || `data-unlink="${prop}"`}
         title="断开绑定（保留当前颜色）">${ICON.unlink}</button>
       ${tail}
     </div>`
@@ -1461,21 +1689,37 @@ export class PropsPanel extends HTMLElement {
           title="${l.hidden ? '显示这一层' : '隐藏这一层'}">${l.hidden ? ICON.eyeOff : ICON.eye}</button>
         <button class="icon-btn layer-del" data-layer-del="${i}" title="删掉这一层">${ICON.minus}</button>`
 
-      // 底层纯色写在 background-color 上，只有它绑得了变量。background-image
-      // 里那几层也能写 var()，但层解析认不出它属于哪一层。
-      const bound = l.kind === 'solid' && i === layers.length - 1
-        ? this.#varBinding('background-color') : null
-      if (bound) return this.#renderBoundRow('background-color', bound, tail)
+      // 绑定态的触发器就是这一层的 vr-fill（带 bound 时它自己渲染成 chip），
+      // 点它开的还是填充弹层，只不过停在变量页——行里没有 vr-fill 实例的话，
+      // chip 的点击无处可去（填充弹层是实例方法，模块外没有入口）。
+      const bound = l.bound ? ` bound="${esc(l.bound)}"` : ''
+      const unlink = l.bound
+        ? `<button class="icon-btn unlink" data-unlink-layer="${i}"
+             title="断开绑定（保留当前颜色）">${ICON.unlink}</button>`
+        : ''
 
       // 每层的色值和不透明度由 vr-fill 自己渲染：纯色态给两个能敲的框，
       // 渐变和图片退回只读摘要——它们没有单一色值，也没有单层不透明度可填
-      return `<div class="layer-row${l.hidden ? ' off' : ''}" data-layer="${i}" data-fill-row="${i}">
-        <vr-fill data-layer="${i}"
+      return `<div class="layer-row${l.hidden ? ' off' : ''}${l.bound ? ' bound' : ''}"
+        data-layer="${i}" data-fill-row="${i}">
+        <vr-fill data-layer="${i}"${bound}
           color="${esc(l.kind === 'solid' ? l.value : 'transparent')}"
           image="${esc(l.kind === 'solid' ? 'none' : l.value)}"></vr-fill>
+        ${unlink}
         ${tail}
       </div>`
     }).join('')}</div>`
+  }
+
+  // 断开某一层的绑定：只清这一层的 bound 再整体写回。
+  // 不能走 #unlink('background-image')——那会把整条属性（所有层）拍平成
+  // 解析后的一长串，别的层跟着遭殃。
+  #unlinkLayer(i) {
+    const all = this.#fillLayers()
+    if (!all[i]?.bound) return
+    all[i] = { ...all[i], bound: null }
+    this.#batch('断开变量绑定', () => this.#writeFillLayers(all))
+    this.#toast(`已断开 ${all.length > 1 ? `第 ${i + 1} 层` : '填充'}的变量绑定`)
   }
 
   // Figma 把新层加在最上面，CSS 的 background-image 第一层也画在最上面，
@@ -1502,46 +1746,97 @@ export class PropsPanel extends HTMLElement {
     this.dispatchEvent(new CustomEvent('vr-change', { bubbles: true, composed: true }))
   }
 
-  // 「绑定变量」= 把这一格的值写成 var(--x)。
+  // 分区标题栏的「绑定变量」：先定绑到哪条属性上，再开那一处的变量页。
   //
-  // 诚实的边界：面板读的是 computed，而 computed 会把 var() 解析成最终值，
-  // 所以写完之后面板上显示的是解析后的颜色，看不出它绑着变量。真正留住这层
-  // 关系的是 inline style 和改动记录——它们存的就是 var(--x) 原文，导出的
-  // 提示词里也是 var(--x)，AI 拿到的是变量名而不是一个死色值。
-  #varMenu(groupId) {
+  // 跟分区首行显示的是什么保持一致：文字元素的主填充是字色（见 #defaultRows
+  // 的 fill 特判），绑 background-color 就绑错了地方——用户看着「文字色」
+  // 那一行点的变量，结果染的是背景。
+  #varEntry(groupId) {
     const anchor = this.#shadow.querySelector(`.var-btn[data-var="${groupId}"]`)
     if (!anchor) return
 
-    // 绑到哪条属性上，跟分区首行显示的是什么保持一致：文字元素的主填充是字色
-    // （见 #defaultRows 的 fill 特判），绑 background-color 就绑错了地方——
-    // 用户看着「文字色」那一行点的变量，结果染的是背景。
-    const prop = groupId === 'stroke' ? 'border-color'
-      : (this.target && isTextElement(this.target) && !isReplacedElement(this.target)) ? 'color'
-      : 'background-color'
-    const root = getComputedStyle(document.documentElement)
-    const want = KIND_FOR_TYPE[CONTROLS[prop]?.type] || null
-    const all = cssVariables().map(name => ({ name, value: (root.getPropertyValue(name) || '').trim() }))
-    const names = want ? all.filter(v => varKind(v.value) === want) : all
-
-    if (!names.length) {
-      const why = all.length
-        ? `页面上没有${want === 'color' ? '颜色' : ''}变量（另有 ${all.length} 个其它类型的）`
-        : '页面上没有定义 CSS 变量'
-      return openMenu(anchor, [{ id: '', label: why, disabled: true }], () => {}, { align: 'right' })
+    if (groupId === 'stroke') {
+      // 空状态下 border-color 绑了也看不见（border-width: 0 / style: none），
+      // 先把描边立起来再绑，否则点完什么都没发生
+      if (this.#canAdd('stroke')) {
+        this.#addLayer('stroke')
+        const fresh = this.#shadow.querySelector('.var-btn[data-var="stroke"]')
+        if (!fresh) return
+        return this.#openColorVariables('border-color', fresh, 'right')
+      }
+      return this.#openColorVariables('border-color', anchor, 'right')
     }
 
-    const current = (this.target?.style.getPropertyValue(prop) || '').trim()
+    if (this.#showTextColor()) return this.#openColorVariables('color', anchor, 'right')
 
-    openMenu(anchor, names.map(({ name, value }) => ({
-      id: name,
-      label: name,
-      hint: value.slice(0, 18),
-      checked: current === `var(${name})`,
-    })), name => {
-      this.#commit(prop, `var(${name})`, { coerce: false })
-      this.render()
-      this.#toast(`${prop} → var(${name})`)
-    }, { align: 'right' })
+    // 容器：绑的是垫底那一层填充。一层都没有时先加一层默认纯色——
+    // 没有层就没有那一行，也就没有能承载 chip 的地方
+    if (!this.#fillLayers().length) this.#addLayer('fill')
+    const fills = this.#shadow.querySelectorAll('section[data-group="fill"] vr-fill[data-layer]')
+    fills[fills.length - 1]?.openVariables()
+  }
+
+  // 变量列表：页面上声明过的全部自定义属性，按选中元素解析取值，只留颜色。
+  //
+  // 值从 this.target 身上读而不是 :root——同一个变量可能在某个容器里被重新
+  // 赋值，色圈要显示的是它在这个元素上实际的颜色。
+  //
+  // 结果缓存到本次 render 结束（render 开头清空）：一次渲染里每个颜色控件都会
+  // 问一遍，每次都铺一遍全部样式表太浪费。注意 cascade.js 自己还有 50ms 的
+  // flatten 缓存，两层叠加后在 DevTools 里改样式表最长要等 50ms + 一次 render
+  // 才反映——那不是 bug。
+  #colorVariables() {
+    if (this.#varCache) return this.#varCache
+    const el = this.target
+    if (!el) return { variables: [], others: 0 }
+
+    // 目标在 shadow root 里时，它自己那份样式表也算数
+    const roots = [document]
+    const root = el.getRootNode()
+    if (root instanceof ShadowRoot) roots.push(root)
+
+    const cs = getComputedStyle(el)
+    const all = [...new Set(roots.flatMap(r => declaredVariables(r)))]
+      .map(name => ({ name, value: (cs.getPropertyValue(name) || '').trim() }))
+      .filter(v => v.value)
+
+    // 挑颜色的时候把字体栈和 12px 也列出来毫无意义——点了也 apply 不上，
+    // 只是让人在几十项里多翻几屏
+    const variables = all.filter(v => varKind(v.value) === 'color')
+      .sort((a, b) => a.name.localeCompare(b.name))
+
+    this.#varCache = { variables, others: all.length - variables.length }
+    return this.#varCache
+  }
+
+  // 打开某条颜色属性的弹层并停在变量页。chip 和标题栏按钮都走这里。
+  #openColorVariables(prop, anchor, align) {
+    const { variables, others } = this.#colorVariables()
+    openColorPopover(anchor, {
+      value: this.#computed[prop] || '',
+      variables, others,
+      bound: this.#varBinding(prop)?.name || null,
+      page: 'variable',
+      align,
+      onColor: css => this.#commit(prop, css, { coerce: false }),
+      onVariable: name => this.#bindVariable(prop, name),
+    })
+  }
+
+  // 「绑定变量」= 把这一格的值写成 var(--x)。写的是 inline，所以它压过样式表
+  // 里原有的引用；改动记录和导出的提示词里存的都是 var(--x) 原文，AI 拿到的
+  // 是变量名而不是一个死色值。
+  //
+  // 顺序不能变：关弹层（renderVariableList 已经关了）→ 写入 → render → toast。
+  // #commit 对颜色属性不触发重绘（RERENDER_ON 只有 position / display），
+  // 不显式 render 的话格子不会换成 chip。
+  //
+  // 多选时写的是 #scope() 的全部元素，chip 只反映 this.target。
+  #bindVariable(prop, name) {
+    if (!name || this.#varBinding(prop)?.name === name) return
+    this.#commit(prop, `var(${name})`, { coerce: false })
+    this.render()
+    this.#toast(`${prop} → var(${name})`)
   }
 
   #renderImageFill() {
@@ -1575,7 +1870,9 @@ export class PropsPanel extends HTMLElement {
     const el = this.target
     if (!el) return
 
-    const { assets, errors } = await pickImages()
+    // base 是这一会话已经入库的素材总量：20MB 的上限是「一次会话累计」，
+    // 不带基数的话每一批都从 0 起算，上限等于形同虚设
+    const { assets, errors } = await pickImages({ base: totalBytes(ChangeStore.allAssets()) })
     if (errors.length) this.toast(errors[0], 'error')
 
     const asset = assets[0]
@@ -1835,6 +2132,7 @@ export class PropsPanel extends HTMLElement {
           return `<div class="control">
             ${prefix ? `<span class="prefix${PREFIX_ICON[prop] ? ' is-icon' : ''}"${dragPrefix && spec.type === 'num' ? ` data-drag data-prop="${prop}"` : ''}>${PREFIX_ICON[prop] || prefix}</span>` : ''}
             <input type="text" data-prop="${prop}" data-num value="${esc(value)}">
+            ${spec.unit ? `<span class="suffix">${spec.unit}</span>` : ''}
           </div>`
       }
     })()
@@ -1943,15 +2241,21 @@ export class PropsPanel extends HTMLElement {
     const saved = this.#hiddenSections.get(id)
     if (saved) {
       saved.forEach(({ el, props }) =>
-        Object.entries(props).forEach(([p, v]) => ChangeStore.applyProp(el, p, v)))
+        Object.entries(props).forEach(([p, { value, important }]) =>
+          ChangeStore.applyProp(el, p, value, { important })))
       this.#hiddenSections.delete(id)
     } else {
+      // 描边行在隐藏态还要显示原来的颜色 / chip，关灯前先记下
+      if (id === 'stroke') this.#strokeShown = {
+        bound: this.#varBinding('border-color'),
+        color: this.#computed['border-color'],
+      }
       // 每个元素单独求一次 map：联动选中里可能既有文字元素又有容器，
       // 该关字色的关字色，该只关背景的只关背景
       this.#hiddenSections.set(id, targets.map(el => ({
         el,
         props: Object.fromEntries(
-          Object.keys(hideMapFor(id, el)).map(p => [p, el.style.getPropertyValue(p)])),
+          Object.keys(hideMapFor(id, el)).map(p => [p, inlineOf(el, p)])),
       })))
       targets.forEach(el =>
         Object.entries(hideMapFor(id, el)).forEach(([p, v]) => ChangeStore.applyProp(el, p, v)))
@@ -1991,6 +2295,8 @@ export class PropsPanel extends HTMLElement {
     // 标题栏上的按钮不应顺带把分区折叠掉
     on('h3 .acts button', 'click', e => e.stopPropagation())
     on('[data-eye]', 'click', e => this.#toggleSection(e.currentTarget.dataset.eye))
+    on('[data-stroke-eye]', 'click', e => { e.stopPropagation(); this.#toggleSection('stroke') })
+    on('[data-stroke-del]', 'click', e => { e.stopPropagation(); this.#removeStroke() })
     on('[data-undo]', 'click', e => this.#resetGroup(e.currentTarget.dataset.undo))
     on('[data-align]', 'click', e => this.#align(e.currentTarget.dataset.align))
     on('.swap-image', 'click', e => { e.stopPropagation(); this.#swapImage() })
@@ -2193,6 +2499,14 @@ export class PropsPanel extends HTMLElement {
       const el = e.currentTarget
       const prop = el.dataset.prop
 
+      // 四边联动开着时，这一条交给下面 input[data-side] 的联动 batch 去提交。
+      // 两个处理器都挂在同一个 input 上，按注册顺序都会跑：这里先单独 commit
+      // 被编辑的那一边，联动那边再把四边包成一个 batch，同一次编辑落成两条历史，
+      // 一次 ⌘Z 只退回其中一半，用户看到一个非对称的中间态。
+      if (el.hasAttribute('data-side') &&
+          shadow.querySelector(`.lock[data-lock="${prop.replace(/-(top|right|bottom|left)$/, '')}"]`)
+            ?.hasAttribute('data-on')) return
+
       // 这个字段在聚焦期间被外部改动覆盖过（撤销、重置、导入）。
       // 用户此后没再动过它，就采纳外部结果；动过才算一次真的编辑。
       const pending = el.dataset.vrPending
@@ -2250,7 +2564,8 @@ export class PropsPanel extends HTMLElement {
     // 填充弹层里的「从电脑上传」：控件只发意图，读文件和记素材在这边
     on('vr-fill[data-layer]', 'vr-fill-pick-image', async e => {
       const i = Number(e.currentTarget.dataset.layer)
-      const { assets, errors } = await pickImages()
+      // 同 #swapImage：累计上限要带上已入库的量当基数
+      const { assets, errors } = await pickImages({ base: totalBytes(ChangeStore.allAssets()) })
       if (errors.length) this.toast(errors[0], 'error')
       const asset = assets[0]
       if (!asset) return
@@ -2267,10 +2582,47 @@ export class PropsPanel extends HTMLElement {
       this.#unlink(e.currentTarget.dataset.unlink)
     })
 
+    // 填充层的 unlink 只清这一层的 bound，不能走 #unlink——
+    // 那会把整条 background-image 拍平，别的层跟着遭殃
+    on('[data-unlink-layer]', 'click', e => {
+      e.stopPropagation()
+      this.#unlinkLayer(Number(e.currentTarget.dataset.unlinkLayer))
+    })
+
     on('[data-var]', 'click', e => {
       e.stopPropagation()
-      this.#varMenu(e.currentTarget.dataset.var)
+      this.#varEntry(e.currentTarget.dataset.var)
     })
+
+    // 点已绑定的 chip：重开变量页换绑。弹层贴 chip 左缘——chip 在行的最左边
+    on('[data-var-chip]', 'click', e => {
+      e.stopPropagation()
+      this.#openColorVariables(e.currentTarget.dataset.varChip, e.currentTarget, 'left')
+    })
+
+    // 变量页选中一项：颜色控件写 var()，填充层记在自己那一层上
+    on('vr-color[data-prop]', 'vr-color-variable', e =>
+      this.#bindVariable(e.currentTarget.dataset.prop, e.detail.name))
+
+    on('vr-fill[data-layer]', 'vr-fill-variable', e => {
+      const i = Number(e.currentTarget.dataset.layer)
+      const all = this.#fillLayers()
+      if (!all[i] || all[i].bound === e.detail.name) return
+      all[i] = { ...all[i], bound: e.detail.name }
+      this.#writeFillLayers(all)
+      this.#toast(`填充 → var(${e.detail.name})`)
+    })
+
+    // 变量数据打开时才问：几十项的列表走属性会被序列化进每一个控件，
+    // 还会触发 attributeChangedCallback 把触发行整块重建。
+    // bound 也放在闭包里现算——render 之后每个控件都算一次太浪费。
+    for (const c of shadow.querySelectorAll('vr-color[data-prop]'))
+      c.variablesProvider = () => ({
+        ...this.#colorVariables(),
+        bound: this.#varBinding(c.dataset.prop)?.name || null,
+      })
+    for (const f of shadow.querySelectorAll('vr-fill[data-layer]'))
+      f.variablesProvider = () => this.#colorVariables()
 
     on('[data-add]', 'click', e => {
       e.stopPropagation()
@@ -2340,10 +2692,14 @@ export class PropsPanel extends HTMLElement {
       const base = btn.dataset.lock
       const first = shadow.querySelector(`input[data-prop="${base}-top"]`)
       const value = coerceLength(first?.value || '0')
-      ;['top', 'right', 'bottom', 'left'].forEach(side => {
-        const input = shadow.querySelector(`input[data-prop="${base}-${side}"]`)
-        if (input) input.value = value
-        this.#commit(`${base}-${side}`, value)
+      // 开锁是一个动作：四条声明包成一个 batch，否则把左右从 20px 同步到 10px
+      // 要按两次 ⌘Z 才退得回去
+      this.#batch(SIDE_SETS[base]?.label || base, () => {
+        ;['top', 'right', 'bottom', 'left'].forEach(side => {
+          const input = shadow.querySelector(`input[data-prop="${base}-${side}"]`)
+          if (input) input.value = value
+          this.#commit(`${base}-${side}`, value)
+        })
       })
     })
 
@@ -2366,25 +2722,36 @@ export class PropsPanel extends HTMLElement {
     // Figma 式：横向拖动标签（或 W/H 前缀）调数值
     on('[data-drag]', 'pointerdown', e => {
       const handle = e.currentTarget
-      const prop = handle.dataset.prop
-      // 两段式间距的标签管的是一对属性，输入框按 data-pair 找
-      const input = prop
-        ? shadow.querySelector(`input[data-prop="${prop}"]`)
-        : shadow.querySelector(`input[data-pair="${handle.dataset.pair}"]`)
-      if (!input) return
+      // 两段式间距的手柄管的是一对属性（上下 / 左右），只挂了 data-pair、没有 data-prop。
+      // 以前这里直接拿 handle.dataset.prop 当属性名，undefined 一路带到
+      // applyProp(el, undefined, '30px') 被 CSSOM 丢弃，而输入框照常刷成新值——
+      // 界面在说谎。这里把一对属性解出来：第一条驱动步长 / 单位 / 显示（两边同值，
+      // 取哪条都一样），提交时两条一起写。
+      const pair = handle.dataset.prop ? '' : (handle.dataset.pair || '')
+      const pairProps = pair ? pairPropsOf(pair) : null
+      const prop = handle.dataset.prop || pairProps?.[0]
+      const input = handle.dataset.prop
+        ? shadow.querySelector(`input[data-prop="${handle.dataset.prop}"]`)
+        : shadow.querySelector(`input[data-pair="${pair}"]`)
+      if (!input || !prop) return
 
       e.preventDefault()
       handle.setPointerCapture(e.pointerId)
       const startX = e.clientX
       const origin = input.value
       const unitStep = stepSize(prop, false)
+      let last = null
 
       const move = ev => {
         const steps = Math.round((ev.clientX - startX) / 2)
         const next = stepValue(prop, origin, steps * unitStep, this.#computed[prop])
-        if (next === null) return
+        if (next === null || next === last) return
+        last = next
         input.value = displayValue(prop, next)
-        this.#commit(prop, next, { coerce: false })
+        if (!pairProps) return this.#commit(prop, next, { coerce: false })
+        // 一步一个 batch：⌘Z 不会把一对属性撤成一半
+        this.#batch(SIDE_SETS[pair.split(':')[0]].label, () =>
+          pairProps.forEach(p => this.#commit(p, next, { coerce: false })))
       }
       const up = ev => {
         handle.releasePointerCapture(ev.pointerId)
@@ -2401,13 +2768,19 @@ export class PropsPanel extends HTMLElement {
       e.preventDefault()
 
       const input = e.currentTarget
-      const prop = input.dataset.prop
+      // 两段式间距的输入框和它的前缀手柄一样只有 data-pair，方向键这条路
+      // 同样得把那一对属性解出来，否则按一下也是往 undefined 上写
+      const pairProps = input.dataset.prop ? null : pairPropsOf(input.dataset.pair)
+      const prop = input.dataset.prop || pairProps?.[0]
+      if (!prop) return
       const delta = stepSize(prop, e.shiftKey) * (e.key === 'ArrowUp' ? 1 : -1)
       const next = stepValue(prop, input.value, delta, this.#computed[prop])
 
       if (next === null) return   // normal / auto 等无法步进的值
       input.value = displayValue(prop, next)
-      this.#commit(prop, next, { coerce: false })
+      if (!pairProps) return this.#commit(prop, next, { coerce: false })
+      this.#batch(SIDE_SETS[input.dataset.pair.split(':')[0]].label, () =>
+        pairProps.forEach(p => this.#commit(p, next, { coerce: false })))
     })
 
     this.#makeDraggable(shadow.querySelector('header'))

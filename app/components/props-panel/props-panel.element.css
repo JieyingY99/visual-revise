@@ -243,7 +243,8 @@ h3:hover .acts .var-btn { opacity: 1; }
 .layer-row > .icon-btn { flex: none; }
 /* 关掉的层留在列表里但压暗：它随时能开回来，删掉才是真的没了 */
 .layer-row.off > vr-fill,
-.layer-row.off > vr-color { opacity: .4; }
+.layer-row.off > vr-color,
+.layer-row.off > .var-chip { opacity: .4; }
 
 /* 层列表分区空着时只剩标题一行，下面那块 padding 会显得莫名其妙 */
 section[data-layered] .rows:empty { display: none; }
@@ -256,9 +257,9 @@ section[data-layered] .rows:empty { display: none; }
   display: flex; align-items: center; gap: 8px;
   height: 32px; padding: 0 10px; box-sizing: border-box;
   background: var(--vr-field); border-radius: 5px;
-  cursor: default;
+  cursor: pointer;   /* 点了重开变量菜单换绑 */
 }
-.var-chip:hover { background: var(--vr-field-hi); }
+.var-chip:hover, .var-chip[data-menu-open] { background: var(--vr-field-hi); }
 .var-dot {
   flex: none; width: 16px; height: 16px; border-radius: 50%;
   border: 1px solid rgb(255 255 255 / .18);
@@ -359,6 +360,12 @@ input {
   outline: none;
 }
 .control:has(.prefix) input { padding-left: 24px; }
+/* 单位后缀（不透明度的 %）：跟色值框里那个 % 同一副面孔，不抢焦点 */
+.suffix {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  font-size: 11px; color: var(--vr-label); pointer-events: none;
+}
+.control:has(.suffix) input { padding-right: 26px; }
 input:hover { background: var(--vr-field-hi); }
 input:focus { border-color: var(--vr-accent); background: var(--vr-field); }
 input::placeholder { color: var(--vr-mute); }

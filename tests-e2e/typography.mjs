@@ -46,12 +46,14 @@ ok(!verdicts.inputBare, 'checkbox 不算（它没有文字可排版）')
 ok(!verdicts.img, '<img> 不算（alt 不是排版对象）')
 ok(!verdicts.nullish, 'null 安全返回 false')
 
-// ── 默认折叠 ────────────────────────────────────────────────
+// ── 非文字元素：整个分区不出现 ──────────────────────────────
+// 折叠不够：那些属性确实会继承给子元素，但用户改的是子元素的样子，
+// 面板却说这是这个 div 的属性。Figma 里容器图层根本没有 Typography。
 await page.locator('.swatch').first().click({ position: { x: 4, y: 4 } })
 await page.waitForTimeout(400)
-ok(await isFolded('typography'),
-   '选中非文字元素时 Typography 默认折叠（不占视觉空间）')
-ok(!await isFolded('appearance'), '其它分区不受影响，仍是展开的')
+ok(await section('typography').count() === 0,
+   '选中非文字元素时整个 Typography 分区不渲染')
+ok(await section('appearance').count() === 1, '其它分区不受影响，仍在')
 
 // ── 文字元素自动展开 ────────────────────────────────────────
 await page.locator('.card-title').first().click({ position: { x: 4, y: 4 } })

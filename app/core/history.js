@@ -40,8 +40,10 @@ export const createHistory = ({ apply, onChange } = {}) => {
 
     const last = past[past.length - 1]
     if (ops.length === 1 && mergeable(last, ops[0])) {
-      // 合并：起点保留最早那次的 before，终点更新为最新的 after
+      // 合并：起点保留最早那次的 before，终点更新为最新的 after。
+      // priority 也要跟着走，否则合并后的这条会一直粘着第一次写入时的判定
       last.ops[0].after = ops[0].after
+      last.ops[0].afterImportant = ops[0].afterImportant
       last.time = Date.now()
     } else {
       past.push({ label, ops, time: Date.now() })

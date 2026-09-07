@@ -105,13 +105,15 @@ export class ChangeList extends HTMLElement {
     if (!this.#built) return
 
     const shadow = this.#shadow
-    const { edits, comments, removals, moves } = ChangeStore.read()
+    // inserts 是后加的第五种记录（分组 / 粘贴造出来的新元素）。给它一个 [] 默认值，
+    // 这样在还没有这种记录的版本上也不会整块渲染不出来
+    const { edits, comments, removals, moves, inserts = [] } = ChangeStore.read()
     const stats = ChangeStore.stats()
 
     // 「配置」这一栏原本漏算了换图与删除，数字对不上列表里的条数
     const label = {
       all:     `全部 ${stats.total}`,
-      style:   `配置 ${stats.props + stats.texts + stats.attrs + stats.removals + stats.moves}`,
+      style:   `配置 ${stats.props + stats.texts + stats.attrs + stats.removals + stats.moves + (stats.inserts || 0)}`,
       comment: `评论 ${stats.comments}`,
     }
     shadow.querySelectorAll('.tabs button').forEach(btn => {
@@ -128,7 +130,10 @@ export class ChangeList extends HTMLElement {
 
     const items = [
       ...(showStyles ? edits.map(e => this.#renderEdit(e)) : []),
-      // 移动和删除都是结构改动，归在「配置」这一栏
+      // 新增、移动和删除都是结构改动，归在「配置」这一栏。
+      // 新增排在移动前面：分组是「先造 wrapper 再把子元素搬进去」，
+      // 按这个顺序读下来才讲得通
+      ...(showStyles ? inserts.map(i => this.#renderInsert(i)) : []),
       ...(showStyles ? moves.map(m => this.#renderMove(m)) : []),
       ...(showStyles ? removals.map(r => this.#renderRemoval(r)) : []),
       ...(showComments ? comments.map(c => this.#renderComment(c)) : []),
@@ -202,6 +207,34 @@ export class ChangeList extends HTMLElement {
     </div>`
   }
 
+  // 分组 / 粘贴造出来的新元素。它在原页面里根本不存在，所以既没有「改了什么」
+  // 可列，也不该显示成「已删除」——用户要认的是「加了个什么」和「加在哪儿」。
+  #renderInsert(r) {
+    const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
+
+    // 位置照 move 那条的写法说人话：有 nextAnchors 就是「插在谁前面」，
+    // atEnd 就是「放在容器末尾」
+    const parent = r.parentAnchors ? shortSelector(r.parentAnchors) : '（容器已失联）'
+    const where = r.atEnd || !r.nextAnchors
+      ? `放在 ${esc(parent)} 末尾`
+      : `插在 ${esc(parent)} 里的 ${esc(shortSelector(r.nextAnchors))} 之前`
+
+    // outerHTML 可以是整棵子树，列表里只留开头一截够认出是什么
+    const html = String(r.html ?? '').replace(/\s+/g, ' ').trim()
+    const brief = html.length > 60 ? html.slice(0, 60) + '…' : html
+
+    return `<div class="item" data-id="${esc(r.id)}" data-kind="insert"${r.orphaned ? ' data-orphaned' : ''}>
+      <div class="item-head">
+        <span class="sel" title="${esc(brief)}">${esc(brief) || '新元素'}</span>
+        ${GONE_BADGE(r)}
+        <span class="badge" data-kind="insert">${esc(r.label || '新增元素')}</span>
+        <button class="icon-btn remove-insert" data-id="${esc(r.id)}"
+          title="移除这个新增的元素">↺</button>
+      </div>
+      <div class="comment-text">${where}</div>
+    </div>`
+  }
+
   #renderMove(m) {
     const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
     // 「搬到哪儿了」才是用户要认的东西——一条只写元素名的记录，
@@ -240,11 +273,12 @@ export class ChangeList extends HTMLElement {
   }
 
   #elementOf(id, kind) {
-    const { edits, comments, removals, moves } = ChangeStore.read()
+    const { edits, comments, removals, moves, inserts = [] } = ChangeStore.read()
     if (kind === 'comment') return comments.find(c => c.id === id)?.el
     // 已删除的元素不在 DOM 上，高亮与回跳都会因 isConnected 为假而自然跳过
     if (kind === 'removal') return removals.find(r => r.id === id)?.el
     if (kind === 'move') return moves.find(m => m.id === id)?.el
+    if (kind === 'insert') return inserts.find(i => i.id === id)?.el
     return edits.find(e => e.id === id)?.el
   }
 
@@ -338,6 +372,14 @@ export class ChangeList extends HTMLElement {
         bubbles: true, composed: true,
         detail: { message: '父元素已不在页面上，这个元素放不回去了', kind: 'error' },
       }))
+    })
+
+    // 走既有的 removeElements：那条路对「本会话新增的元素」是把 insert 记录对消掉
+    // （原页面里它从来不存在，记一条「删除的元素」会给下游一条执行不了的指令）
+    on('.remove-insert', 'click', e => {
+      e.stopPropagation()
+      const el = this.#elementOf(e.currentTarget.dataset.id, 'insert')
+      if (el) ChangeStore.removeElements([el])
     })
 
     on('.move-back', 'click', e => {
