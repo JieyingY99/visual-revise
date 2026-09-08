@@ -735,9 +735,19 @@ t('7.1.1', await CM('.bubble').count() === 1, '点页面元素在该处起草评
 t('7.1.1', await page.evaluate(() => window.__visualRevise.comments.active),
   '起草后仍留在评论模式，可以连续标注')
 
-// 7.1.2 点击不选中
-t('7.1.2', await page.evaluate(() => document.querySelectorAll('[data-selected]').length) === 0,
-  '评论模式下点击不选中元素')
+// 7.1.2 点击把选中挪到被评论的元素上
+// 旧断言是「评论模式下点击不选中元素」，那是「切进评论模式就清空选中」时代的期望。
+// 现在选中框是「我正在说这一个」的视觉凭据：连着标注时它一路跟着走，用户不用
+// 回头猜这条需求提给了谁，切回选择模式时属性面板对着的也正是刚评论完的那个。
+// 点的是 .card-body 的中心，命中的可能是它自己也可能是里面那段文字，
+// 所以判「就是它或在它里面」，不把断言绑死在 fixture 的层级上
+const sel712 = await page.evaluate(() => {
+  const sel = [...document.querySelectorAll('[data-selected]')]
+  const body = document.querySelector('.card-body')
+  return { n: sel.length, hit: !!sel[0] && (sel[0] === body || body.contains(sel[0])) }
+})
+t('7.1.2', sel712.n === 1 && sel712.hit,
+  `评论模式下点击把选中挪到被评论的元素上（选中 ${sel712.n} 个，是刚点的那个：${sel712.hit}）`)
 
 // 7.1.4 气泡结构
 const bubble = await page.evaluate(() => {

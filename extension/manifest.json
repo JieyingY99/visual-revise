@@ -4,7 +4,10 @@
   "description": "在任意网页上以 Figma 式面板可视化改稿，一键导出 AI 能精确定位的提示词",
   "manifest_version": 3,
   "icons": {
-    "128": "icons/visbug.png"
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
   },
   "permissions": [
     "activeTab",
@@ -20,7 +23,10 @@
   "action": {
     "default_title": "点击或按 Alt+Shift+D 开始改稿",
     "default_icon": {
-      "128": "icons/visbug.png"
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
     }
   },
   "web_accessible_resources": [
@@ -43,5 +49,6 @@
         "linux": "Alt+Shift+D"
       }
     }
-  }
+  },
+  "minimum_chrome_version": "114"
 }

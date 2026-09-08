@@ -417,8 +417,16 @@ T('1.2.7', await mode() === 'comment' &&
 T('1.2.7', (await toast())?.text === '点击任意元素写下需求 · 可连续标注 · Esc 退出',
   `评论模式的 toast 文案（${(await toast())?.text}）`)
 T('1.2.10', (await thumb()).on === 'comment', '高亮与滑块跟到「评论」')
-T('1.2.9', (await panelHidden()) === true && (await selectedCount()) === 0,
-  '非 select 模式下取消选中且面板收起')
+// 1.2.9 旧期望是「非 select 模式下取消选中且面板收起」，那是「切进评论模式就清空
+// 选中」时代的写法。评论模式现在只收面板、不动选中：用户在选择模式里挑准的那个
+// 元素得留着，编辑框直接开在它身上，省掉「在评论模式里把小元素再点中一次」这一步
+//（那正是最难的一步）。浏览模式仍然清选中——它要把页面完全让开，那条没变。
+const sel129 = await page.evaluate(() => {
+  const sel = [...document.querySelectorAll('[data-selected]')]
+  return { n: sel.length, isFirstCard: sel[0] === document.querySelector('.curve-card') }
+})
+T('1.2.9', (await panelHidden()) === true && sel129.n === 1 && sel129.isFirstCard,
+  `评论模式收起属性面板，但选中原样留着（选中 ${sel129.n} 个，是刚挑的那张卡：${sel129.isFirstCard}）`)
 
 // 1.2.8 幂等
 await blur()
@@ -632,6 +640,15 @@ const vbStyle = () => page.evaluate(() => {
   const el = document.querySelector('vis-bug')
   return { left: el.style.left, top: el.style.top }
 })
+// 盲拖之前先把选中清掉。选中框的四角把手是浮在页面上的独立覆盖层（top layer），
+// 试到的某个 dx 正好压在把手上时，这一轮 mousedown 抓到的是把手——拖出去的是
+// 「改选中元素的尺寸」，页面布局当场就变了，后面按固定坐标点卡片会点到别的子元素上。
+// 评论 / 浏览模式来回切之后选中现在是留着的（见 1.2.9），所以这里得显式清一次，
+// 不能指望走到这里时它恰好是空的。
+await blur()
+await page.keyboard.press('Escape'); await wait(300)
+T('1.8.4', await selectedCount() === 0, '（前置）盲拖上游工具条之前先取消选中，免得抓到选中框把手')
+
 const vbBefore = await vbStyle()
 let dragHit = null, vbAfter = vbBefore
 for (const dx of [22, 21, 23, 20, 26, 18]) {

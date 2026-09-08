@@ -25,9 +25,16 @@ ok(await page.locator('visual-revise-comment-layer .bubble').count() === 1, '点
 ok(await page.evaluate(() => window.__visualRevise.comments.active),
    '点击元素后仍留在评论模式——模式是用户选的，不该被一次点击切走')
 
-// 点击不应该选中元素
-ok(await page.evaluate(() => document.querySelectorAll('[data-selected]').length) === 0,
-   '评论模式下点击不选中元素')
+// 点击要把选中挪到被评论的元素上。
+// 旧断言是「评论模式下点击不选中元素」——那是「评论模式一进来就清选中」时代的
+// 期望。现在选中框是「我正在说这一个」的视觉凭据，必须跟着正在评论的元素走，
+// 所以这条按新行为更新：选中恰好一个，且就是刚点的那张卡。
+const selAfterClick = await page.evaluate(() => {
+  const sel = [...document.querySelectorAll('[data-selected]')]
+  return { n: sel.length, isCard2: sel[0] === document.querySelectorAll('.curve-card')[1] }
+})
+ok(selAfterClick.n === 1 && selAfterClick.isCard2,
+   `评论模式下点击把选中挪到被评论的元素上（选中 ${selAfterClick.n} 个，是第 2 张卡：${selAfterClick.isCard2}）`)
 
 // 输入并保存
 await page.locator('visual-revise-comment-layer .editor').fill('鼠标移入时增加悬浮效果，并让卡片变亮')
@@ -223,6 +230,234 @@ await page.evaluate(() => {
   for (const id of ['vr-edge-r', 'vr-edge-b', 'vr-edge-rb'])
     document.querySelector(`#${id}`)?.remove()
 })
+
+// ══ 先选中、再评论 ════════════════════════════════════════════
+// 「在 comment 模式下选择元素非常困难」：嵌套容器、hover 覆盖层、pin 全在抢
+// 那几个像素。所以把顺序反过来——在选择模式里挑准元素，按 C 时编辑框直接开在
+// 它身上；选中框一路跟着正在评论的元素，切回选择模式时面板对着的还是它。
+
+// 焦点可能停在评论层 / 工具条的 shadow 里，那里的 keydown 被组件吞掉，
+// 不逐层下钻 blur 的话下面所有快捷键都按不动
+const blurAll = () => page.evaluate(() => {
+  let a = document.activeElement
+  while (a?.shadowRoot?.activeElement) a = a.shadowRoot.activeElement
+  a?.blur?.()
+})
+
+const cards = n => page.locator('.curve-card').nth(n)
+const selInfo = () => page.evaluate(() => {
+  const cs = document.querySelectorAll('.curve-card')
+  const sel = [...document.querySelectorAll('[data-selected]')]
+  const panel = document.querySelector('visual-revise-panel')
+  return {
+    mode: window.__visualRevise.mode,
+    count: sel.length,
+    index: sel[0] ? [...cs].indexOf(sel[0]) : -1,
+    handles: document.querySelectorAll('visbug-handles').length,
+    panelHidden: panel.hidden,
+    panelTargetIndex: panel.target ? [...cs].indexOf(panel.target) : -1,
+    bubbles: document.querySelector('visual-revise-comment-layer')
+      .shadowRoot.querySelectorAll('.bubble').length,
+  }
+})
+// 草稿挂在谁身上，只有存下来才看得到：评论气泡顶部那行 tag.class 三张卡是一样的
+const lastCommentIndex = () => page.evaluate(() => {
+  const last = window.__visualRevise.store.read().comments.at(-1)
+  return last ? [...document.querySelectorAll('.curve-card')].indexOf(last.el) : -1
+})
+
+// 前置：回到选择模式、清掉草稿与选中
+await page.evaluate(() => {
+  window.__visualRevise.comments.cancelDraft?.()
+  window.__visualRevise.setMode('select')
+})
+await blurAll()
+await page.keyboard.press('Escape')
+await page.waitForTimeout(250)
+ok((await selInfo()).count === 0, '（前置）回到选择模式，没有任何选中')
+
+// ① 选中第 2 张卡 → 按 C
+await cards(1).click({ position: { x: 130, y: 8 } })
+await page.waitForTimeout(400)
+const picked = await selInfo()
+ok(picked.index === 1 && !picked.panelHidden,
+   `（前置）选择模式下选中第 2 张卡、属性面板打开（index=${picked.index}）`)
+
+await blurAll()
+await page.keyboard.press('c')
+await page.waitForTimeout(450)
+const onC = await selInfo()
+ok(onC.mode === 'comment', 'C 切到评论模式')
+ok(onC.count === 1 && onC.index === 1,
+   `切评论模式后选中原样保留，仍是第 2 张卡（选中 ${onC.count} 个，index=${onC.index}）`)
+ok(onC.handles === 1, `选中框还在（visbug-handles ${onC.handles} 个）`)
+ok(onC.panelHidden, '属性面板收起——此刻在写需求，不是在调样式')
+ok(onC.bubbles === 1, '编辑框直接弹在选中的元素上，不必在评论模式里再点一次')
+
+await page.locator('visual-revise-comment-layer .editor').fill('这张卡的圆角再大一点')
+await page.locator('visual-revise-comment-layer .save').click()
+await page.waitForTimeout(400)
+ok(await lastCommentIndex() === 1, '这条草稿确实挂在第 2 张卡上')
+
+// ② 没有选中时切评论模式：不该凭空弹一个编辑框
+await blurAll()
+await page.keyboard.press('a')
+await page.waitForTimeout(300)
+await page.keyboard.press('Escape')
+await page.waitForTimeout(300)
+const cleared = await selInfo()
+ok(cleared.mode === 'select' && cleared.count === 0, '（前置）回选择模式并取消选中')
+
+await page.keyboard.press('c')
+await page.waitForTimeout(400)
+const noSel = await selInfo()
+ok(noSel.mode === 'comment' && noSel.bubbles === 0,
+   `没有选中时切评论模式：不弹编辑框（气泡 ${noSel.bubbles} 个）`)
+
+// ③ 评论模式下点第 3 张卡：草稿与选中一起挪过去，面板仍收着
+await cards(2).click({ position: { x: 130, y: 8 } })
+await page.waitForTimeout(450)
+const onThird = await selInfo()
+ok(onThird.bubbles === 1, '点第 3 张卡在它身上起草')
+ok(onThird.count === 1 && onThird.index === 2,
+   `选中跟着挪到第 3 张卡（选中 ${onThird.count} 个，index=${onThird.index}）`)
+ok(onThird.panelHidden, '评论模式下选中换了元素，属性面板仍然收着')
+
+await page.locator('visual-revise-comment-layer .editor').fill('这张卡的标题再大一号')
+await page.locator('visual-revise-comment-layer .save').click()
+await page.waitForTimeout(400)
+ok(await lastCommentIndex() === 2, '草稿换到了第 3 张卡')
+
+// ④ 切回选择模式：选中原样留着，面板对着它重新展开
+await blurAll()
+await page.locator('visual-revise-toolbar').locator('button[data-mode="select"]').click()
+await page.waitForTimeout(450)
+const back = await selInfo()
+ok(back.mode === 'select', '点工具条切回选择模式')
+ok(back.count === 1 && back.index === 2,
+   `选中仍是第 3 张卡（选中 ${back.count} 个，index=${back.index}）`)
+ok(!back.panelHidden && back.panelTargetIndex === 2,
+   `属性面板重新展开且对着第 3 张卡（target index=${back.panelTargetIndex}）`)
+
+// ⑤ 浏览模式绕一圈回来，同样在选中的元素上起草
+// 「选中一个元素 → V 让开页面、亲眼看看它的真实交互 → C 把要求写下来」是这套
+// 工具最顺的一条路。浏览模式为了把页面完全让开会清掉选中（退出时再原样装回），
+// 所以这条路径必须单独钉住：装回来的选中同样算数，C 一样直接开编辑框——
+// 否则用户又被推回「在评论模式里重新点中那个元素」这一步。
+await blurAll()
+await page.keyboard.press('v')
+await page.waitForTimeout(400)
+const browsing = await selInfo()
+ok(browsing.mode === 'browse' && browsing.count === 0,
+   `（前置）V 让开页面，选中暂时收起（选中 ${browsing.count} 个）`)
+
+await page.keyboard.press('c')
+await page.waitForTimeout(450)
+const backFromBrowse = await selInfo()
+ok(backFromBrowse.mode === 'comment' && backFromBrowse.count === 1 && backFromBrowse.index === 2,
+   `浏览模式退出后选中被装回，仍是第 3 张卡（选中 ${backFromBrowse.count} 个，index=${backFromBrowse.index}）`)
+ok(backFromBrowse.bubbles === 1, '装回来的选中同样算数：C 直接在它身上开编辑框')
+
+// ⑥ 编辑框开着时，焦点在编辑框里——这是自动起草的代价，写清楚
+// 编辑框一开就自动聚焦（不然「按 C 直接开始打字」这件事不成立），于是此后的
+// 单字母键都是在往需求里打字，不再是模式键。退出得先按 Esc 收掉草稿，第二下
+// 才退出评论模式。这条不是缺陷而是取舍，钉在这里免得日后被人当 bug「修掉」。
+const focusPath = await page.evaluate(() => {
+  let a = document.activeElement, path = [a?.tagName]
+  while (a?.shadowRoot?.activeElement) { a = a.shadowRoot.activeElement; path.push(a.tagName) }
+  return path.join(' > ')
+})
+ok(focusPath.endsWith('DIV'), `编辑框自动拿到焦点，可以直接打字（${focusPath}）`)
+
+await page.keyboard.press('a')
+await page.waitForTimeout(300)
+const typedIn = await page.evaluate(() => ({
+  mode: window.__visualRevise.mode,
+  text: document.querySelector('visual-revise-comment-layer').shadowRoot.querySelector('.editor')?.textContent,
+}))
+ok(typedIn.mode === 'comment' && typedIn.text === 'a',
+   `草稿开着时 A 是在写需求、不是切模式（打进去的是「${typedIn.text}」）`)
+
+await page.keyboard.press('Escape')
+await page.waitForTimeout(300)
+const esc1 = await selInfo()
+ok(esc1.mode === 'comment' && esc1.bubbles === 0, 'Esc 第一下收掉草稿，模式不动')
+
+await page.keyboard.press('Escape')
+await page.waitForTimeout(300)
+ok((await selInfo()).mode === 'select', 'Esc 第二下才退出评论模式')
+
+// ⑦ 一个字没写就离开评论模式：空编辑框不许留在页面上
+// 自动起草让「凭空多出一个空编辑框」变成常态——用户按了下 C 又改了主意就会遇上。
+// 气泡自己吃指针事件，留在选择模式的页面上会把它盖住的那块区域点不动，而用户
+// 已经不在评论模式里，根本想不到挡路的是一个自己没写过一个字的输入框。
+const bar = sel => page.locator('visual-revise-toolbar').locator(sel)
+
+await blurAll()
+await page.keyboard.press('c')
+await page.waitForTimeout(450)
+ok((await selInfo()).bubbles === 1, '（前置）切评论模式，编辑框开在选中的元素上')
+await bar('button[data-mode="select"]').click()
+await page.waitForTimeout(400)
+const afterLeave = await selInfo()
+ok(afterLeave.mode === 'select' && afterLeave.bubbles === 0,
+   `一个字没写就切回选择模式：空编辑框跟着收掉，不留在页面上挡点击（气泡 ${afterLeave.bubbles} 个）`)
+
+// 反过来：写了一半的草稿不能被这条规则误伤——静默丢掉用户打的字是最糟的处理
+await bar('button[data-mode="comment"]').click()
+await page.waitForTimeout(450)
+await page.locator('visual-revise-comment-layer .editor').fill('写了一半，还没想好后半句')
+await page.waitForTimeout(200)
+await bar('button[data-mode="select"]').click()
+await page.waitForTimeout(400)
+const halfWritten = await page.evaluate(() => ({
+  mode: window.__visualRevise.mode,
+  bubbles: document.querySelector('visual-revise-comment-layer').shadowRoot.querySelectorAll('.bubble').length,
+  text: document.querySelector('visual-revise-comment-layer').shadowRoot.querySelector('.editor')?.textContent,
+}))
+ok(halfWritten.mode === 'select' && halfWritten.bubbles === 1
+   && halfWritten.text === '写了一半，还没想好后半句',
+   `写了一半的草稿照旧留在屏幕上等他写完（「${halfWritten.text}」）`)
+await page.evaluate(() => window.__visualRevise.comments.cancelDraft())
+
+// ⑧ 评论模式下从改动列表定位元素：选中跟着走，属性面板仍然收着
+// 进入选中的路径不止「在页面上点一下」这一条。改动列表的定位是另一条：它自己
+// 也会 select() 一个元素。面板可见性只认 onSelected 一个出口，这条路径才不会
+// 在用户正写需求的时候把属性面板顶出来挡住页面和气泡。
+await page.evaluate(() => {
+  const el = document.querySelectorAll('.curve-card')[0]
+  window.__visualRevise.store.track(el)
+  window.__visualRevise.store.applyProp(el, 'border-radius', '20px')
+})
+await page.waitForTimeout(300)
+await page.evaluate(() => {
+  const l = document.querySelector('visual-revise-list')
+  l.hidden = false
+  l.render()
+})
+await page.waitForTimeout(300)
+const styleItem = page.locator('visual-revise-list .item').filter({ hasText: 'border-radius' }).first()
+ok(await styleItem.count() === 1, '（前置）改动列表里有一条样式改动')
+
+await bar('button[data-mode="comment"]').click()
+await page.waitForTimeout(450)
+await styleItem.click()
+await page.waitForTimeout(400)
+const located = await selInfo()
+ok(located.mode === 'comment' && located.count === 1 && located.index === 0,
+   `评论模式下点改动条目，选中跟着挪到那个元素（index=${located.index}）`)
+ok(located.panelHidden,
+   '从改动列表定位也不会把属性面板顶出来——面板可见性只认 onSelected 一个出口')
+
+// 切回选择模式，同一条定位路径照旧要把面板打开
+await page.evaluate(() => window.__visualRevise.comments.cancelDraft())
+await bar('button[data-mode="select"]').click()
+await page.waitForTimeout(400)
+await styleItem.click()
+await page.waitForTimeout(400)
+const locatedSel = await selInfo()
+ok(!locatedSel.panelHidden && locatedSel.panelTargetIndex === 0,
+   `选择模式下同一条路径仍然打开面板并对着它（target index=${locatedSel.panelTargetIndex}）`)
 
 await browser.close(); await close()
 console.log(process.exitCode ? '\n结果：有失败项\n' : '\n结果：全部通过\n')

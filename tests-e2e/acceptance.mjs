@@ -127,9 +127,17 @@ for (const [key, mode] of [['v', 'browse'], ['c', 'comment'], ['a', 'select']]) 
   await page.keyboard.press(key)
   await page.waitForTimeout(250)
   AC(`AC-2.1${key}`, (await vr()).mode === mode, `按 ${key.toUpperCase()} 进入 ${mode}`)
+  // 带着选中切进评论模式，编辑框会直接开在选中的元素上并接走焦点
+  //（「先选中、再评论」，见 comment.mjs）。下一轮按的键要落在页面上才算数，
+  // 所以这里把这条空草稿收掉——留着的话 A 只会被打进编辑框里。
+  await page.evaluate(() => window.__visualRevise.comments.cancelDraft())
+  await page.waitForTimeout(150)
 }
 
 await page.keyboard.press('c'); await page.waitForTimeout(200)
+// 同上：第一下 C 已经开了一条草稿并接走焦点，收掉它，第二下 C 才真的落在页面上，
+// 「连按 C 幂等」这条才测得到东西
+await page.evaluate(() => window.__visualRevise.comments.cancelDraft()); await page.waitForTimeout(150)
 await page.keyboard.press('c'); await page.waitForTimeout(250)
 AC('AC-2.2', (await vr()).mode === 'comment', '连按 C 仍停在评论模式，不 toggle 回选择态')
 
@@ -173,6 +181,12 @@ const snap29 = () => page.evaluate(() => ({
   interactive: window.__visualRevise.interactive,
 }))
 const s29a = await snap29()
+// 此刻编辑框已经开在选中的元素上（「先选中、再评论」）。Esc 是分层的，这一层
+// 早就在：有草稿时第一下先收草稿、模式不动，第二下才退出模式回到选择态。
+await page.keyboard.press('Escape'); await page.waitForTimeout(250)
+const s29mid = await snap29()
+AC('AC-2.9a', !s29mid.hasDraft && s29mid.mode === 'comment',
+   `Esc 第一下收掉草稿、模式不动（${JSON.stringify(s29mid)}）`)
 await page.keyboard.press('Escape'); await page.waitForTimeout(250)
 const s29b = await snap29()
 AC('AC-2.9', s29b.mode === 'select',

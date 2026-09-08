@@ -115,10 +115,22 @@ export class CommentLayer extends HTMLElement {
 
   get active() { return this.#active }
 
-  // 草稿的生命周期独立于模式开关：点击元素后模式关闭，
-  // 但那条刚起草的评论必须留在屏幕上等用户写完。
+  // 一个字都没写、也没加图的草稿——「切进评论模式就在选中的元素上自动起草」
+  // 之后，这种空草稿会凭空多出来：用户只是按了下 C 又改了主意。
+  #draftIsEmpty() {
+    return !!this.#draft && !this.#serialize() && !(this.#draft.images || []).length
+  }
+
+  // 草稿的生命周期独立于模式开关：写了一半的评论必须留在屏幕上等用户写完，
+  // 哪怕他中途切回选择模式去量个尺寸——静默丢掉他打的字是最糟的一种处理。
+  //
+  // 空草稿是唯一的例外，退出评论模式时直接收掉：里面没有任何用户内容，
+  // 留着不是「保护」而是纯粹的妨碍——气泡自己吃指针事件，浮在页面上会把
+  // 它盖住的那块区域点不动，而用户此刻已经不在评论模式里，根本想不到
+  // 挡路的是一个自己没写过一个字的输入框。
   setActive(on) {
     this.#active = on
+    if (!on && this.#draftIsEmpty()) this.#draft = null
     this.render()
     this.dispatchEvent(new CustomEvent('vr-comment-mode', {
       bubbles: true, composed: true, detail: { on },

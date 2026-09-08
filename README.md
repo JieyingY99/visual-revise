@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.png" width="128" alt="Visual Revise logo"></p>
+
 # Visual Revise
 
 在任意网页上用 Figma 式属性面板可视化改稿，一键导出 AI 能**精确定位**的提示词。

@@ -55,15 +55,23 @@ await page.locator('.curve-card').nth(1).click({ position: { x: 130, y: 8 } })
 await page.waitForTimeout(500)
 ok(!(await page.locator('visual-revise-panel').evaluate(el => el.hidden)), '选中后属性面板出现')
 
-// 切到非选择模式时，面板收起且取消选中
+// 切到评论模式：面板收起，但选中要留着。
+// 旧断言是「同时取消选中」——那时评论模式一进来就清选中，于是用户得在评论模式里
+// 把刚挑好的元素重新点一次，而那正是最难点的一步。现在选中框留在原地，编辑框直接
+// 开在它身上，所以这条按新行为更新。
 await bar('button[data-mode="comment"]').click()
 await page.waitForTimeout(300)
 ok(await page.locator('visual-revise-panel').evaluate(el => el.hidden), '切到评论模式后面板收起')
-ok(await page.evaluate(() => document.querySelectorAll('[data-selected]').length) === 0, '同时取消选中')
+ok(await page.evaluate(() =>
+  document.querySelectorAll('[data-selected]')[0] === document.querySelectorAll('.curve-card')[1]),
+  '选中原样保留——评论要落在刚选好的那个元素上')
 
 // 计数与复制按钮状态
 await bar('button[data-mode="select"]').click()
-await page.locator('.curve-card').nth(1).click({ position: { x: 130, y: 8 } })
+// 这张卡此刻仍是选中态，(130, 8) 正好压在顶边中间那个缩放圆点的点击区上
+// （圆点半径 4px，::before 又向外撑了 8px），点它是在拖尺寸而不是选元素。
+// 挪到 (30, 8)：同样在卡片自己的 padding 里，但避开了左上与顶中两个圆点。
+await page.locator('.curve-card').nth(1).click({ position: { x: 30, y: 8 } })
 await page.waitForTimeout(400)
 
 ok((await bar('.count').textContent()).trim() === '0', '初始记录数为 0')
@@ -404,6 +412,15 @@ ok(await upstreamTool() === toolBefore, '解绑热键不影响 guides 被代码�
 // 这是最容易踩中的一条路径——点按钮切模式、接着想用键盘——而 shadow DOM 里的
 // button 点完就留住了焦点。早先「事件路径经过插件 UI 就整块让路」的写法会让
 // 此后所有快捷键失效，直到用户点回页面；从界面上完全看不出为什么。
+// 先回到选择模式并清掉选中：这一段要测的是「焦点留在插件 UI 里时快捷键仍管用」，
+// 而带着选中切评论模式现在会直接在选中的元素上开评论编辑框、焦点被编辑框接走
+//（那是另一条路径，见 comment.mjs 的「先选中、再评论」）。不清选中的话焦点根本
+// 到不了工具条按钮上，下面三条就全测在空气上了。
+await page.keyboard.press('Escape')   // 浏览 → 选择
+await page.waitForTimeout(250)
+await page.keyboard.press('Escape')   // 取消选中
+await page.waitForTimeout(250)
+
 await page.locator('visual-revise-toolbar').locator('button[data-mode="comment"]').click()
 await page.waitForTimeout(300)
 const focusInUI = await page.evaluate(() => {
@@ -492,13 +509,29 @@ await page.keyboard.press('v')
 await page.waitForTimeout(250)
 ok((await vrState()).mode === 'browse', '连按 V 仍停在浏览模式，不会 toggle 回选择态')
 
+const hasBubble = () => page.evaluate(() =>
+  document.querySelector('visual-revise-comment-layer')
+    .shadowRoot.querySelectorAll('.bubble').length)
+
 await page.keyboard.press('c')
-await page.waitForTimeout(250)
+await page.waitForTimeout(300)
 ok((await vrState()).mode === 'comment', '浏览模式下 C 直接切到评论')
+
+// 退出浏览模式会把选中原样装回来，于是「切进评论模式就在选中的元素上起草」
+// 这条在这里同样成立：编辑框直接开出来，焦点也跟着进了编辑框。
+// 下面几条测的是模式键，键必须落在页面上才算数——所以先按一下 Esc 把这条空草稿
+// 收掉（Esc 的第一层语义一直是取消草稿，模式不动），键盘才回到编辑器本体手上。
+ok(await hasBubble() === 1, '浏览模式退出后选中被装回，C 同样直接在它身上开编辑框')
+await page.keyboard.press('Escape')
+await page.waitForTimeout(250)
+const afterEsc = await vrState()
+ok(await hasBubble() === 0 && afterEsc.mode === 'comment',
+   `Esc 先收掉草稿，模式不动（mode=${afterEsc.mode}）`)
 
 await page.keyboard.press('c')
 await page.waitForTimeout(250)
 ok((await vrState()).mode === 'comment', '连按 C 也停在评论模式')
+ok(await hasBubble() === 0, '第二下 C 不再另起一条草稿——setMode 幂等，只有真正切进来那次才起草')
 
 await page.keyboard.press('a')
 await page.waitForTimeout(250)

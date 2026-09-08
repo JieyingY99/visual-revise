@@ -108,12 +108,35 @@ export const mountVisualRevise = visbug => {
   let modeBeforeStealth = 'select'
 
 
+  // 评论模式下选中框只是「我正在说这一个」的标记，不该再是能上手的把手。
+  // 它是 popover=manual、活在顶层，四角那几个圆点各自还有 ::before 把点击区
+  // 向外撑了 8px，实际拦截范围（角点 ±12px）盖过了评论 pin 的圆心（角点 +10px）——
+  // 不让开的话，刚标注完的那条评论再也点不开，而画面上看不出是谁挡的。
+  //
+  // 用 inert 而不是 pointer-events:none：把手按钮自己写着 pointer-events:auto，
+  // 会把祖先的 none 顶回来；inert 让整棵子树（含 closed shadow 里的按钮）一起
+  // 不参与命中测试，后代覆盖不了。它只关交互不关绘制，选中框照样看得见。
+  const syncHandlesInert = () => {
+    const off = mode === 'comment'
+    document.querySelectorAll('visbug-handles').forEach(el => { el.inert = off })
+  }
+
   const onSelected = els => {
     if (interactive) return
 
+    // 选中框刚被 select() 同步建出来，这里紧跟着把评论模式下的交互关掉
+    syncHandlesInert()
+
     // 先让面板可见，再灌内容：结构树在 display:none 下量不出高度，
     // 那时做的「滚到选中行」等于没做，选中项会停在视口外看不见
-    panel.hidden = !(els && els.length)
+    //
+    // 评论模式下选中还在（选中框跟着正在评论的元素走），但属性面板一律收着：
+    // 此刻用户在写需求，不是在调样式，面板只会挡住页面和评论气泡。
+    // 压在这里而不是「select() 之后补一句 panel.hidden = true」，是因为进入
+    // 选中的路径不止一条——评论模式下点元素、结构树点行、拖拽落位后回选、
+    // 退出浏览模式时恢复选中集——只有 onSelected 这一个出口盖得全，
+    // 补丁式的写法每加一条路径就要记得再补一次。
+    panel.hidden = !(els && els.length) || mode === 'comment'
     panel.setTargets(els)
     // 改动列表里这些元素的条目高亮并滚到可见（列表关着时打开再滚）
     list.setSelected(els || [])
@@ -524,6 +547,28 @@ export const mountVisualRevise = visbug => {
     comment: '点击任意元素写下需求 · 可连续标注 · Esc 退出',
   }
 
+  // 「先选中元素、再按 C」是评论最顺的一条路：在评论模式里重新点中一个小元素
+  // 非常难（嵌套容器、hover 覆盖层、pin 都在抢那几个像素），而用户此刻想评论的
+  // 显然就是他刚刚选中的那一个。所以切进评论模式的那一刻直接把编辑框开出来。
+  const draftOnSelection = () => {
+    // 多选时评论落在「主选中」上，也就是属性面板正对着的那个 panel.target。
+    // 这里读 engine.selection()[0]（select 用 unshift，[0] 即最近一次选中的），
+    // 它就是 panel.setTargets 拿到的第一项，但不受面板渲染时序影响。
+    const el = engine.selection()[0]
+    if (!el?.isConnected || isEditorUI(el)) return
+
+    // 完全量不出盒子的元素（display:none / 尺寸为 0）没有可锚定的位置，
+    // 气泡会飞到页面左上角，看不出在标注谁
+    const r = el.getBoundingClientRect()
+    if (!r.width && !r.height) return
+
+    // startDraft 收的是 clientX / clientY——它内部自己加 scrollX / scrollY。
+    // 所以这里传未加滚动量的视口坐标，换算完正好等于 editComment 里那套
+    // 「贴着元素右上角」的文档坐标 (r.right + scrollX, r.top + scrollY)，
+    // 两条路径开出来的气泡位置一致。
+    comments.startDraft(el, r.right, r.top)
+  }
+
   const setMode = next => {
     const changed = mode !== next
     mode = next
@@ -540,9 +585,31 @@ export const mountVisualRevise = visbug => {
     layoutDrag.setActive(next === 'select')
     toolbar.setMode(next)
 
-    if (next !== 'select') {
+    // 选中在模式之间是留着的，所以「把手能不能上手」这件事得跟着模式重算一次，
+    // 不能只在选中变化时算——切模式时选中往往一动没动
+    syncHandlesInert()
+
+    if (next === 'comment') {
+      // 评论模式不再清选中：选中框留在原地，用户始终看得见这条需求提给了谁，
+      // 而且不用在评论模式里再去把那个元素点一次（那正是最难点的一步）。
+      // 只收属性面板——写需求时用不上它，留着还挡视线。
+      panel.hidden = true
+      // 只在真正「切进来」的那一次起草。setMode 是幂等的（连按 C 会再走一遍），
+      // 不判 changed 的话，第二下 C 会把手上这条草稿提交掉再开一个空的。
+      if (changed) draftOnSelection()
+    }
+    else if (next === 'browse') {
+      // 浏览模式要把页面完全让开，选中框、把手都得走。
+      // （enterInteractive 已经把选中集存进 suspended，退出时原样装回来）
       engine.unselect_all()
       panel.hidden = true
+    }
+    else if (changed) {
+      // 回到选择模式：选中在评论模式里一直留着，engine 这边什么都没变，
+      // onSelected 不会再触发，面板得在这里对着当前选中重新展开一次。
+      // 直接复用 onSelected：面板可见性、setTargets、改动列表高亮、浮层定位
+      // 四件事的顺序都在它里面，抄一遍迟早对不上。
+      onSelected(engine.selection())
     }
 
     if (changed && MODE_HINTS[next]) toolbar.toast(MODE_HINTS[next])
@@ -573,6 +640,17 @@ export const mountVisualRevise = visbug => {
 
     e.preventDefault()
     e.stopPropagation()
+
+    // 选中跟着正在评论的那个元素走：选中框是「我正在说这一个」的唯一视觉凭据，
+    // 连着标注时它一路跟过去，用户不用回头猜这条需求提给了谁；切回选择模式时
+    // 面板对着的也正是刚评论完的那个，两个模式之间不再断片。
+    // 已经单选着它就别重来一遍：unselect_all + select 会把选中框整个拆掉重建，
+    // 同一个元素上连点两次会看到一次没有意义的闪烁。
+    const selected = engine.selection()
+    if (selected.length !== 1 || selected[0] !== target) {
+      engine.unselect_all()
+      engine.select(target)
+    }
 
     // 模式保持不变：它是用户明确选的，一次点击就把它切走，
     // 连着标注两个元素都得重新按一次 C
@@ -736,7 +814,10 @@ export const mountVisualRevise = visbug => {
     }
     engine.unselect_all()
     engine.select(el)
-    panel.hidden = false
+    // 面板可见性不在这里补一句：select() 会把 onSelected 叫起来，那边按
+    //「有没有选中」和「是不是评论模式」一起算。这里再写死一句 hidden = false，
+    // 评论模式下从改动列表定位一个元素就会把属性面板顶出来——用户正在写需求，
+    // 面板一冒出来就挡住了页面和评论气泡。选中的出口只留 onSelected 一个。
   })
 
   const api = {

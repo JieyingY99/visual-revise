@@ -214,6 +214,10 @@ await page.keyboard.press('ArrowUp'); await page.waitForTimeout(300)
 const tC = (await titles()).join('|'), mC = await nMoves()
 ok(modeC === 'comment' && tC === base && mC === 0,
   `评论模式（mode=${modeC}）↑ 不接管：顺序期望不变、移动记录期望 0（实际「${tC}」/ ${mC} 条）`)
+// 上一步带着选中按 C，评论编辑框已经直接开在那张卡上、焦点也进了编辑框
+//（「先选中、再评论」，见 comment.mjs）。下面要用 V 切浏览模式，键得落在页面上
+// 才算数，所以先把这条空草稿收掉——留着的话 V 只会被打进编辑框里。
+await page.evaluate(() => window.__visualRevise.comments.cancelDraft()); await page.waitForTimeout(200)
 // 浏览模式（interactive）
 await page.keyboard.press('v'); await page.waitForTimeout(400)
 const st = await page.evaluate(() => ({ mode: window.__visualRevise.mode, interactive: window.__visualRevise.interactive }))
