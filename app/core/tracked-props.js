@@ -59,7 +59,8 @@ export const GROUPS = [
     id: 'appearance',
     label: 'Appearance',
     zh: '外观',
-    props: ['opacity', 'border-radius'],
+    props: ['opacity', 'border-radius',
+      'border-top-left-radius', 'border-top-right-radius', 'border-bottom-left-radius', 'border-bottom-right-radius'],
   },
   {
     id: 'typography',
@@ -99,7 +100,8 @@ export const GROUPS = [
     id: 'stroke',
     label: 'Stroke',
     zh: '描边',
-    props: ['border-color', 'border-width', 'border-style', 'box-sizing'],
+    props: ['border-color', 'border-width', 'border-style', 'box-sizing',
+      'border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width'],
   },
   {
     id: 'effects',

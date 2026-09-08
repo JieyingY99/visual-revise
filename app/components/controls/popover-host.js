@@ -20,6 +20,8 @@
 // 内容里的 box-sizing 以前靠页面的 * { box-sizing: border-box } 给——
 // 有的站有、有的站没有，输入框就时而 28 时而 30。现在自己带一份，走
 // adoptedStyleSheets：调用方 root.innerHTML = ... 冲不掉它。
+import { zoomFactor, viewportBox } from '../../core/zoom.js'
+
 let baseSheet = null
 const base = () => {
   if (baseSheet) return baseSheet
@@ -31,11 +33,56 @@ const base = () => {
   return baseSheet
 }
 
+// 挂上时的倍数记在这里，不记在宿主属性上：弹层不订阅倍数变化（活不过一次
+// 交互），后续 #place / 重新夹取要用的是「当初真的缩了多少」，而不是此刻的
+// zoomFactor()——开着弹层改缩放时两者会对不上，按新倍数折算会把位置算飞。
+const mountedZoom = new WeakMap()
+
+// 宿主被上面那段 scale(1/k) 缩过，且原点在左上角，所以它在屏幕上真正占的
+// 是 offsetWidth/k × offsetHeight/k；offsetWidth / offsetHeight 是缩之前的
+// 布局盒。定位用的锚点 getBoundingClientRect() 已经是缩过的视口坐标，两套
+// 尺寸混算就会恒定偏一个 w·(1−1/k)（右对齐脱锚、夹取多留边、向上翻留空档）。
+// 所有定位 / 夹取 / 翻转都必须走这个可见尺寸。
+// fallback 给的是布局 px（内容还没铺开时 offsetWidth 是 0，夹取等于没夹）。
+export const visibleSize = (host, fallback = {}) => {
+  const k = mountedZoom.get(host) || 1
+  return {
+    k,
+    w: (host.offsetWidth || fallback.w || 0) / k,
+    h: (host.offsetHeight || fallback.h || 0) / k,
+  }
+}
+
+// 弹层能落脚的范围（CSS 像素，含 gap 边距）。用 viewportBox() 而不是
+// innerWidth/innerHeight：捏合放大时眼睛看到的只是布局视口里的一小块，
+// 按布局视口的边夹会把弹层夹到屏幕外面去。
+export const popoverBounds = (gap = 8) => {
+  const b = viewportBox()
+  return {
+    minLeft: b.left + gap,
+    minTop: b.top + gap,
+    maxLeft: w => Math.max(b.left + gap, b.left + b.width - w - gap),
+    maxTop: h => Math.max(b.top + gap, b.top + b.height - h - gap),
+    // 锚点下方还剩多少（CSS 像素）
+    below: bottom => b.top + b.height - bottom,
+  }
+}
+
 export const mountPopover = (id, css) => {
   const host = document.createElement('div')
   host.id = id
   host.setAttribute('data-visual-revise-ui', '')
   host.style.cssText = `all: initial; display: block; box-sizing: border-box; ${css}`
+
+  // 网页缩放着的话弹层也反向缩回屏幕原大。弹层活不过一次交互，挂上时读一次
+  // 倍数就够，不用订阅变化。定位用的是锚点的视口坐标，左上角为原点缩，
+  // 缩完左上角还贴着锚点
+  const k = zoomFactor()
+  mountedZoom.set(host, k)
+  if (k !== 1) {
+    host.style.transformOrigin = 'top left'
+    host.style.transform = `scale(${1 / k})`
+  }
 
   const root = host.attachShadow({ mode: 'open' })
   root.adoptedStyleSheets = [base()]

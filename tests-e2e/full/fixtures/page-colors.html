@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Page colors fixture</title>
+<style>
+  * { box-sizing: border-box; }
+  /* 上方留白让开工具条（top:20），右侧留白让开属性面板（right:16，宽 300） */
+  body { margin: 0; padding: 96px 340px 40px 24px; background: #0e0e11; color: #eeeeee;
+         font: 14px/1.4 system-ui, sans-serif; }
+
+  /* ── 颜色变量：12 个颜色 + 3 个非颜色 ──────────────────────────
+     名字里故意留共同子串 ink（7 个，其中一个大写 INK）用来验搜索的
+     不区分大小写子串过滤；非颜色的三个用来验变量页只列颜色（others） */
+  :root {
+    --pc-ink-base: #22cc88;
+    --pc-ink-soft: #3fd39c;
+    --pc-ink-deep: #12805a;
+    --pc-ink-warn: #ff8800;
+    --pc-ink-alt:  #3355ff;
+    --pc-ink-mute: #8899aa;
+    --pc-INK-CAPS: #ff00ff;
+    --pc-surface:     #1b1b22;
+    --pc-surface-alt: #2a2a33;
+    --pc-line:    #cc22aa;
+    --pc-danger:  #ff2222;
+    --pc-accent:  #11aabb;
+    --pc-gap:  12px;                 /* 非颜色：长度 */
+    --pc-font: Inter, sans-serif;    /* 非颜色：字体栈 */
+    --pc-num:  1.25;                 /* 非颜色：数字 */
+  }
+
+  .strip { display: flex; flex-wrap: wrap; gap: 2px; width: 420px; }
+  .strip i { display: block; width: 10px; height: 10px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start;
+         margin-top: 12px; width: 560px; }
+  .cell { width: 60px; height: 26px; }
+
+  /* 四边同色的描边：一张卡片的描边是「一个颜色」，五个元素应当只数出 5 处 */
+  .four-same { border: 3px solid #ab0001; }
+</style>
+</head>
+<body>
+  <!-- 30 × #123456（必然排第一）+ 12 × rgba(200,30,40,.5)（半透明，色块要分两半） -->
+  <div class="strip" id="pc-strip"></div>
+
+  <div class="row">
+    <!-- 打开色盘用的目标：描边是透明色，自己不往色板里塞任何颜色 -->
+    <div id="pc-target" style="width:220px;height:96px;border:3px solid transparent"></div>
+  </div>
+
+  <div class="row">
+    <div class="cell four-same"></div>
+    <div class="cell four-same"></div>
+    <div class="cell four-same"></div>
+    <div class="cell four-same"></div>
+    <div class="cell four-same"></div>
+    <!-- 四边不同色：四个颜色各数一次 -->
+    <div class="cell" id="pc-four-diff"
+         style="border-width:3px;border-style:solid;border-color:#ab0011 #ab0012 #ab0013 #ab0014"></div>
+  </div>
+
+  <div class="row">
+    <!-- display:none：整个不算 -->
+    <div id="pc-hidden" style="display:none;background:#ab0002;width:20px;height:20px"></div>
+    <!-- 编辑器自己的 UI：visbug-* 标签、[data-visual-revise-ui] 及其子孙都不算 -->
+    <visbug-probe id="pc-visbug" style="display:block;width:20px;height:20px;background:#ab0003"></visbug-probe>
+    <div id="pc-ui" data-visual-revise-ui style="width:24px;height:24px;background:#ab0004"><div
+         id="pc-ui-child" style="width:10px;height:10px;background:#ab0005"></div></div>
+    <!-- SVG 的 fill / stroke 都要采到 -->
+    <svg id="pc-svg" width="40" height="40"><rect x="4" y="4" width="26" height="26"
+         fill="#ab0006" stroke="#ab0007" stroke-width="2"></rect></svg>
+    <!-- 全透明（alpha=0）不算 -->
+    <div id="pc-alpha0" style="width:20px;height:20px;background:rgba(171, 0, 8, 0)"></div>
+  </div>
+
+  <div class="row">
+    <!-- 只装着子元素的容器：它自己的字色不算，子元素的字色算 -->
+    <div id="pc-container" style="color:#ab0009"><span id="pc-child" style="color:#ab000a">子</span></div>
+    <!-- 直接承载文字：字色算 -->
+    <div id="pc-text" style="color:#ab000b">直接文字</div>
+    <!-- 描边没画出来：style:none / width:0 都不算 -->
+    <div class="cell" id="pc-bnone" style="border:3px none #ab000c"></div>
+    <div class="cell" id="pc-bzero" style="border:0 solid #ab000d"></div>
+  </div>
+
+  <script>
+    const strip = document.getElementById('pc-strip')
+    const add = (n, css) => {
+      for (let i = 0; i < n; i++) {
+        const d = document.createElement('i')
+        d.style.cssText = css
+        strip.appendChild(d)
+      }
+    }
+    add(30, 'background:#123456')
+    add(12, 'background:rgba(200, 30, 40, .5)')
+  </script>
+</body>
+</html>

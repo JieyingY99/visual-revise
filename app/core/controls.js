@@ -45,6 +45,29 @@ export const coercePercent = raw => {
   return String(Math.round(clamped * 1000) / 1000 / 100)
 }
 
+// 字距按字号的百分比走（Figma 的写法）。CSS 的 letter-spacing 不收百分比，em 正好是
+// 「相对字号」：5% → 0.05em；0 写回 normal（写 0em 会在改动里留一条什么都没做的记录）。
+// 带明确单位的原样放行。
+export const coerceLetterSpacing = raw => {
+  const v = String(raw).trim().replace(/%$/, '').trim()
+  if (v === '') return ''
+  if (!/^-?[\d.]+$/.test(v)) return v
+  const n = parseFloat(v)
+  if (!Number.isFinite(n) || n === 0) return 'normal'
+  return `${Math.round(n / 100 * 10000) / 10000}em`
+}
+
+// 计算值（px）→ 百分比：字距 ÷ 当前字号。normal 就是 0。em 值（步进算出来的中间值）直接乘 100
+export const letterSpacingPercent = (value, computed) => {
+  const v = String(value ?? '').trim()
+  if (!v || v === 'normal') return '0'
+  const n = parseFloat(v)
+  if (!Number.isFinite(n)) return v
+  if (/em$/i.test(v)) return String(Math.round(n * 1000) / 10)
+  const fs = parseFloat(computed?.['font-size']) || 16
+  return String(Math.round(n / fs * 1000) / 10)
+}
+
 // CSS 的 0–1 → 面板显示的 0–100
 export const fractionToPercent = value => {
   const n = parseFloat(value)
@@ -63,7 +86,7 @@ export const coerceAngle = raw => {
 
 const num  = (label, opts = {}) => ({ type: 'num',  label, coerce: coerceLength, ...opts })
 const plain = (label, opts = {}) => ({ type: 'num', label, coerce: coerceNumber, ...opts })
-const sel  = (label, options)    => ({ type: 'select', label, options })
+const sel  = (label, options, extra = {}) => ({ type: 'select', label, options, ...extra })
 const seg  = (label, options)    => ({ type: 'segment', label, options })
 const col  = label               => ({ type: 'color', label })
 const txt  = label               => ({ type: 'text', label })
@@ -108,7 +131,7 @@ export const CONTROLS = {
   'font-size':      num('字号'),
   'font-weight':    sel('字重', ['100', '200', '300', '400', '500', '600', '700', '800', '900']),
   'line-height':    plain('行高'),
-  'letter-spacing': num('字距'),
+  'letter-spacing': num('字距', { unit: '%', step: 1, coerce: coerceLetterSpacing, toDisplay: letterSpacingPercent }),
   'text-align':     seg('对齐', [['left', '左'], ['center', '中'], ['right', '右'], ['justify', '两端']]),
   'text-transform': sel('大小写', ['none', 'uppercase', 'lowercase', 'capitalize']),
   'text-decoration-line': sel('装饰线', ['none', 'underline', 'line-through', 'overline']),
@@ -116,6 +139,16 @@ export const CONTROLS = {
   // 外观
   'opacity':       plain('不透明度', { step: 1, min: 0, max: 100, unit: '%', coerce: coercePercent, toDisplay: fractionToPercent }),
   'border-radius': num('圆角'),
+  // 四角独立（Figma 的 Independent corners）：只在圆角行展开时渲染，见 HIDDEN_FIELDS
+  'border-top-left-radius':     num('左上'),
+  'border-top-right-radius':    num('右上'),
+  'border-bottom-left-radius':  num('左下'),
+  'border-bottom-right-radius': num('右下'),
+  // 四边独立粗细（Figma 的 Individual strokes）：只在粗细行展开时渲染
+  'border-top-width':    num('上'),
+  'border-right-width':  num('右'),
+  'border-bottom-width': num('下'),
+  'border-left-width':   num('左'),
   'overflow':      sel('溢出', ['visible', 'hidden', 'scroll', 'auto', 'clip']),
 
   // 填充
@@ -132,7 +165,8 @@ export const CONTROLS = {
 
   // 描边
   'border-width': num('粗细'),
-  'border-style': sel('样式', ['none', 'solid', 'dashed', 'dotted', 'double']),
+  // preview: 'border' 让下拉把线型直接画出来（solid 一条实线、dashed 一条虚线），不只写名字
+  'border-style': sel('样式', ['none', 'solid', 'dashed', 'dotted', 'double'], { preview: 'border' }),
   'border-color': col('颜色'),
   // Figma 的 Stroke position（inside/outside/center）在 CSS 里就是 box-sizing：
   // border-box 边框吃进尺寸内 = 内描边，content-box 边框撑大盒子 = 外描边。
@@ -154,8 +188,22 @@ export const CONTROLS = {
 // 只是不渲染，仍然留在 tracked-props 里继续跟踪：那个数组是双重职责
 // （渲染顺序 + 跟踪清单），从那里删掉的话，用户在别处改的 right / bottom
 // 就不会进改动记录、也不会导出到提示词，那是另一回事。
+// 圆角的四个角：展开态的 2×2 网格里按这个顺序排（左上 右上 / 左下 右下）
+export const CORNER_PROPS = [
+  'border-top-left-radius', 'border-top-right-radius',
+  'border-bottom-left-radius', 'border-bottom-right-radius',
+]
+
+// 粗细的四条边：展开态的 2×2 网格按 Figma 的顺序排（左 上 / 右 下）
+export const SIDE_WIDTH_PROPS = [
+  'border-left-width', 'border-top-width',
+  'border-right-width', 'border-bottom-width',
+]
+
 export const HIDDEN_FIELDS = new Set([
   'right', 'bottom',
+  // 四个角 / 四条边由圆角行、粗细行自己按展开状态渲染，不走默认的逐字段列表
+  ...CORNER_PROPS, ...SIDE_WIDTH_PROPS,
   // 背景图不再单独给一行文本框：填充控件（vr-fill）已经同时管着
   // background-color 与 background-image，两处编辑同一件事只会让人犹豫
   // 该改哪个。仍然继续跟踪——换图走的就是这条属性。
@@ -181,7 +229,8 @@ export const FIELD_PAIRS = [
   ['font-size', 'line-height'],
   ['letter-spacing', 'font-weight'],
   ['opacity', 'border-radius'],
-  ['border-width', 'border-style'],
+  // 样式在左、粗细在右：粗细右侧还要挂「四边独立」按钮
+  ['border-style', 'border-width'],
 ]
 
 // 输入框内嵌的前缀标识，替代冗长的中文标签
@@ -195,6 +244,9 @@ export const FIELD_PREFIX = {
   'gap': '↔', 'row-gap': '↕', 'column-gap': '↔',
   'font-size': 'Aa', 'line-height': '↕', 'letter-spacing': 'AV',
   'opacity': '◍', 'border-radius': '◜', 'z-index': 'Z', 'order': '#',
+  'border-top-left-radius': '◜', 'border-top-right-radius': '◝',
+  'border-bottom-left-radius': '◟', 'border-bottom-right-radius': '◞',
+  'border-top-width': '▭', 'border-right-width': '▭', 'border-bottom-width': '▭', 'border-left-width': '▭',
   'border-width': '▭', 'rotate': '∠',
 }
 
@@ -221,11 +273,12 @@ export const stripDefaultUnit = (prop, value) => {
   return CONTROLS[prop]?.coerce === coerceLength ? v.slice(0, -2) : value
 }
 
-export const displayValue = (prop, value) =>
+// computed：有的换算要看别的属性（字距的百分比按字号算）
+export const displayValue = (prop, value, computed) =>
   (BLANK_WHEN[prop] || []).includes(String(value ?? '').trim())
     ? ''
     : CONTROLS[prop]?.toDisplay
-      ? CONTROLS[prop].toDisplay(value)
+      ? CONTROLS[prop].toDisplay(value, computed)
       : stripDefaultUnit(prop, value)
 
 // 间距组用合并控件呈现，不逐条渲染
@@ -279,14 +332,32 @@ const defaultUnit = prop => {
   return String(coerce('1')).match(/[a-z%]+$/i)?.[0] || ''
 }
 
+// 面板会写出去的单位就这些。正则从文本尾巴上抠出来的东西不校验就直接拼回值里，
+// 框里一旦被污染（"45degdeg" —— 框里留着原文 45deg 又拼上 data-unit 的 deg）
+// 就会写出 46degdeg：一条被 CSSOM 静默丢弃的声明，元素不动而框里的数字照常往上走。
+// 认不出来的单位宁可不动，也好过让界面说谎。
+const STEP_UNITS = new Set([
+  // 长度
+  'px', 'em', 'rem', 'ex', 'ch', 'cap', 'ic', 'lh', 'rlh',
+  'vw', 'vh', 'vmin', 'vmax', 'svw', 'svh', 'lvw', 'lvh', 'dvw', 'dvh',
+  'cm', 'mm', 'q', 'in', 'pt', 'pc',
+  // 百分比 / 角度 / 时间 / 栅格
+  '%', 'deg', 'rad', 'grad', 'turn', 's', 'ms', 'fr',
+])
+
+const knownUnit = text => {
+  const u = String(text ?? '').match(/[a-z%]+$/i)?.[0]
+  return u && STEP_UNITS.has(u.toLowerCase()) ? u : ''
+}
+
 // 步进一个数值：无法数值化的值（normal / auto / inherit）回落到计算值；
 // 仍无法数值化时，要么落到 KEYWORD_START，要么返回 null
 // 表示这次按键应当忽略，而不是写入一个会被 CSSOM 丢弃的垃圾值。
-export const stepValue = (prop, raw, delta, fallback = '') => {
+export const stepValue = (prop, raw, delta, fallback = '', computed) => {
   const usable = v => /^-?[\d.]/.test(String(v ?? '').trim())
   // 步进在「面板显示」的空间里算：不透明度的框里是 0–100，计算值却是 0–1，
   // fallback 得先换到显示空间，min / max 也是按显示空间声明的
-  const shown = CONTROLS[prop]?.toDisplay ? CONTROLS[prop].toDisplay(fallback) : fallback
+  const shown = CONTROLS[prop]?.toDisplay ? CONTROLS[prop].toDisplay(fallback, computed) : fallback
   const source = usable(raw) ? String(raw).trim() : String(shown ?? '').trim()
 
   if (!usable(source)) return KEYWORD_START[prop] ?? null
@@ -306,8 +377,12 @@ export const stepValue = (prop, raw, delta, fallback = '') => {
   // 非法声明被 CSSOM 静默丢弃，元素纹丝不动而框里显示 46px，此后怎么敲都写不进去。
   // 所以先看 fallback（计算值 '45deg'）带的单位，再问这条属性的 coerce 该补什么。
   const fallbackText = String(fallback ?? '').trim()
-  const unit = source.match(/[a-z%]+$/i)?.[0]
-    || (usable(fallbackText) ? fallbackText.match(/[a-z%]+$/i)?.[0] : '')
+  // 框里的单位不认识就整步作废：拼一个 46degdeg 出去只会被 CSSOM 丢掉，
+  // 而框里的数字还是会往上走一格 —— 那正是「界面在说谎」的样子
+  const typed = source.match(/[a-z%]+$/i)?.[0]
+  if (typed && !STEP_UNITS.has(typed.toLowerCase())) return null
+  const unit = typed
+    || (usable(fallbackText) ? knownUnit(fallbackText) : '')
     || defaultUnit(prop)
   if (!unit) return UNITLESS_OR_LENGTH.has(prop) ? String(next) : `${next}px`
 

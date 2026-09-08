@@ -78,13 +78,41 @@ export const readComputed = el => {
   return out
 }
 
+// 圆角、粗细在 CSSOM 里各是四条长手，简写只在四边相等时读得出来：面板按角 / 按边
+// 改过之后 getPropertyValue('border-radius') 是空串，diff 会记成「圆角被删掉」，四条
+// 长手又各记一条。所以长手不进快照，统一从它们合成一条简写——相等就一个值，不等就按
+// 简写顺序四个值（圆角：左上 右上 右下 左下；粗细：上 右 下 左）。没在 inline 里写的
+// 那一边取计算值，合成出来的简写才是元素此刻真实的样子（撤销 / 导入写回去不会把
+// 那一边归零）。改动记录、导出、撤销都只认这一条。
+const SYNTH = {
+  'border-radius': ['border-top-left-radius', 'border-top-right-radius',
+                    'border-bottom-right-radius', 'border-bottom-left-radius'],
+  'border-width':  ['border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width'],
+}
+const SKIP_INLINE = new Set([...Object.keys(SYNTH), ...Object.values(SYNTH).flat()])
+
+const synthShorthand = (el, parts) => {
+  const style = el.style
+  const v = parts.map(p => style.getPropertyValue(p).trim())
+  if (!v.some(Boolean)) return ''
+  if (v.every(Boolean) && v.every(x => x === v[0])) return v[0]
+  const cs = getComputedStyle(el)
+  return parts.map((p, i) => v[i] || cs.getPropertyValue(p).trim() || '0px').join(' ')
+}
+
 export const readInline = el => {
   const style = el.style
-  return TRACKED_PROPS.reduce((acc, prop) => {
+  const out = TRACKED_PROPS.reduce((acc, prop) => {
+    if (SKIP_INLINE.has(prop)) return acc
     const val = style.getPropertyValue(prop)
     if (val) acc[prop] = val.trim()
     return acc
   }, {})
+  for (const [main, parts] of Object.entries(SYNTH)) {
+    const v = synthShorthand(el, parts)
+    if (v) out[main] = v
+  }
+  return out
 }
 
 // priority 单独存一份，不拼进值字符串。
@@ -97,7 +125,9 @@ export const readInlineImportant = el => {
   const style = el.style
   const out = new Set()
   for (const prop of TRACKED_PROPS)
-    if (style.getPropertyPriority(prop) === 'important') out.add(prop)
+    if (!SKIP_INLINE.has(prop) && style.getPropertyPriority(prop) === 'important') out.add(prop)
+  for (const [main, parts] of Object.entries(SYNTH))
+    if (parts.some(p => style.getPropertyPriority(p) === 'important')) out.add(main)
   return out
 }
 
@@ -223,6 +253,25 @@ export const revertText = snapshot => {
   return true
 }
 
+// 合成简写（SYNTH）的单条撤销要逐条长手来做，不能整条 removeProperty。
+//
+// 这两条简写是快照自己按 synthShorthand 拼出来的，CSSOM 并不承认：四条长手不齐时
+// probe.getPropertyValue('border-radius') 返回空串，于是走到「原本没有这条声明」
+// 那一支，对简写调 el.style.removeProperty('border-radius') —— 而删简写会一次删掉
+// 全部四条长手，把作者原本写在 inline 上、用户根本没碰过的那一角一起抹掉，页面落到
+// 一个从未存在过的状态（5.5.7：「没在 inline 里写的那一边取计算值……撤销 / 导入写
+// 回去不会把那一边归零」）。
+//
+// 所以按长手逐条还原：每条各自照快照原文写回或删除，元素上其余长手一概不碰。
+// important 也逐条从探针上取——比快照那份「任一长手 important 就算这条简写
+// important」的聚合更精确，往返不会把没带 important 的那几条也升上去。
+const revertSynth = (el, probe, parts) => parts.forEach(part => {
+  const was = probe.style.getPropertyValue(part)
+  was
+    ? el.style.setProperty(part, was, probe.style.getPropertyPriority(part))
+    : el.style.removeProperty(part)
+})
+
 // 单条撤销：把某个属性还原到快照状态
 // 原值从探针上按名取，而不是查 parseInlineStyle 的表：那张表是遍历
 // CSSStyleDeclaration 得来的，只有长属性——border-radius: 8px 在里面是四个
@@ -234,12 +283,29 @@ export const revertProp = (snapshot, prop) => {
   const { el, inlineStyle } = snapshot
   const probe = document.createElement('div')
   probe.style.cssText = inlineStyle || ''
+
+  if (SYNTH[prop]) return revertSynth(el, probe, SYNTH[prop])
+
   const original = probe.style.getPropertyValue(prop)
 
   original
     ? el.style.setProperty(prop, original, probe.style.getPropertyPriority(prop))
     : el.style.removeProperty(prop)
 }
+
+// 「这个属性此刻在 inline 上是什么」——给还原前后的比对用。
+// 直接问 CSSOM 的话，合成简写在四条长手不齐时返回空串：还原前后同为空串，
+// 一次真实的还原会被判成「什么都没发生」而进不了历史栈，⌘Z 救不回来。
+// 统一走 synthShorthand，与快照记录的是同一份表达。
+export const inlineValueOf = (el, prop) =>
+  SYNTH[prop] ? synthShorthand(el, SYNTH[prop]) : el.style.getPropertyValue(prop)
+
+// priority 同理：简写的 getPropertyPriority 要四条长手都 important 才算，
+// 这里对齐 readInlineImportant——任一长手带 important 就算这条简写带。
+export const inlinePriorityOf = (el, prop) =>
+  SYNTH[prop]
+    ? (SYNTH[prop].some(p => el.style.getPropertyPriority(p) === 'important') ? 'important' : '')
+    : el.style.getPropertyPriority(prop)
 
 // 全部重置：恢复原始 inline style 与原始文案
 export const revertAll = snapshot => {

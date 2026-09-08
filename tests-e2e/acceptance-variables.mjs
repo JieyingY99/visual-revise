@@ -287,6 +287,8 @@ AC('AC-6.32a', JSON.stringify(fillPages) === JSON.stringify(['自定义', '变�
   && JSON.stringify(fillTabs) === JSON.stringify(['none', 'solid', 'gradient', 'image']),
    `填充弹层顶上是 Custom | 变量，Custom 下仍是无 | 纯色 | 渐变 | 图片（${fillTabs.join(' / ')}）`)
 
+const pagesRow = await page.evaluate(x => [...document.getElementById(x).shadowRoot.querySelectorAll('[data-page]')].map(b => Math.round(b.getBoundingClientRect().top)), FILLPOP)
+AC('AC-6.32a2', pagesRow.length === 2 && pagesRow[0] === pagesRow[1], `两页并排在同一行（top ${pagesRow.join('/')}）`)
 await tap(page.locator(`#${FILLPOP} [data-page="variable"]`))
 await tap(page.locator(`#${FILLPOP} [data-item="--vr-ink"]`))
 const boundBottom = () => page.evaluate(() =>
@@ -492,9 +494,74 @@ const roundTrip = await page.evaluate(async () => {
     value: el.style.getPropertyValue('font-weight'),
   }
 })
-AC('AC-6.34e', roundTrip.schema === 5 && roundTrip.flagged
+AC('AC-6.34e', roundTrip.schema >= 5 && roundTrip.flagged
   && roundTrip.value === '700' && roundTrip.priority === 'important',
    `JSON 里 important 是独立字段（不拼进值），导出再导入后 priority 还在（${JSON.stringify(roundTrip)}）`)
+
+// ── 6.41 色盘下面的「On this page」 · 6.42 变量搜索 ──
+console.log('── 6.41 On this page · 6.42 变量搜索')
+// 造 30 个同色小块，它必然排第一；页面里原有的颜色排在后面
+await page.evaluate(() => { for (let i = 0; i < 30; i++) { const d = document.createElement('div'); d.className = 'pc-probe'; d.style.cssText = 'width:10px;height:10px;background:#123456;display:inline-block'; document.body.appendChild(d) } })
+// 再造 12 个半透明小块：色块得分成左实色 / 右透明两半
+await page.evaluate(() => { for (let i = 0; i < 12; i++) { const d = document.createElement('div'); d.className = 'pc-probe'; d.style.cssText = 'width:10px;height:10px;background:rgba(200, 30, 40, .5)'; document.body.appendChild(d) } })
+await select('#vplain', { x: 150, y: 70 })
+{
+  // 描边色的色盘（未绑定 → 自定义页）
+  await tap(P('section[data-group="stroke"] .add[data-add="stroke"]'))
+  await tap(P('section[data-group="stroke"] vr-color[data-prop="border-color"] .swatch'))
+  const pc = await page.evaluate(x => {
+    const r = document.getElementById(x).shadowRoot
+    const sw = [...r.querySelectorAll('.page-colors .pc-swatch')]
+    return { head: r.querySelector('.page-colors .pc-head')?.textContent.trim() ?? null, n: sw.length,
+      first: sw[0]?.dataset.color, counts: sw.map(b => +b.dataset.count), inCustom: !!r.querySelector('.sv') }
+  }, COLORPOP)
+  const sorted = pc.counts.every((c, i) => i === 0 || c <= pc.counts[i - 1])
+  AC('AC-6.41a', pc.head?.startsWith('On this page') && pc.n > 1 && pc.first === '#123456' && sorted && pc.inCustom,
+     `自定义页色盘下面有「On this page」：${pc.n} 个色块，按出现次数降序，第一个是 30 处的 #123456（${pc.counts.slice(0, 4).join('/')}）`)
+  await page.locator(`#${COLORPOP} .pc-swatch`).first().click(); await page.waitForTimeout(400)
+  const applied = await inline('vplain', 'border-color')
+  const shownVal = await page.evaluate(x => document.getElementById(x).shadowRoot.querySelector('.val')?.value, COLORPOP)
+  AC('AC-6.41b', applied === 'rgb(18, 52, 86)' && /123456/i.test(shownVal || ''),
+     `点色块直接应用到元素并载入色盘（border-color=${applied}，色值框 ${shownVal}）`)
+  await tap(page.locator(`#${COLORPOP} [data-page="variable"]`))
+  const varPage = await page.evaluate(x => { const r = document.getElementById(x).shadowRoot; return { pc: !!r.querySelector('.page-colors'), search: !!r.querySelector('.var-search input'), focused: r.activeElement?.tagName } }, COLORPOP)
+  AC('AC-6.41c', !varPage.pc, '变量页没有「On this page」（那是色盘的东西）')
+  // 6.42 搜索：打开即聚焦，敲字过滤，清空恢复，无匹配给提示
+  AC('AC-6.42a', varPage.search && varPage.focused === 'INPUT', `变量页顶部有搜索框且自动聚焦（焦点在 ${varPage.focused}）`)
+  await page.keyboard.type('ink'); await page.waitForTimeout(200)
+  const filtered = await page.evaluate(x => [...document.getElementById(x).shadowRoot.querySelectorAll('[data-item]')].filter(r => getComputedStyle(r).display !== 'none').map(r => r.dataset.item), COLORPOP)
+  await page.keyboard.press('Meta+a'); await page.keyboard.type('zzz-no-such'); await page.waitForTimeout(200)
+  const miss = await page.evaluate(x => { const r = document.getElementById(x).shadowRoot; return { visible: [...r.querySelectorAll('[data-item]')].filter(i => getComputedStyle(i).display !== 'none').length, miss: r.querySelector('.var-miss')?.hidden === false } }, COLORPOP)
+  await page.keyboard.press('Meta+a'); await page.keyboard.press('Backspace'); await page.waitForTimeout(200)
+  const restored = await page.evaluate(x => [...document.getElementById(x).shadowRoot.querySelectorAll('[data-item]')].filter(r => getComputedStyle(r).display !== 'none').length, COLORPOP)
+  AC('AC-6.42b', filtered.length > 0 && filtered.every(n => n.includes('ink')) && miss.visible === 0 && miss.miss && restored > filtered.length,
+     `敲 ink 只剩含 ink 的 ${filtered.length} 个（${filtered.join(',')}），无匹配时给提示，清空后恢复 ${restored} 个`)
+  await page.keyboard.press('Escape'); await page.waitForTimeout(250)
+  // 填充弹层的纯色页同样有 On this page。已绑定的层打开直接是变量页，先加一层未绑定的纯色再开
+  await tap(P('section[data-group="fill"] .add[data-add="fill"]'))
+  await tap(P('section[data-group="fill"] vr-fill[data-layer="0"] .swatch'))
+  const fillPc = await page.evaluate(x => !!document.getElementById(x).shadowRoot.querySelector('.page-colors .pc-swatch'), FILLPOP)
+  AC('AC-6.41d', fillPc, '填充弹层的纯色页同样有「On this page」')
+  // 6.41e 实线边框；6.41f 半透明色分两半：左实色、右真实渲染，不透明的整块一色
+  const sw = await page.evaluate(x => {
+    const r = document.getElementById(x).shadowRoot
+    const all = [...r.querySelectorAll('.page-colors .pc-swatch')]
+    const opaque = all.find(b => b.dataset.color === '#123456')
+    const alpha = all.find(b => b.dataset.color === '#c81e2880')
+    const halves = el => [...el.querySelectorAll('b')].map(b => ({ bg: getComputedStyle(b).backgroundColor, w: b.getBoundingClientRect().width }))
+    return { border: opaque && getComputedStyle(opaque).borderTopStyle, borderW: opaque && getComputedStyle(opaque).borderTopWidth,
+      opaque: opaque && halves(opaque), alpha: alpha && halves(alpha), alphaBox: alpha && alpha.getBoundingClientRect().width }
+  }, FILLPOP)
+  AC('AC-6.41e', sw.border === 'solid' && sw.borderW === '1px', `色块是 1px 实线边框（${sw.borderW} ${sw.border}）`)
+  const ok41f = sw.alpha?.length === 2 && sw.alpha[0].bg === 'rgb(200, 30, 40)' && sw.alpha[1].bg === 'rgba(200, 30, 40, 0.5)'
+    && Math.abs(sw.alpha[0].w - sw.alpha[1].w) < 1 && sw.opaque?.length === 1
+  AC('AC-6.41f', ok41f, `半透明色块分两半：左 ${sw.alpha?.[0]?.bg} / 右 ${sw.alpha?.[1]?.bg}（各占一半）；不透明的整块一色（${sw.opaque?.length} 块）`)
+  await page.locator(`#${FILLPOP} .pc-swatch[data-color="#c81e2880"]`).click(); await page.waitForTimeout(300)
+  const appliedAlpha = await page.evaluate(() => document.getElementById('vplain').style.backgroundImage || document.getElementById('vplain').style.backgroundColor)
+  AC('AC-6.41f', /rgba\(200, 30, 40, 0\.5\)|#c81e2880/i.test(appliedAlpha), `点半透明色块应用的是带透明度的原色（${appliedAlpha}）`)
+  await page.keyboard.press('Escape'); await page.waitForTimeout(250)
+  await page.evaluate(() => document.querySelectorAll('.pc-probe').forEach(n => n.remove()))
+}
 
 await browser.close(); await close()
 console.log(`\n合计：${passed} 通过 / ${failed} 失败\n`)

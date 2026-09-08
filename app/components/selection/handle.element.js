@@ -68,6 +68,15 @@ export class Handle extends HTMLElement {
     // 跳回原点再重新位移。
     const initialTranslate = parseTranslate(initialStyle.translate)
 
+    // 拖之前的行内值。拖动期间直接写 style（每帧一次，走记录太贵），松手后
+    // 把「之前 → 之后」交给 visual-revise 记进 ChangeStore：改动记录靠快照
+    // 差异本来就看得见这次改动，但历史栈里没有条目，⌘Z 撤不回来
+    const before = {
+      width: sourceEl.style.width,
+      height: sourceEl.style.height,
+      translate: sourceEl.style.translate,
+    }
+
     const originalElTransition = sourceEl.style.transition
     const originalDocumentCursor = document.body.style.cursor
     const originalDocumentUserSelect = document.body.style.userSelect
@@ -181,6 +190,10 @@ export class Handle extends HTMLElement {
       document.body.style.cursor = originalDocumentCursor
       document.body.style.userSelect = originalDocumentUserSelect
       sourceEl.style.transition = originalElTransition
+      // 最后一帧的写入还排在 rAF 里，等它落地再通知，否则读到的是上一帧的值
+      requestAnimationFrame(() => document.dispatchEvent(new CustomEvent('visual-revise:resized', {
+        detail: { el: sourceEl, before },
+      })))
     }
   }
 

@@ -14,7 +14,8 @@
 // 现给（面板给每个控件挂 variablesProvider），零序列化也天然拿到最新数据。
 
 import { PANEL_STYLE, clamp, pickerMarkup, createPicker } from './picker.js'
-import { mountPopover } from './popover-host.js'
+import { mountPopover, visibleSize, popoverBounds } from './popover-host.js'
+import { renderPageColors } from './page-colors.js'
 
 const PANEL_ID = 'visual-revise-color-panel'
 
@@ -31,8 +32,16 @@ const SIBLING_PANELS = [
 const CHECK = `<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor"
   stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5 6.5 12 13 4.5"/></svg>`
 
+const SEARCH_ICON = `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
+  stroke-width="1.6" stroke-linecap="round"><circle cx="7" cy="7" r="4.2"/><path d="m10.3 10.3 3 3"/></svg>`
+
 const S = {
   pages: `display:flex;gap:2px;padding:2px;margin-bottom:12px;background:#2a2a2a;border-radius:7px`,
+  // 变量搜索：放大镜 + 输入即过滤，Figma 变量面板顶上那一条
+  search: `display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;margin-bottom:6px;
+    background:#383838;border-radius:5px;color:#8c8c8c`,
+  searchInput: `flex:1;min-width:0;height:100%;padding:0;font:400 12px/1 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+    color:#fff;background:transparent;border:none;outline:none`,
   pageBtn: `flex:1;display:flex;align-items:center;justify-content:center;gap:5px;height:26px;
     font:400 11px/1 -apple-system,system-ui,sans-serif;color:#9b9b9b;background:transparent;
     border:none;border-radius:5px;cursor:pointer`,
@@ -102,7 +111,7 @@ addEventListener('resize', () => closeColorPopover())
  * 变量列表。填充弹层也用同一份，两边的行长得一样。
  * variables: [{ name, value }]；bound: 当前绑着的变量名；others: 被类型过滤掉的个数
  */
-export const renderVariableList = (container, { variables, bound, others = 0, onPick } = {}) => {
+export const renderVariableList = (container, { variables, bound, others = 0, onPick, autofocus = true } = {}) => {
   const list = variables || []
   if (!list.length) {
     container.innerHTML = `<div style="${S.empty}">${others
@@ -110,6 +119,13 @@ export const renderVariableList = (container, { variables, bound, others = 0, on
       : '页面上没有定义 CSS 变量'}</div>`
     return
   }
+
+  // 搜索：几十个变量靠滚动找太慢，敲几个字母就过滤；打开时直接聚焦，手不用离开键盘
+  const search = document.createElement('div')
+  search.className = 'var-search'
+  search.style.cssText = S.search
+  search.innerHTML = `${SEARCH_ICON}<input type="text" placeholder="搜索变量" style="${S.searchInput}" aria-label="搜索变量">`
+  const input = search.querySelector('input')
 
   const box = document.createElement('div')
   box.style.cssText = S.list
@@ -148,8 +164,30 @@ export const renderVariableList = (container, { variables, bound, others = 0, on
     box.appendChild(row)
   }
 
+  // 输入即过滤：按名字做不区分大小写的子串匹配；一个都不剩时给一行提示
+  const miss = document.createElement('div')
+  miss.className = 'var-miss'
+  miss.style.cssText = S.empty
+  miss.hidden = true
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase()
+    let shown = 0
+    for (const row of box.children) {
+      const hit = !q || row.dataset.item.toLowerCase().includes(q)
+      // 行的行内样式写着 display:flex，hidden 属性（UA 的 display:none）压不过它——
+      // 第一版只设 hidden，肉眼看列表纹丝不动。display 要直接改
+      row.hidden = !hit
+      row.style.display = hit ? 'flex' : 'none'
+      if (hit) shown++
+    }
+    miss.hidden = shown > 0
+    miss.style.display = shown ? 'none' : ''
+    miss.textContent = shown ? '' : `没有匹配「${input.value.trim()}」的变量`
+  })
+
   container.innerHTML = ''
-  container.appendChild(box)
+  container.append(search, box, miss)
+  if (autofocus) requestAnimationFrame(() => input.focus())
 }
 
 /**
@@ -211,6 +249,15 @@ export const openColorPopover = (anchor, opts = {}) => {
       },
     })
     state.picker.set(opts.value)
+
+    // 色盘下面：页面上出现过的颜色。弹层开着期间只扫一次，切页回来不重扫
+    state.pageColors = renderPageColors(body, {
+      colors: state.pageColors,
+      onPick: css => {
+        state.picker.set(css)
+        opts.onColor?.(css, state.format)
+      },
+    })
   }
 
   const renderPages = () => {
@@ -233,12 +280,16 @@ export const openColorPopover = (anchor, opts = {}) => {
   // 直接漏出屏幕底部。定位必须在内容铺开之后：空壳的 offsetHeight 接近 0，
   // 夹了等于没夹。
   const place = () => {
+    // 宿主被 popover-host 加了 scale(1/k)：offsetWidth/offsetHeight 是缩之前的
+    // 布局盒，rect 却是缩过的视口坐标。右对齐的 left = rect.right − w 用没缩过的
+    // w 会让右缘恒定偏出 w·(1−1/k)，夹取也会多留一圈边——一律换成可见尺寸。
+    // 视口边界走 popoverBounds()（viewportBox()），捏合放大时才夹得住。
     const rect = anchor.getBoundingClientRect()
-    const w = host.offsetWidth || 272
-    const h = host.offsetHeight
+    const { w, h } = visibleSize(host, { w: 272 })
+    const b = popoverBounds()
     const left = opts.align === 'right' ? rect.right - w : rect.left - w - 2
-    host.style.left = `${clamp(left, 8, Math.max(8, innerWidth - w - 8))}px`
-    host.style.top = `${clamp(rect.top, 8, Math.max(8, innerHeight - h - 8))}px`
+    host.style.left = `${clamp(left, b.minLeft, b.maxLeft(w))}px`
+    host.style.top = `${clamp(rect.top, b.minTop, b.maxTop(h))}px`
   }
 
   renderPages()

@@ -118,7 +118,7 @@ const exported = await page.evaluate(() => {
   return exportJSON({ url: 'http://example.test', viewport: '1440 × 900' })
 })
 
-ok(exported.schema === 5, `JSON 含 schema 版本：${exported.schema}`)
+ok(exported.schema >= 5, `JSON 含 schema 版本：${exported.schema}`)
 ok(Array.isArray(exported.assets),
    'v2 带 assets 字段（图片 base64 内嵌，导入方才拿得到换图用的那张图）')
 ok(Array.isArray(exported.moves), 'v3 带 moves 字段（移动只出不进的话导入端记录数会对不上）')

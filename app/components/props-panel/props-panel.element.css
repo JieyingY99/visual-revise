@@ -49,7 +49,7 @@
 header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   padding: 10px 10px 10px 12px;
   border-bottom: 1px solid var(--vr-divider);
   cursor: grab;
@@ -111,6 +111,7 @@ header:active { cursor: grabbing; }
 .dims,
 .side-pair,
 .limits,
+.split-row,
 .with-action,
 .flow-row,
 .typo-align { align-items: stretch; }
@@ -121,6 +122,7 @@ header:active { cursor: grabbing; }
 .dims > .icon-btn,
 .side-pair > .icon-btn,
 .limits > .icon-btn,
+.split-row > .icon-btn,
 .with-action > .icon-btn,
 .flow-row > .icon-btn,
 .typo-align > .icon-btn { height: auto; width: auto; aspect-ratio: 1 / 1; align-self: stretch; }
@@ -233,8 +235,8 @@ h3:hover .acts .var-btn { opacity: 1; }
 .icon-btn[disabled] { opacity: .3; cursor: not-allowed; }
 .icon-btn[disabled]:hover { background: transparent; color: var(--vr-label); }
 
-.layers { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.layer-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.layers { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.layer-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
 /* 填充控件和颜色控件自己都是 flex 容器（色块 + 输入区）。这一条 min-width: 0
    缺不得：flex 子项默认按内容算最小宽度，色值框里的等宽字体会把整行顶宽，
    把右边的眼睛和减号挤出面板——按钮还在，只是画到了看不见的地方。 */
@@ -309,7 +311,7 @@ section[folded] .rows { display: none; }
 /* ── 字段：标签在控件上方 ── */
 .rows { display: grid; gap: 12px; }
 
-.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
 
 .field { display: grid; gap: 5px; min-width: 0; }
 
@@ -365,7 +367,8 @@ input {
   position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
   font-size: 11px; color: var(--vr-label); pointer-events: none;
 }
-.control:has(.suffix) input { padding-right: 26px; }
+.suffix:empty { display: none; }
+.control:has(.suffix:not(:empty)) input { padding-right: 26px; }
 input:hover { background: var(--vr-field-hi); }
 input:focus { border-color: var(--vr-accent); background: var(--vr-field); }
 input::placeholder { color: var(--vr-mute); }
@@ -411,12 +414,28 @@ input::placeholder { color: var(--vr-mute); }
    三种混用，上下两行的间距一眼看得出不一样。 */
 .dims,
 .side-pair,
-.limits {
+.limits,
+.split-row {
   display: grid;
   grid-template-columns: 1fr 1fr minmax(32px, auto);
-  gap: 6px;
+  gap: 4px;
 }
 .dims .control { min-width: 0; }
+/* 圆角行：三个子项都是 field（标签 + 一层），按钮那格用占位标签把高度补齐，
+   按钮本身 32×32 落在输入框那一层 */
+.split-row .corner-cell .icon-btn { width: 32px; height: 32px; }
+.split-row .corners-btn[data-on] {
+  background: rgb(13 153 255 / .16);
+  color: var(--vr-accent);
+}
+/* 拆分行 + 展开网格是同一个字段的延续：行与网格之间用控件间距 4px，不是字段行距 */
+.split-block { display: grid; gap: 4px; }
+/* 展开的四角 / 四边：跟上面那一行用同一套三列模板（两列 + 按钮列），第三列留空，
+   四个框才能跟上面两个输入框的左右边缘严丝合缝；两列铺满整行的话右列会伸到按钮底下 */
+.split-grid { display: grid; grid-template-columns: 1fr 1fr minmax(32px, auto); gap: 4px; }
+.split-grid .control { min-width: 0; }
+.split-grid > :nth-child(odd)  { grid-column: 1; }
+.split-grid > :nth-child(even) { grid-column: 2; }
 .dims .ratio[data-on] {
   background: rgb(13 153 255 / .16);
   color: var(--vr-accent);
@@ -444,27 +463,27 @@ input::placeholder { color: var(--vr-mute); }
 .segment button:hover { color: var(--vr-text); }
 .segment button[data-on] { background: var(--vr-field-hi); color: var(--vr-text); box-shadow: 0 1px 2px rgb(0 0 0 / .25); }
 
-/* 四值：上/右在第一行，下/左在第二行，联动锁跨两行。
-   必须显式指定位置——流式排列会把四个输入和锁挤成 3+2 两行。 */
+/* 四值：上/右在第一行，下/左在第二行，跟收起态的两段式用同一套三列模板
+   （两列 + 按钮列），四个框才和上面的两个框对齐；收回按钮落在第一行第三列。
+   必须显式指定位置——流式排列会把四个输入和按钮挤成 3+2 两行。 */
 .sides {
   display: grid;
-  grid-template-columns: 1fr 1fr auto;
+  grid-template-columns: 1fr 1fr minmax(32px, auto);
   grid-template-rows: auto auto;
-  gap: 6px;
+  gap: 4px;
 }
 .sides .control { min-width: 0; }
 .sides .control:nth-of-type(1) { grid-area: 1 / 1; }
 .sides .control:nth-of-type(2) { grid-area: 1 / 2; }
 .sides .control:nth-of-type(3) { grid-area: 2 / 1; }
 .sides .control:nth-of-type(4) { grid-area: 2 / 2; }
-.sides .lock { grid-area: 1 / 3 / 3 / 4; width: 26px; height: auto; }
-/* 联动锁跨两行，用实心强调色会盖过它旁边的输入框本身 */
-.sides .lock[data-on] {
+.sides .collapse-sides { grid-area: 1 / 3; width: 32px; height: 32px; }
+.sides .collapse-sides[data-on] {
   background: rgb(13 153 255 / .16);
   color: var(--vr-accent);
 }
 
-.with-action { display: flex; gap: 6px; align-items: center; }
+.with-action { display: flex; gap: 4px; align-items: center; }
 /* 字体那行的主控件从 .control 换成了 vr-select，伸展规则要一起认上，
    否则下拉框只占自身内容宽，右边空一大片 */
 .with-action .control,
@@ -589,6 +608,18 @@ input::placeholder { color: var(--vr-mute); }
 .resize-cell:focus-within,
 .control.limit:focus-within { border-color: var(--vr-accent); background: var(--vr-field); }
 
+/* 这两种框的右边已经站着模式钮 / × 钮，单位后缀不能再绝对定位贴到最右去压在它们
+   身上：改成跟在数字后面的普通流内元素，px 时照旧 :empty 隐藏、一点不占地方 */
+.resize-cell .suffix,
+.control.limit .suffix {
+  position: static;
+  transform: none;
+  flex: none;
+  margin-right: 2px;
+}
+.resize-cell:has(.suffix:not(:empty)) input,
+.control.limit:has(.suffix:not(:empty)) input { padding-right: 2px; }
+
 .resize-cell .mode {
   flex: none;
   display: grid;
@@ -644,7 +675,7 @@ input::placeholder { color: var(--vr-mute); }
 .limits .drop-limit:hover { background: #4a3030; color: var(--vr-text); }
 
 /* ── Layout：Flow ── */
-.flow-row { display: flex; gap: 6px; align-items: center; }
+.flow-row { display: flex; gap: 4px; align-items: center; }
 
 .segment.flow { flex: 1; }
 .segment.flow button {
@@ -705,11 +736,6 @@ input::placeholder { color: var(--vr-mute); }
 
 .side-pair .prefix { display: grid; place-items: center; }
 
-.sides-expanded { position: relative; }
-.sides-expanded .collapse-sides {
-  position: absolute;
-  top: 0; right: 0;
-}
 
 /* ── 裁剪内容 ── */
 .checkbox-field {
@@ -746,7 +772,7 @@ input::placeholder { color: var(--vr-mute); }
 .track {
   display: grid;
   grid-template-columns: 16px 1fr 1fr 20px;
-  gap: 6px;
+  gap: 4px;
   align-items: center;
 }
 .track + .track { margin-top: 6px; }
@@ -797,8 +823,8 @@ input::placeholder { color: var(--vr-mute); }
 .typo-pair {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px;
+  gap: 4px;
 }
 
-.typo-align { display: flex; gap: 6px; align-items: center; }
+.typo-align { display: flex; gap: 4px; align-items: center; }
 .typo-align .segment { flex: 1; min-width: 0; }

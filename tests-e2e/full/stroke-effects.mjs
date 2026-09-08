@@ -184,12 +184,13 @@ const wPrefix = await page.evaluate(() => {
   const field = inp?.closest('.field')
   return {
     prefix: inp?.closest('.control')?.querySelector('.prefix')?.textContent?.trim() ?? null,
-    paired: !!field?.parentElement?.classList.contains('pair'),
+    // 粗细行现在是「样式 | 粗细 | 四边独立按钮」三格的 .split-row
+    paired: !!field?.parentElement?.classList.contains('split-row'),
     pairedWith: !!field?.parentElement?.querySelector('vr-select[data-prop="border-style"]'),
   }
 })
 T('2.9.2', wPrefix.prefix === '▭', `粗细输入框的前缀是 ▭（实得 ${JSON.stringify(wPrefix.prefix)}）`)
-T('2.9.2', wPrefix.paired && wPrefix.pairedWith, '粗细与「样式」并排在同一行（FIELD_PAIRS）')
+T('2.9.2', wPrefix.paired && wPrefix.pairedWith, '粗细与「样式」并排在同一行（.split-row，样式在左粗细在右）')
 
 const wInput = S('stroke', 'input[data-prop="border-width"]')
 await wInput.scrollIntoViewIfNeeded()

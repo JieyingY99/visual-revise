@@ -8,6 +8,10 @@ import { downloadJSON, pickAndImport } from '../../core/json-io.js'
 import { containScroll } from '../../core/dom-utils.js'
 import { fileNameOf, parseCssUrl } from '../../core/image-source.js'
 import { default as list_css } from './change-list.element.css'
+import { zoomFactor, onZoom, screenPos, fromScreen, viewportBox, rightOf, topOf, viewportMaxHeight } from '../../core/zoom.js'
+
+// 样式表里的默认位置（top / right）和 max-height 里扣掉的高度，网页缩放时要按倍数换算
+const DEFAULT = { top: 88, right: 304, reserve: 104 }
 
 
 // dataUrl 有几十万字符，原样塞进列表会把面板撑爆；长 URL 只留文件名，
@@ -41,6 +45,16 @@ export class ChangeList extends HTMLElement {
   #frame = null
   #built = false
   #releaseScroll = null
+  // 拖过之后的屏幕坐标；null 表示还在样式表里的默认位置（面板左侧）
+  #screen = null
+  #offZoom = null
+  // 页面上当前选中的元素：它们的条目高亮。#follow 表示选中刚变过（或列表刚
+  // 打开），下一次套用高亮时要把第一组滚进可见区；记录变化引起的重渲染不滚，
+  // 免得用户正在列表里翻，一改属性就被拽回去
+  #selected = []
+  #follow = false
+
+  static get observedAttributes() { return ['hidden'] }
 
   constructor() {
     super()
@@ -50,6 +64,8 @@ export class ChangeList extends HTMLElement {
   connectedCallback() {
     this.setAttribute('data-visual-revise-ui', '')
     this.addEventListener('keydown', e => e.stopPropagation())
+    this.syncZoom()
+    this.#offZoom = onZoom(() => this.syncZoom())
     this.#shadow.innerHTML = `<style>${list_css}</style><div id="root"></div>`
     this.#buildSkeleton()
     this.#releaseScroll = containScroll(this, () => this.#shadow.querySelector('.items'))
@@ -57,7 +73,47 @@ export class ChangeList extends HTMLElement {
     this.render()
   }
 
+  attributeChangedCallback(name) {
+    // 列表从关到开：按当前选中高亮并滚到位（关着时滚动量不算数）
+    if (name === 'hidden' && !this.hidden && this.#built) {
+      this.#follow = true
+      this.#applySelection()
+    }
+  }
+
+  // 页面上选中了哪些元素。它们的条目持续高亮，第一组滚进可见区；换选移走，
+  // 取消选中清掉。只做「选中 → 列表」这一个方向
+  setSelected(els) {
+    this.#selected = Array.from(els || []).filter(el => el?.nodeType === 1)
+    this.#follow = true
+    this.#applySelection()
+  }
+
+  #applySelection() {
+    const shadow = this.#shadow
+    const box = shadow.querySelector('.items')
+    if (!box) return
+    const picked = new Set(this.#selected)
+    let first = null
+    for (const item of shadow.querySelectorAll('.item')) {
+      const el = this.#elementOf(item.dataset.id, item.dataset.kind)
+      const on = !!el && picked.has(el)
+      on ? item.setAttribute('data-selected', '') : item.removeAttribute('data-selected')
+      if (on && !first) first = item
+    }
+    if (!this.#follow) return
+    this.#follow = false
+    if (!first || this.hidden) return
+    // 不在可见区才滚，滚到中间。直接改 scrollTop 而不用 scrollIntoView：
+    // 后者会连页面一起滚，列表是 fixed 的，页面不该动
+    const r = first.getBoundingClientRect(), b = box.getBoundingClientRect()
+    if (r.top >= b.top && r.bottom <= b.bottom) return
+    box.scrollTop += (r.top - b.top) - (b.height - r.height) / 2
+  }
+
   disconnectedCallback() {
+    this.#offZoom?.()
+    this.#offZoom = null
     this.#unsubscribe?.()
     this.#releaseScroll?.()
     if (this.#frame) cancelAnimationFrame(this.#frame)
@@ -128,6 +184,15 @@ export class ChangeList extends HTMLElement {
     const showStyles   = this.#tab === 'all' || this.#tab === 'style'
     const showComments = this.#tab === 'all' || this.#tab === 'comment'
 
+    // 替换（⌘⇧R）落成「新增 + 删除」一对记录。删除那条自己不知道这件事，
+    // 靠新增那条 replaced 反查——两条都在列表里，但都标成「替换」，
+    // 用户才不会以为自己既加了一个又删了一个。
+    // 两把钥匙：本会话用元素编号 id 精确对上；从 JSON 导入的记录换了页面、
+    // 编号早已不同，只剩 identity（标签 + 稳定类名 + 首条文本）可以对
+    const replacedKeys = new Set(
+      inserts.flatMap(i => [i.replaced?.id, i.replaced?.identity]).filter(Boolean))
+    const wasReplaced = r => replacedKeys.has(r.id) || (!!r.identity && replacedKeys.has(r.identity))
+
     const items = [
       ...(showStyles ? edits.map(e => this.#renderEdit(e)) : []),
       // 新增、移动和删除都是结构改动，归在「配置」这一栏。
@@ -135,7 +200,7 @@ export class ChangeList extends HTMLElement {
       // 按这个顺序读下来才讲得通
       ...(showStyles ? inserts.map(i => this.#renderInsert(i)) : []),
       ...(showStyles ? moves.map(m => this.#renderMove(m)) : []),
-      ...(showStyles ? removals.map(r => this.#renderRemoval(r)) : []),
+      ...(showStyles ? removals.map(r => this.#renderRemoval(r, wasReplaced(r))) : []),
       ...(showComments ? comments.map(c => this.#renderComment(c)) : []),
     ]
 
@@ -145,6 +210,7 @@ export class ChangeList extends HTMLElement {
       : '<div class="empty">还没有任何改动<br>在页面上选中元素并调整属性</div>'
 
     this.#bindItems()
+    this.#applySelection()
   }
 
   #renderEdit(entry) {
@@ -186,11 +252,16 @@ export class ChangeList extends HTMLElement {
     </div>`
   }
 
-  #renderRemoval(r) {
+  // wasReplaced：这条删除是一次替换的另一半（新元素那条在上面）。
+  // 不把它藏起来，因为它是这个旧元素唯一的记录入口——锚点、「放回原位」按钮、
+  // 以及提示词里「请在源码里删掉它」那段都挂在这条上；藏了就等于让用户
+  // 在列表里看不到自己换掉了什么，也没法只把旧的那个放回来。
+  #renderRemoval(r, wasReplaced = false) {
     const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
     // 父元素自己也被删掉（或页面重渲染换掉了整棵树）时，没有可插回的位置
     const restorable = ChangeStore.canRestore(r)
     const detail = [
+      wasReplaced ? '被替换掉的原元素' : '',
       r.text || `<${r.tag}>`,
       r.childCount ? `${r.childCount} 个子元素` : '',
     ].filter(Boolean).join(' · ')
@@ -199,7 +270,7 @@ export class ChangeList extends HTMLElement {
       <div class="item-head">
         <span class="sel" title="${esc(r.anchors.selector)}">${shortSelector(r.anchors)}</span>
         ${GONE_BADGE(r)}
-        <span class="badge" data-kind="removal">已删除</span>
+        <span class="badge" data-kind="removal">${wasReplaced ? '替换 · 原元素' : '已删除'}</span>
         <button class="icon-btn restore" data-id="${r.id}"${restorable ? '' : ' disabled'}
           title="${restorable ? '放回原位' : '父元素已不在页面上，放不回去'}">↺</button>
       </div>
@@ -219,6 +290,14 @@ export class ChangeList extends HTMLElement {
       ? `放在 ${esc(parent)} 末尾`
       : `插在 ${esc(parent)} 里的 ${esc(shortSelector(r.nextAnchors))} 之前`
 
+    // 替换（⌘⇧R）：位置说了等于没说——用户要认的是「顶掉了谁」。
+    // 旧元素的那条删除记录还在下面，两条一起读才是完整的一次替换
+    const old = r.replaced
+    const oldBrief = old
+      ? [`<${old.tag}>`, old.text].filter(Boolean).join(' ').trim()
+      : ''
+    const line = old ? `原来是 ${esc(oldBrief)} · ${where}` : where
+
     // outerHTML 可以是整棵子树，列表里只留开头一截够认出是什么
     const html = String(r.html ?? '').replace(/\s+/g, ' ').trim()
     const brief = html.length > 60 ? html.slice(0, 60) + '…' : html
@@ -227,11 +306,11 @@ export class ChangeList extends HTMLElement {
       <div class="item-head">
         <span class="sel" title="${esc(brief)}">${esc(brief) || '新元素'}</span>
         ${GONE_BADGE(r)}
-        <span class="badge" data-kind="insert">${esc(r.label || '新增元素')}</span>
+        <span class="badge" data-kind="insert">${esc(old ? '替换' : (r.label || '新增元素'))}</span>
         <button class="icon-btn remove-insert" data-id="${esc(r.id)}"
-          title="移除这个新增的元素">↺</button>
+          title="${old ? '移除换上来的这个元素' : '移除这个新增的元素'}">↺</button>
       </div>
-      <div class="comment-text">${where}</div>
+      <div class="comment-text">${line}</div>
     </div>`
   }
 
@@ -337,11 +416,13 @@ export class ChangeList extends HTMLElement {
 
     on('.item', 'click', e => {
       if (e.target.closest('button')) return
-      const el = this.#elementOf(e.currentTarget.dataset.id, e.currentTarget.dataset.kind)
+      const { id, kind } = e.currentTarget.dataset
+      const el = this.#elementOf(id, kind)
       if (!el?.isConnected) return
       el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      // 评论条目点开的是那条评论的编辑框，不是属性面板：用户点它是想改评论
       this.dispatchEvent(new CustomEvent('vr-locate', {
-        bubbles: true, composed: true, detail: { el },
+        bubbles: true, composed: true, detail: { el, kind, id },
       }))
     })
 
@@ -397,6 +478,28 @@ export class ChangeList extends HTMLElement {
     })
   }
 
+  // 网页缩放到 k 倍时反向缩回 1/k，屏幕上大小、位置都不变。没拖过的以右上角
+  // 为原点缩（样式表里 top / right 定位），贴边距离除以 k；拖过的按记住的
+  // 屏幕坐标换算回 CSS 坐标放回去。
+  syncZoom() {
+    const k = zoomFactor()
+    this.style.transform = k === 1 ? '' : `scale(${1 / k})`
+    this.style.maxHeight = viewportMaxHeight(k, DEFAULT.reserve)
+    if (this.#screen) {
+      const at = fromScreen(this.#screen)
+      this.style.transformOrigin = 'top left'
+      this.style.right = 'auto'
+      this.style.left = `${at.left}px`
+      this.style.top = `${at.top}px`
+      return
+    }
+    const b = viewportBox()
+    const plain = k === 1 && b.left === 0 && b.top === 0
+    this.style.transformOrigin = 'top right'
+    this.style.top = plain ? '' : `${topOf(DEFAULT.top, k)}px`
+    this.style.right = plain ? '' : `${rightOf(DEFAULT.right, k)}px`
+  }
+
   #makeDraggable(handle) {
     if (!handle) return
     handle.addEventListener('pointerdown', e => {
@@ -408,6 +511,8 @@ export class ChangeList extends HTMLElement {
       const offY = e.clientY - rect.top
 
       const move = ev => {
+        // 网页缩放着的话，改成左上角定位后缩放原点也得跟着换到左上角
+        this.style.transformOrigin = 'top left'
         this.style.left = `${ev.clientX - offX}px`
         this.style.top = `${ev.clientY - offY}px`
         this.style.right = 'auto'
@@ -416,6 +521,7 @@ export class ChangeList extends HTMLElement {
         handle.releasePointerCapture(ev.pointerId)
         handle.removeEventListener('pointermove', move)
         handle.removeEventListener('pointerup', up)
+        this.#screen = screenPos(this)
       }
       handle.addEventListener('pointermove', move)
       handle.addEventListener('pointerup', up)

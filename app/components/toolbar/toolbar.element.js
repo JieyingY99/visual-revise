@@ -4,6 +4,11 @@
  */
 import { ChangeStore } from '../../core/change-store.js'
 import { default as bar_css } from './toolbar.element.css'
+import { zoomFactor, onZoom, screenPos, fromScreen, viewportBox, topOf } from '../../core/zoom.js'
+import { combo } from '../../core/hotkey.js'
+
+// 样式表里的默认顶边距离，网页缩放时要按倍数换算
+const TOP = 20
 
 // 线性图标，24×24 视框、圆角端点——与 Lucide 同一套几何规范，保证并排时
 // 视觉重量一致。描边 1.5 而不是 2：并排一整排时 2px 会糊成一团黑，
@@ -71,8 +76,8 @@ const MODES = [
   // 而不是按 R 另弹一个浮层、还要在两块 UI 之间来回对。
 ]
 
-// 关闭没有自定义快捷键：⌥⇧D 是浏览器命令，按一下就把编辑器收起来，
-// 本来就是唤起用的那个键
+// 关闭没有自定义快捷键：⌥⇧D（Windows 上 Alt+Shift+D）是浏览器命令，
+// 按一下就把编辑器收起来，本来就是唤起用的那个键
 // 方向记在本地，下次注入沿用。localStorage 在无痕窗口或被策略禁掉时会直接抛，
 // 所以读写都得兜住——记不住只是少了个便利，不该让整条工具条挂掉。
 const ORIENTATION_KEY = 'visual-revise:orientation'
@@ -87,13 +92,15 @@ const writeOrientation = vertical => {
   catch { /* 记不住就算了 */ }
 }
 
+// 带修饰键的那几条走 combo()：写死 ⌘ / ⌥ 的话，Windows 用户看到的是
+// 自己键盘上根本没有的键。顺序与连接符由 core/hotkey.js 按平台归一化
 const TIPS = {
   layout: ['切换布局方向', ''],
   list:  ['改动记录', 'L'],
   copy:  ['复制提示词', 'P'],
-  undo:  ['撤销', '⌘Z'],
-  redo:  ['重做', '⌘⇧Z'],
-  close: ['关闭编辑器', '⌥⇧D'],
+  undo:  ['撤销', combo({ mod: true }, 'Z')],
+  redo:  ['重做', combo({ mod: true, shift: true }, 'Z')],
+  close: ['关闭编辑器', combo({ alt: true, shift: true }, 'D')],
 }
 
 export class ReviseToolbar extends HTMLElement {
@@ -101,6 +108,9 @@ export class ReviseToolbar extends HTMLElement {
   #mode = 'select'
   #unsubscribe = null
   #frame = null
+  // 拖过之后的屏幕坐标；null 表示还在样式表里的默认位置（顶部居中）
+  #screen = null
+  #offZoom = null
 
   constructor() {
     super()
@@ -139,6 +149,8 @@ export class ReviseToolbar extends HTMLElement {
   connectedCallback() {
     this.setAttribute('data-visual-revise-ui', '')
     this.addEventListener('keydown', e => e.stopPropagation())
+    this.syncZoom()
+    this.#offZoom = onZoom(() => this.syncZoom())
 
     this.#shadow.innerHTML = `
       <style>${bar_css}</style>
@@ -179,6 +191,8 @@ export class ReviseToolbar extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this.#offZoom?.()
+    this.#offZoom = null
     this.#unsubscribe?.()
     if (this.#frame) cancelAnimationFrame(this.#frame)
     clearTimeout(this.__t)
@@ -395,6 +409,28 @@ export class ReviseToolbar extends HTMLElement {
     this.#makeDraggable(shadow.querySelector('.bar'))
   }
 
+  // 网页缩放到 k 倍时反向缩回 1/k，屏幕上大小、位置都不变。没拖过的以顶部
+  // 中点为原点缩（样式表里 left:50% + translateX(-50%) 居中），顶边距离除以 k；
+  // 拖过的按记住的屏幕坐标换算回 CSS 坐标放回去。
+  syncZoom() {
+    const k = zoomFactor()
+    if (this.#screen) {
+      const at = fromScreen(this.#screen)
+      this.style.transformOrigin = 'top left'
+      this.style.transform = k === 1 ? 'none' : `scale(${1 / k})`
+      this.style.left = `${at.left}px`
+      this.style.top = `${at.top}px`
+      return
+    }
+    // 居中：居的是眼睛看到的那块视口的中线（捏合平移后它不在 50% 了）
+    const b = viewportBox()
+    const plain = k === 1 && b.left === 0 && b.top === 0 && b.width === innerWidth
+    this.style.transformOrigin = 'top center'
+    this.style.transform = k === 1 ? '' : `translateX(-50%) scale(${1 / k})`
+    this.style.left = plain ? '' : `${b.left + b.width / 2}px`
+    this.style.top = plain ? '' : `${topOf(TOP, k)}px`
+  }
+
   #makeDraggable(handle) {
     handle.addEventListener('pointerdown', e => {
       if (e.target.closest('button')) return
@@ -407,8 +443,10 @@ export class ReviseToolbar extends HTMLElement {
       const offY = e.clientY - rect.top
 
       const move = ev => {
-        // 拖动后脱离居中定位，改为绝对坐标
-        this.style.transform = 'none'
+        // 拖动后脱离居中定位，改为绝对坐标；网页缩放着的话缩放也得保留
+        const k = zoomFactor()
+        this.style.transformOrigin = 'top left'
+        this.style.transform = k === 1 ? 'none' : `scale(${1 / k})`
         this.style.left = `${ev.clientX - offX}px`
         this.style.top = `${ev.clientY - offY}px`
       }
@@ -416,6 +454,7 @@ export class ReviseToolbar extends HTMLElement {
         handle.releasePointerCapture(ev.pointerId)
         handle.removeEventListener('pointermove', move)
         handle.removeEventListener('pointerup', up)
+        this.#screen = screenPos(this)
       }
       handle.addEventListener('pointermove', move)
       handle.addEventListener('pointerup', up)

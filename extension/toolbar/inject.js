@@ -69,6 +69,14 @@ fetch(platform.runtime.getURL('toolbar/build-id.json'))
   .catch(() => { /* 版本文件缺失不该影响正常注入 */ })
 
 platform.runtime.onMessage.addListener(request => {
+  if (request.action === 'ZOOM') {
+    // 主世界的 bundle 够不着扩展 API，倍数经 <html> 上的属性转交；
+    // 事件让它不用轮询。bundle 还没跑起来也没关系，它启动时会读这个属性
+    document.documentElement.dataset.visualReviseZoom = String(request.params.zoom)
+    window.dispatchEvent(new CustomEvent('visual-revise:zoom', {detail: request.params.zoom}))
+    return
+  }
+
   const visbug = document.querySelector('vis-bug')
   if (!visbug) return
 
@@ -77,3 +85,43 @@ platform.runtime.onMessage.addListener(request => {
   else if (request.action === 'COLOR_SCHEME')
     visbug.setAttribute('color-scheme', request.params.mode)
 })
+
+// ── 截图通道 ────────────────────────────────────────────────
+// 主世界的 bundle 够不着 chrome.tabs.captureVisibleTab，这里做中转：
+// 页面抛 visual-revise:capture-request（detail 是请求 id 字符串），我们转给
+// service worker，dataURL 回来后抛 visual-revise:capture-result（detail 是
+// JSON 串，里面带同一个 id）。
+//
+// detail 一律用字符串：跨「隔离世界 ↔ 主世界」传对象要不要被包一层，各浏览器
+// 各版本说法不一，字符串没这个问题。
+//
+// 每点一次扩展图标 inject.js 都会被 executeScript 重新执行一遍，监听器只能装
+// 一次——同一个标签页里隔离世界的 window 一直是同一个，标记跟着它活着；
+// 装两次会让一次请求触发两回 captureVisibleTab，白白撞配额。
+if (!window.__visualReviseCaptureWired) {
+  window.__visualReviseCaptureWired = true
+
+  window.addEventListener('visual-revise:capture-request', e => {
+    const id = typeof e.detail === 'string' ? e.detail : e.detail?.id
+    if (!id) return
+
+    const reply = payload => window.dispatchEvent(new CustomEvent(
+      'visual-revise:capture-result', { detail: JSON.stringify({ id, ...payload }) }))
+
+    try {
+      platform.runtime.sendMessage({ type: 'vr-capture' }, res => {
+        // 扩展重载后旧的 content script 还挂在页面上，这时 sendMessage 只会
+        // 在 lastError 里报「上下文失效」，回调参数是 undefined
+        const err = platform.runtime.lastError
+        if (err || !res?.ok) return reply({ error: err?.message || res?.error || '截图失败' })
+        reply({ dataUrl: res.dataUrl })
+      })
+    } catch (err) {
+      reply({ error: err?.message || String(err) })
+    }
+  })
+}
+
+// 通道就绪的记号。页面据此决定要不要走真截图：没装扩展时省下先藏 UI
+// 再干等超时那几秒，直接走 DOM 重绘（见 app/features/copy-image.js）
+document.documentElement.dataset.visualReviseCapture = '1'

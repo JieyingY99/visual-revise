@@ -20,7 +20,8 @@ import {
   reverseStops, createGradient, stopsPreview, TYPE_LABELS,
 } from '../../core/gradient.js'
 
-import { mountPopover } from './popover-host.js'
+import { mountPopover, visibleSize, popoverBounds } from './popover-host.js'
+import { renderPageColors } from './page-colors.js'
 import { renderVariableList } from './color-popover.js'
 
 const PANEL_ID = 'visual-revise-fill-panel'
@@ -137,6 +138,7 @@ export class VrFill extends HTMLElement {
   // 由面板在 render 之后挂上：() => ({ variables, others })。
   // 变量列表几十项，走属性会被序列化进每一个控件、还会触发一次整块重建
   variablesProvider = null
+  #pageColors = null   // 本次打开扫到的页面颜色，切 tab 回来复用
 
   // bound 是每层一个短字符串（变量名），走属性没有列表那份代价，
   // 而且面板重绘时它得跟着层一起更新
@@ -220,7 +222,7 @@ export class VrFill extends HTMLElement {
 
     this.#shadow.innerHTML = `
       <style>
-        :host { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+        :host { display: flex; gap: 4px; align-items: center; cursor: pointer; }
         .swatch {
           flex: none; box-sizing: border-box;
           width: 32px; height: 32px; border-radius: 5px; border: 1px solid #3d3d3d;
@@ -266,7 +268,7 @@ export class VrFill extends HTMLElement {
   #renderChip() {
     this.#shadow.innerHTML = `
       <style>
-        :host { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+        :host { display: flex; gap: 4px; align-items: center; cursor: pointer; }
         .var-chip {
           flex: 1 1 auto; min-width: 0;
           display: flex; align-items: center; gap: 8px;
@@ -342,6 +344,7 @@ export class VrFill extends HTMLElement {
     this.#stop = 0
     // 打开时按当前状态停页：绑着变量就直接看到变量页并勾着当前项
     this.#page = page || (this.bound ? 'variable' : 'custom')
+    this.#pageColors = null   // 每次打开重扫一次页面
 
     // 宿主是盒子（定位、滚动），内容在它的 shadow root 里，页面 CSS 碰不到
     const { host, root } = mountPopover(PANEL_ID, `${PANEL_STYLE} width: 264px;
@@ -374,7 +377,8 @@ export class VrFill extends HTMLElement {
       pages.style.display = 'none'
       return
     }
-    pages.style.display = ''
+    // 容器的 flex 写在行内样式里，清空 display 会把它一起清掉、两页竖着排
+    pages.style.display = 'flex'
     pages.innerHTML = [['custom', '自定义'], ['variable', '变量']].map(([id, label]) =>
       `<button data-page="${id}" style="${S.tabBtn}${id === this.#page
         ? ';background:#454545;color:#fff' : ''}">${label}</button>`).join('')
@@ -426,11 +430,15 @@ export class VrFill extends HTMLElement {
   #place() {
     const panel = this.#host
     if (!panel) return
+    // 宿主被 popover-host 加了 scale(1/k)：offsetWidth/offsetHeight 是缩之前的
+    // 布局盒，而 rect 是缩过的视口坐标。夹取要用屏幕上真正占的可见尺寸
+    // （offsetWidth/k），否则 k≠1 时右下两边各多留 w·(1−1/k) / h·(1−1/k) 的空。
+    // 视口边界走 popoverBounds()（viewportBox()），捏合放大时才夹得住。
     const rect = this.getBoundingClientRect()
-    const w = panel.offsetWidth || 272
-    const h = panel.offsetHeight
-    panel.style.left = `${clamp(rect.left - w - 2, 8, Math.max(8, innerWidth - w - 8))}px`
-    panel.style.top = `${clamp(rect.top, 8, Math.max(8, innerHeight - h - 8))}px`
+    const { w, h } = visibleSize(panel, { w: 272 })
+    const b = popoverBounds()
+    panel.style.left = `${clamp(rect.left - w - 2, b.minLeft, b.maxLeft(w))}px`
+    panel.style.top = `${clamp(rect.top, b.minTop, b.maxTop(h))}px`
   }
 
   #renderTabs() {
@@ -538,6 +546,15 @@ export class VrFill extends HTMLElement {
       },
     })
     this.#picker.set(this.color || '#c4c4c4')
+
+    // 色盘下面：页面上出现过的颜色。弹层开着期间只扫一次
+    this.#pageColors = renderPageColors(body, {
+      colors: this.#pageColors,
+      onPick: css => {
+        this.#picker.set(css)
+        this.#commit(css, 'none')
+      },
+    })
   }
 
   // ── 渐变 ────────────────────────────────────────────────
@@ -546,7 +563,7 @@ export class VrFill extends HTMLElement {
     this.#stop = clamp(this.#stop, 0, g.stops.length - 1)
 
     const angleRow = g.type === 'radial' ? '' : `
-      <div style="display:flex;gap:6px;align-items:center;margin-top:8px">
+      <div style="display:flex;gap:4px;align-items:center;margin-top:8px">
         <span style="flex:none;color:#8c8c8c">角度</span>
         <input class="angle" value="${round(g.angle)}" style="${S.field};flex:1;min-width:0">
         <button class="reverse" title="反转色标顺序" style="${S.iconBtn}">${ICON.swap}</button>

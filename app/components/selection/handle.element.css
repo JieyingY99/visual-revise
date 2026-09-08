@@ -14,10 +14,11 @@
 :host > button {
   pointer-events: auto;
   background-color: white;
-  border: 1px solid var(--neon-pink);
+  /* 尺寸乘 --vr-inv-zoom：页面放大时圆点缩回屏幕原大，不然 8 个点把元素盖住 */
+  border: calc(1px * var(--vr-inv-zoom, 1)) solid var(--neon-pink);
   padding: 0;
-  width: 0.5rem;
-  height: 0.5rem;
+  width: calc(0.5rem * var(--vr-inv-zoom, 1));
+  height: calc(0.5rem * var(--vr-inv-zoom, 1));
   border-radius: 50%;
   position: relative;
   cursor: var(--cursor);
@@ -26,7 +27,7 @@
   &::before {
     content: '';
     position: absolute;
-    inset: -0.5rem;
+    inset: calc(-0.5rem * var(--vr-inv-zoom, 1));
   }
 }
 

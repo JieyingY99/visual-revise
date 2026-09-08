@@ -230,8 +230,11 @@ const rot = await page.evaluate(() => ({
   d: getComputedStyle(document.getElementById('d')).backgroundColor,
 }))
 const SRC = ['rgb(255, 0, 255)', 'rgb(0, 255, 0)']
-ok(rot.c !== rot.d && SRC.includes(rot.c) && SRC.includes(rot.d),
-   `4.1.11 两个来源时轮转分配，两个目标各拿一份不同的样式（c=${rot.c} / d=${rot.d}）`)
+// 新规范（features/copy-props.js 接管上游）：多选来源只取第一个选中的，
+// 上游那套「多来源轮转分配」不再保留——它让结果依赖选中顺序，用户读不出来
+// 上游 selected 是 unshift 进去的，selection()[0] = 最后选中的那个 = 面板正显示的那个
+ok(rot.c === 'rgb(0, 255, 0)' && rot.d === 'rgb(0, 255, 0)',
+   `4.1.11 多选来源取面板正显示的那个（最后选中的 #b），两个目标拿到同一份样式（c=${rot.c} / d=${rot.d}）`)
 await page.evaluate(() => ['a', 'b', 'c', 'd'].forEach(i => { document.getElementById(i).style.backgroundColor = '' }))
 await resetStore()
 

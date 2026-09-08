@@ -60,6 +60,25 @@ platform.tabs.onRemoved.addListener(tabId => {
   delete state.injected[tabId]
 })
 
+// 网页缩放倍数只有扩展进程拿得到：页面里的脚本没有任何 API 能读 tabs.getZoom。
+// 注入完发一次，之后每次变化再发；inject.js 把它写到 <html> 上，bundle 据此把
+// 面板 / 工具条 / 弹层反向缩回屏幕原大（见 app/core/zoom.js）。
+const sendZoom = async (tab_id, zoom) => {
+  try {
+    if (zoom === undefined) zoom = await platform.tabs.getZoom(tab_id)
+    await platform.tabs.sendMessage(tab_id, {action: 'ZOOM', params: {zoom}})
+  } catch {
+    // 标签页已关、或内容脚本还没装好：下一次 onZoomChange 会再发
+  }
+}
+
+// 不看 state.loaded：MV3 的 service worker 闲置半分钟就被杀，醒来时 state 是
+// 空的，按它判断就永远不发了。没注入过的标签页里没人收，sendMessage 拒绝，
+// sendZoom 里兜住
+platform.tabs.onZoomChange.addListener(({tabId, newZoomFactor}) => {
+  sendZoom(tabId, newZoomFactor)
+})
+
 const toggleIn = async tab => {
   const tab_id = tab.id
 
@@ -104,6 +123,7 @@ const toggleIn = async tab => {
       state.injected[tab_id] = true
     }
 
+    sendZoom(tab_id)
     getColorMode()
     getColorScheme()
   } catch (err) {
@@ -195,6 +215,61 @@ platform.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   saveRefs(msg)
     .then(sendResponse)
+    .catch(err => sendResponse({ ok: false, error: err?.message || String(err) }))
+
+  // 同步返回 true 才能保住消息通道等异步结果
+  return true
+})
+
+// ── 截图通道 ────────────────────────────────────────────────
+// 页面里的脚本拍不到自己的像素，只有扩展进程的 captureVisibleTab 拍得到。
+// content script 把请求转到这里，dataURL 原路送回（见 app/features/copy-image.js）。
+//
+// captureVisibleTab 有配额（每秒 2 次）。选区超出一屏时页面会连着要好几张，
+// 撞上配额就整批失败——所以这里排队：两次调用之间至少隔 CAPTURE_GAP，
+// 真撞上了再退避重试几次。等待发生在扩展进程，页面那头等得起。
+const CAPTURE_GAP = 550
+let lastCaptureAt = 0
+
+const captureOnce = async window_id => {
+  for (let attempt = 0; ; attempt++) {
+    const wait = lastCaptureAt + CAPTURE_GAP - Date.now()
+    if (wait > 0) await new Promise(r => setTimeout(r, wait))
+    lastCaptureAt = Date.now()
+
+    try {
+      return await platform.tabs.captureVisibleTab(window_id, { format: 'png' })
+    } catch (err) {
+      const msg = err?.message || String(err)
+      // 配额之外的原因（没权限、页面受限、标签页没了）重试也没用，直接抛
+      if (attempt >= 3 || !/MAX_CAPTURE|quota|rate/i.test(msg)) throw err
+    }
+  }
+}
+
+// 多个标签页同时要图时也串起来，免得互相把对方挤进配额上限
+let captureQueue = Promise.resolve()
+const enqueueCapture = task => {
+  const next = captureQueue.then(task, task)
+  captureQueue = next.then(() => {}, () => {})
+  return next
+}
+
+platform.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== 'vr-capture') return
+
+  enqueueCapture(async () => {
+    const tab = sender?.tab
+    if (!tab) throw new Error('拿不到发起截图的标签页')
+    // captureVisibleTab 拍的是那个窗口当前显示的标签页。请求方要是已经切到
+    // 后台，拍回去的会是别人的画面——宁可如实报错，也不能给一张错的图
+    if (tab.active === false) throw new Error('标签页已切到后台')
+
+    const dataUrl = await captureOnce(tab.windowId)
+    if (!dataUrl) throw new Error('截图为空')
+    return dataUrl
+  })
+    .then(dataUrl => sendResponse({ ok: true, dataUrl }))
     .catch(err => sendResponse({ ok: false, error: err?.message || String(err) }))
 
   // 同步返回 true 才能保住消息通道等异步结果

@@ -775,8 +775,9 @@ console.log('── 3.4b 颜色弹层')
     `默认贴触发器左侧（弹层 right=${Math.round(r1.right)}，触发器 left=${Math.round(a.left)}）`)
   await page.locator(`#${COLOR} [data-page="variable"]`).click(); await page.waitForTimeout(400)
   const r2 = await rect(`#${COLOR}`)
-  T('3.4b.6', within(r2) && r2.h > r1.h,
-    `切到变量页变高（${Math.round(r1.h)}→${Math.round(r2.h)}）后仍夹在视口内（bottom=${Math.round(r2.bottom)} ≤ ${r2.vh}）`)
+  // 自定义页多了「On this page」之后比变量页高，切页高度只要变了就够，方向不限
+  T('3.4b.6', within(r2) && Math.abs(r2.h - r1.h) > 4,
+    `切到变量页高度变化（${Math.round(r1.h)}→${Math.round(r2.h)}）后仍夹在视口内（bottom=${Math.round(r2.bottom)} ≤ ${r2.vh}）`)
 }
 
 // 3.4b.1 两页 / 停页 + 3.5.8 变量页选中派发 vr-color-variable

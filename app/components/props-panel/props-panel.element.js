@@ -7,7 +7,7 @@ import { parseFills, serializeFills, bindFills, DEFAULT_FILL } from '../../core/
 import { EFFECTS, EFFECT_LABEL, FIELDS as EFFECT_FIELDS, parseEffects, serializeEffects, defaultsFor } from '../../core/effects.js'
 import { splitTopLevel } from '../../core/gradient.js'
 import {
-  CONTROLS, SIDE_GROUPS, FIELD_PAIRS, FIELD_PREFIX, HIDDEN_FIELDS, LABELED_PAIRS,
+  CONTROLS, SIDE_GROUPS, FIELD_PAIRS, FIELD_PREFIX, HIDDEN_FIELDS, LABELED_PAIRS, CORNER_PROPS, SIDE_WIDTH_PROPS,
   isRelevant, coerceLength, stepValue, stepSize, displayValue,
   alignSupported, alignPlan, isReplacedElement, isTextlessElement,
 } from '../../core/controls.js'
@@ -59,20 +59,22 @@ const ICON = {
   // 眼睛原来画满 88%，缩到 12/16 = 75%
   eye:      svg('<path d="M2 8s2.3-4 6-4 6 4 6 4-2.3 4-6 4-6-4-6-4Z"/><circle cx="8" cy="8" r="1.7"/>', 13),
   eyeOff:   svg('<path d="M3 3 13 13"/><path d="M6.8 6.9a1.7 1.7 0 0 0 2.4 2.3"/><path d="M4.8 5C3.2 6 2 8 2 8s2.3 4 6 4c1 0 1.9-.2 2.6-.6"/><path d="M7 4.1c.3 0 .7-.1 1-.1 3.7 0 6 4 6 4a11 11 0 0 1-1.8 2.2"/>', 13),
-  link:     svg('<path d="M6.6 9.4a2.8 2.8 0 0 0 4 0l2-2a2.8 2.8 0 1 0-4-4l-.8.8"/><path d="M9.4 6.6a2.8 2.8 0 0 0-4 0l-2 2a2.8 2.8 0 1 0 4 4l.8-.8"/>', 13),
   // 用 link 那两段（它们本来就关于 (8,8) 点对称）再加一条同样对称的斜杠。
   // 上一版是自己另画的，墨迹落在 2.5~15.3，中心偏到 (8.9, 8.9)，在 24px 的
   // 按钮里就是肉眼可见的偏右下。
+  link:     svg('<path d="M6.6 9.4a2.8 2.8 0 0 0 4 0l2-2a2.8 2.8 0 1 0-4-4l-.8.8"/><path d="M9.4 6.6a2.8 2.8 0 0 0-4 0l-2 2a2.8 2.8 0 1 0 4 4l.8-.8"/>', 13),
   unlink:   svg('<path d="M6.6 9.4a2.8 2.8 0 0 0 4 0l2-2a2.8 2.8 0 1 0-4-4l-.8.8"/><path d="M9.4 6.6a2.8 2.8 0 0 0-4 0l-2 2a2.8 2.8 0 1 0 4 4l.8-.8"/><path d="M4.6 4.6l6.8 6.8"/>', 13),
   download: svg('<path d="M8 2v8"/><path d="M4.5 7 8 10.5 11.5 7"/><path d="M2.5 13.5h11"/>', 13),
   swap:     svg('<path d="M2.5 5.5h11l-2.5-2.5"/><path d="M13.5 10.5h-11l2.5 2.5"/>', 13),
   // 14 而不是 13：它跟 flow 分段控件并排在同一行，那四个是 14
   wrap:     svg('<path d="M2.5 4.5h9a2.5 2.5 0 0 1 0 5H4"/><path d="M6 7.5 4 9.5l2 2"/>'),
-  expand:   svg('<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M6 6h4v4H6z"/>', 13),
-  collapse2: svg('<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M4.5 8h7"/>', 13),
   more:     svg('<circle cx="4.5" cy="4.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="11.5" cy="4.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="4.5" cy="11.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="11.5" cy="11.5" r="1.5" fill="currentColor" stroke="none"/>', 13),
   plus:     svg('<path d="M8 3v10M3 8h10"/>', 13),
   minus:    svg('<path d="M3 8h10"/>', 13),
+  // 四角独立：四个带圆角的角括弧（Figma 的 Independent corners）
+  corners:  svg('<path d="M3 6V5a2 2 0 0 1 2-2h1"/><path d="M10 3h1a2 2 0 0 1 2 2v1"/><path d="M13 10v1a2 2 0 0 1-2 2h-1"/><path d="M6 13H5a2 2 0 0 1-2-2v-1"/>', 13),
+  // 四边独立：四条互不相连的边
+  sides:    svg('<path d="M5 3h6"/><path d="M13 5v6"/><path d="M5 13h6"/><path d="M3 5v6"/>', 13),
   // Figma 用四个点表示「绑定变量」，这里绑的是页面上已定义的 CSS 自定义属性
   variable: svg('<circle cx="4.5" cy="4.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="11.5" cy="4.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="4.5" cy="11.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="11.5" cy="11.5" r="1.5" fill="currentColor" stroke="none"/>', 13),
 }
@@ -104,6 +106,15 @@ const varKind = value => {
 
 // 面板管的颜色属性里会继承的只有字色；background / border 都不继承
 const INHERITED = new Set(['color'])
+
+// 数值框的单位只做展示、放最右，不混进输入文本：`22.5px` 拆成框里的 22.5 和
+// 右侧压淡的 px。像素这种默认单位早在 displayValue 里剥掉了（Figma 也不带 px），
+// 这里拆的是 px 之外还留着的：行高的 px、旋转的 deg、em、% 之类。
+const UNIT_LABEL = { deg: '°' }
+const splitUnit = value => {
+  const m = String(value ?? '').trim().match(/^(-?[\d.]+)([a-z%]+)$/i)
+  return m ? { num: m[1], unit: m[2] } : { num: String(value ?? ''), unit: '' }
+}
 
 // 给 chip 的 title 用：继承来的绑定要说清来自哪个祖先
 const describeNode = el => {
@@ -194,7 +205,37 @@ const pairPropsOf = pair => {
 // 都认不出是什么，Figma 那边这两个位置也是图标。
 // 输入框前缀图标统一 12，跟内外边距那组（SIDE_ICON）同一档——它们是框里的辅助标记，
 // 不该比按钮里的图标还大
+// 带「四边独立」按钮的两行。attr 是给测试留的老名字，rowClass / gridClass 同理
+const SPLIT_ROWS = {
+  'border-radius': { parts: CORNER_PROPS, icon: 'corners', attr: 'data-corners', rowClass: 'radius-row', gridClass: 'corners',
+    openTitle: '分别设置四个角', closeTitle: '合并成一个圆角' },
+  'border-width':  { parts: SIDE_WIDTH_PROPS, icon: 'sides', attr: 'data-sides', rowClass: 'width-row', gridClass: 'sides-grid',
+    openTitle: '分别设置四边粗细', closeTitle: '合并成一个粗细' },
+}
+
+// 虚线三边压淡、实边加粗：12px 下只有对比拉开才分得清是哪一条边
+const EDGE = {
+  left:   svg('<path d="M3 3h10M3 13h10M13 3v10" stroke-dasharray="1.8 1.4" opacity=".5"/><path d="M3 2.5v11" stroke-width="2.2"/>', 12),
+  top:    svg('<path d="M3 3v10M13 3v10M3 13h10" stroke-dasharray="1.8 1.4" opacity=".5"/><path d="M2.5 3h11" stroke-width="2.2"/>', 12),
+  right:  svg('<path d="M3 3h10M3 13h10M3 3v10" stroke-dasharray="1.8 1.4" opacity=".5"/><path d="M13 2.5v11" stroke-width="2.2"/>', 12),
+  bottom: svg('<path d="M3 3v10M13 3v10M3 3h10" stroke-dasharray="1.8 1.4" opacity=".5"/><path d="M2.5 13h11" stroke-width="2.2"/>', 12),
+}
+
 const PREFIX_ICON = {
+  // 圆角：一个圆角的轮廓（Figma 的 Corner radius 前缀）；四个角各取自己那一角
+  'border-radius':              svg('<path d="M3 13V8a5 5 0 0 1 5-5h5"/>', 12),
+  'border-top-left-radius':     svg('<path d="M3 13V7a4 4 0 0 1 4-4h6"/>', 12),
+  'border-top-right-radius':    svg('<path d="M3 3h6a4 4 0 0 1 4 4v6"/>', 12),
+  'border-bottom-left-radius':  svg('<path d="M3 3v6a4 4 0 0 0 4 4h6"/>', 12),
+  'border-bottom-right-radius': svg('<path d="M13 3v6a4 4 0 0 1-4 4H3"/>', 12),
+  // 粗细四条边：虚线框 + 那一条实边（Figma 的 Individual strokes 前缀）
+  // 四条边（虚线框 + 那一条实边，Figma 的写法）：粗细、内外边距展开后共用
+  'border-left-width':   EDGE.left,  'border-top-width':    EDGE.top,
+  'border-right-width':  EDGE.right, 'border-bottom-width': EDGE.bottom,
+  'padding-left':        EDGE.left,  'padding-top':         EDGE.top,
+  'padding-right':       EDGE.right, 'padding-bottom':      EDGE.bottom,
+  'margin-left':         EDGE.left,  'margin-top':          EDGE.top,
+  'margin-right':        EDGE.right, 'margin-bottom':       EDGE.bottom,
   // 尺寸限制：min 是两个箭头挤向中线，max 是两条边界线夹着一个双向箭头；
   // 高度版本是同一组图形转 90°
   'min-width':  svg('<path d="M2 4l3 4-3 4"/><path d="M8 3v10"/><path d="M14 4l-3 4 3 4"/>', 12),
@@ -276,6 +317,7 @@ export class PropsPanel extends HTMLElement {
   #limits = new Set()
   // 哪些间距被展开成四边独立编辑。绑在元素上，换元素即收起。
   #expandedSides = new Set()
+  #split = new Map()   // 拆分行（圆角 / 粗细）的展开态：main → { for, expanded }
   // 被眼睛关掉的填充层。CSS 里没有「层可见性」这回事——关掉就是把那一层从
   // background-image 里删掉，所以要连同它原来的位置一起记着，才能原样放回去。
   // 跟比例锁一样绑在具体元素上，换元素即作废。
@@ -385,6 +427,11 @@ export class PropsPanel extends HTMLElement {
       : this.#targets
   }
 
+  // 面板外的快捷键（⌥⌘V 粘贴属性）也要写「选中 + 联动」这同一批元素。
+  // 开一个只读出口而不是让它自己拼 selection + findSharedElements：
+  // 联动开没开只有面板知道，复制一份判断迟早会和面板里的写入分叉。
+  scope() { return this.#scope() }
+
   // 一个动作写多条属性时包一层，⌘Z 才会一次撤完而不是撤到一半
   #batch(label, fn) { return ChangeStore.history.batch(label, fn) }
 
@@ -446,9 +493,20 @@ export class PropsPanel extends HTMLElement {
 
       // 字体框里只显示栈首那一个；整串是写回时才拼起来的，
       // 原样同步回去会把下拉框重新撑成「Georgia, "PingFang TC", …」
+      const isNum = el.tagName === 'INPUT' && el.hasAttribute('data-num')
+      const css = isNum ? this.#numSource(prop) : (this.#computed[prop] ?? '')
       const value = prop === 'font-family'
-        ? primaryFont(this.#computed[prop] ?? '')
-        : displayValue(prop, this.#computed[prop] ?? '')
+        ? primaryFont(css)
+        // 圆角 / 粗细单框在四边不等时留空（占位「混合」），别把 "8px 0px 0px 0px" 整串塞进去
+        : SPLIT_ROWS[prop] && this.#partsDiffer(SPLIT_ROWS[prop].parts)
+          ? ''
+          // 数值框里只放数字，单位在后缀里
+          : isNum
+            ? (CONTROLS[prop]?.unit ? displayValue(prop, css, this.#computed) : splitUnit(displayValue(prop, css, this.#computed)).num)
+            : displayValue(prop, css, this.#computed)
+      // 占位「混合」跟着四边是否相等走：单框敲了值四边一起变，占位得当场撤掉
+      if (SPLIT_ROWS[prop])
+        this.#partsDiffer(SPLIT_ROWS[prop].parts) ? el.setAttribute('placeholder', '混合') : el.removeAttribute('placeholder')
 
       // 正在输入的字段不能覆盖。但外部改动确实发生了，得记一笔：
       // 失焦时浏览器会补发一个带着「用户离开前的值」的 change，
@@ -479,7 +537,16 @@ export class PropsPanel extends HTMLElement {
 
       if (el.tagName !== 'INPUT') continue
 
-      if (el.value !== value) el.value = value
+      // 数值框的「值」只有数字，单位落在 data-unit 与 .suffix 上，所以闸门要连单位
+      // 一起比：45deg → 45turn、100px → 100% 这类「同数字异单位」的外部改动（撤销 /
+      // 导入 / 重置）只比数字就整条跳过，后缀停在旧单位，下一次步进按它拼串（46turn
+      // = 16560°，差 360 倍）
+      const splitBlank = SPLIT_ROWS[prop] && this.#partsDiffer(SPLIT_ROWS[prop].parts)
+      if (isNum && !splitBlank) {
+        // 固定单位的字段（不透明度 / 字距的 %）data-unit 一直是空，别把它算成不等
+        const unit = CONTROLS[prop]?.unit ? '' : splitUnit(displayValue(prop, css, this.#computed)).unit
+        if (el.value !== value || (el.dataset.unit || '') !== unit) this.#showValue(el, prop, css)
+      } else if (el.value !== value) el.value = value
     }
   }
 
@@ -660,7 +727,8 @@ export class PropsPanel extends HTMLElement {
   // 而且它一旦非 none 就取代颜色绘制，跟 border-color 也叠不起来。
   #canAdd(id) {
     if (id !== 'stroke') return true
-    const w = parseFloat(this.#computed['border-width'])
+    // 四边可能不等（有的边是 0）：任一边有宽度就算有描边
+    const w = Math.max(...SIDE_WIDTH_PROPS.map(p => parseFloat(this.#computed[p]) || 0), parseFloat(this.#computed['border-width']) || 0)
     const style = (this.#computed['border-style'] || '').trim()
     return !(w > 0 && style && style !== 'none')
   }
@@ -772,18 +840,16 @@ export class PropsPanel extends HTMLElement {
       </div>
     </div>`)
 
-    // 字重 + 字号：Figma 把这两个放一行，也不加标签
+    // 字重 + 字号：Figma 把这两个放一行，也不加标签。
+    // 字号那个框走 #renderControl（前缀 Aa 由 FIELD_PREFIX 给，外观一致），
+    // 手写的那份没有后缀位：敲进 1.5em 后界面上只剩 "1.5"，看不见的 em 又会被
+    // 补进下一次的裸数字，20 写成 20em、字号从 24px 跳到 320px
     rows.push(`<div class="field">
       <div class="typo-pair">
         <vr-select data-prop="font-weight"
           value="${esc(displayValue('font-weight', this.#computed['font-weight'] ?? ''))}"
           options='${JSON.stringify(CONTROLS['font-weight'].options)}'></vr-select>
-        <div class="control">
-          <span class="prefix" data-drag data-prop="font-size">Aa</span>
-          <input type="text" data-prop="font-size" data-num
-            value="${esc(displayValue('font-size', this.#computed['font-size'] ?? ''))}"
-            title="font-size">
-        </div>
+        ${this.#renderControl('font-size', { dragPrefix: true })}
       </div>
     </div>`)
 
@@ -870,6 +936,9 @@ export class PropsPanel extends HTMLElement {
           ${c === col && r === row ? 'data-on' : ''}
           title="${['左', '中', '右'][c]}${['上', '中', '下'][r]}对齐"></button>`)
 
+    // 间隔也是数值框：单位拆进 data-unit 与框外后缀，显示源与 #syncValues 同一条
+    const gap = this.#numParts('gap', this.#numSource('gap'))
+
     return `<div class="align-gap">
       <div class="field">
         <label class="name">对齐</label>
@@ -878,8 +947,9 @@ export class PropsPanel extends HTMLElement {
       <div class="field">
         <label class="name" data-prop="gap" data-drag>间隔</label>
         <div class="control">
-          <input type="text" data-prop="gap" data-num
-            value="${esc(displayValue('gap', this.#computed.gap ?? ''))}" title="gap">
+          <input type="text" data-prop="gap" data-num data-unit="${esc(gap.unit)}"
+            value="${esc(gap.num)}" title="gap">
+          <span class="suffix">${gap.label}</span>
         </div>
       </div>
     </div>`
@@ -1060,22 +1130,22 @@ export class PropsPanel extends HTMLElement {
 
     if (expanded) {
       const sideGroup = SIDE_GROUPS.find(sg => sg.props.join() === set.all.join())
-      return `<div class="field sides-expanded" data-kind="${kind}">
-        ${sideGroup ? this.#renderSides(sideGroup) : ''}
-        <button class="icon-btn collapse-sides" data-kind="${kind}"
-          title="合并成水平 / 垂直两项">${ICON.collapse2}</button>
-      </div>`
+      return sideGroup ? this.#renderSides(sideGroup, kind) : ''
     }
 
     const cell = dir => {
       const props = set[dir]
       const value = pairDisplay(this.#computed, props, v => displayValue(props[0], v))
 
+      // 两段式的框显示的是一对属性（相等时一个数、不等时 "10, 20"），单位谈不上，
+      // 但后缀位得留着：拖手柄 / 方向键步进走的也是 #showValue，没有落点就只能
+      // 把单位写进看不见的 data-unit
       return `<div class="control">
         <span class="prefix" data-drag data-pair="${kind}:${dir}">${SIDE_ICON[dir]}</span>
-        <input type="text" data-pair="${kind}:${dir}" data-num
+        <input type="text" data-pair="${kind}:${dir}" data-num data-unit=""
           value="${esc(value)}"
           title="${props.join(' / ')}">
+        <span class="suffix"></span>
       </div>`
     }
 
@@ -1084,9 +1154,54 @@ export class PropsPanel extends HTMLElement {
       <div class="side-pair">
         ${cell('horizontal')}${cell('vertical')}
         <button class="icon-btn expand-sides" data-kind="${kind}"
-          title="分别设置四边">${ICON.expand}</button>
+          title="分别设置四边">${ICON.sides}</button>
       </div>
     </div>`
+  }
+
+  // 四条长手的计算值是不是不一样
+  #partsDiffer(parts) {
+    const v = parts.map(p => (this.#computed[p] || '').trim())
+    return v.some(x => x !== v[0])
+  }
+
+  // 「拆分行」：<别的字段> | <简写字段> | [四边独立]，展开时下面再来一个 2×2。
+  // 圆角是 左上 右上 / 左下 右下，粗细是 左 上 / 右 下（Figma 的顺序）。
+  // 页面本身四边不等的元素第一次显示就展开——收着的话单框里只能写「混合」，
+  // 用户还得先猜到要点那个按钮。之后开合由用户说了算，切换元素时再按新元素重判。
+  #renderSplitRow(main, other) {
+    const cfg = SPLIT_ROWS[main]
+    let state = this.#split.get(main)
+    if (!state || state.for !== this.target) {
+      state = { for: this.target, expanded: this.#partsDiffer(cfg.parts) }
+      this.#split.set(main, state)
+    }
+    const expanded = state.expanded
+    const differ = this.#partsDiffer(cfg.parts)
+    const spec = CONTROLS[main]
+
+    // 单框：四边不等时留空、占位「混合」——在里面敲值写的是简写，四边一起变。
+    // 控件本体走 #renderControl，不再手写一份：单位后缀 / data-unit / inline 优先的
+    // 显示源都在那里，手写的那份漏掉后缀位，50% 和 1.5em 这类单位在界面上直接消失
+    const single = `<div class="field">
+      <label class="name" data-prop="${main}" data-drag title="${main}">${spec.label}</label>
+      ${this.#renderControl(main, { placeholder: differ ? '混合' : '', blank: differ })}
+    </div>`
+
+    const grid = expanded ? `<div class="split-grid ${cfg.gridClass}">
+      ${cfg.parts.map(p => this.#renderControl(p, { dragPrefix: true })).join('')}
+    </div>` : ''
+
+    // 按钮包在一个带占位标签的 field 里：同一行三个子项一样高，按钮落在输入框那一层
+    return `<div class="split-block"><div class="split-row ${cfg.rowClass}">
+      ${this.#renderField(other)}
+      ${single}
+      <div class="field corner-cell">
+        <span class="name">&nbsp;</span>
+        <button class="icon-btn corners-btn" data-split="${main}" ${cfg.attr}${expanded ? ' data-on' : ''}
+          title="${expanded ? cfg.closeTitle : cfg.openTitle}">${ICON[cfg.icon]}</button>
+      </div>
+    </div>${grid}</div>`
   }
 
   #renderClip() {
@@ -1186,7 +1301,10 @@ export class PropsPanel extends HTMLElement {
 
       if (pair && !consumed.has(pair[0]) && !consumed.has(pair[1])) {
         consumed.add(pair[0]); consumed.add(pair[1])
-        rows.push(`<div class="pair">${this.#renderField(pair[0])}${this.#renderField(pair[1])}</div>`)
+        // 圆角 / 粗细行右侧带「四边独立」按钮，展开后下面多一个 2×2 网格
+        rows.push(SPLIT_ROWS[pair[1]]
+          ? this.#renderSplitRow(pair[1], pair[0])
+          : `<div class="pair">${this.#renderField(pair[0])}${this.#renderField(pair[1])}</div>`)
         continue
       }
 
@@ -1958,15 +2076,17 @@ export class PropsPanel extends HTMLElement {
 
     const cell = axis => {
       const mode = el ? resizeMode(el, axis, this.#computed) : 'fixed'
-      // 固定尺寸时输入框里就是那个数字；其余模式下数字是实测值，
-      // 真正生效的是模式，所以把模式名摆在旁边，不让人以为那个数字是写死的
-      const value = mode === 'fixed'
-        ? displayValue(axis, this.#computed[axis])
-        : `${size[axis]}`
+      // 固定尺寸时输入框里就是那个数字（显示源与 #syncValues 同一条：inline 优先，
+      // 单位拆进 data-unit 与后缀，否则 width:20em 先显示 280、一回读又跳成 20）；
+      // 其余模式下数字是实测值，真正生效的是模式，所以把模式名摆在旁边
+      const { num, unit, label } = mode === 'fixed'
+        ? this.#numParts(axis, this.#numSource(axis))
+        : { num: `${size[axis]}`, unit: '', label: '' }
 
       return `<div class="control resize-cell" data-axis="${axis}">
         <span class="prefix" data-drag data-prop="${axis}">${AXES[axis].prefix}</span>
-        <input type="text" data-prop="${axis}" data-num value="${esc(value)}" title="${axis}">
+        <input type="text" data-prop="${axis}" data-num value="${esc(num)}" data-unit="${esc(unit)}" title="${axis}">
+        <span class="suffix">${label}</span>
         <button class="mode" data-axis="${axis}" data-mode="${mode}"
           title="${MODES[mode].label}｜点击切换尺寸模式">
           <span class="mode-name">${MODES[mode].label}</span>
@@ -1991,12 +2111,14 @@ export class PropsPanel extends HTMLElement {
         const items = kinds.filter(k => has(axis, k)).map(kind => {
           const prop = AXES[axis][kind]
           const label = `${kind === 'min' ? '最小' : '最大'}${AXES[axis].label}度`
+          const shown = this.#numParts(prop, this.#numSource(prop))
           return `<div class="field">
             <label class="name" data-prop="${prop}" data-drag title="${prop}">${label}</label>
             <div class="control limit">
               <span class="prefix is-icon" data-drag data-prop="${prop}">${PREFIX_ICON[prop] || FIELD_PREFIX[prop]}</span>
-              <input type="text" data-prop="${prop}" data-num
-                value="${esc(displayValue(prop, this.#computed[prop]))}" title="${prop}">
+              <input type="text" data-prop="${prop}" data-num data-unit="${esc(shown.unit)}"
+                value="${esc(shown.num)}" title="${prop}">
+              <span class="suffix">${shown.label}</span>
               <button class="drop-limit" data-prop="${prop}" title="移除这条限制">×</button>
             </div>
           </div>`
@@ -2066,21 +2188,30 @@ export class PropsPanel extends HTMLElement {
     this.toast(`${A.label}：${MODES[id].label}`)
   }
 
-  #renderSides(sg) {
-    const values = sg.props.map(p => this.#computed[p] || '')
-    const linked = values.every(v => v === values[0])
+  #renderSides(sg, kind = null) {
+    // 展开就是为了分别改：四边各自独立，没有联动锁——要联动就不会把它们拆开。
+    // 按钮跟圆角 / 粗细的「四边独立」同一个图标，展开时高亮，再点收回两段式。
+    // 网格顺序 左 上 / 右 下：左列管左右、右列管上下，跟收起态「水平 | 垂直」两段
+    // 的左右位置一致，展开前后同一列改的是同一组边（也是粗细四边的顺序）。
+    const order = ['left', 'top', 'right', 'bottom'].map(side => sg.props.find(p => p.endsWith(`-${side}`)))
 
     return `<div class="field">
       <label class="name" data-prop="${sg.props.join(',')}">${sg.label}</label>
       <div class="sides">
-        ${sg.props.map((p, i) => `
+        ${order.map(p => {
+          // 显示源与 #syncValues 同一条：inline 优先、单位拆进 data-unit 与后缀。
+          // 这里若用计算值，padding:2em 展开后先显示 28，点一下别处回读又跳回 2em
+          const { num, unit, label } = this.#numParts(p, this.#numSource(p))
+          return `
           <div class="control">
-            <span class="prefix">${FIELD_PREFIX[p] || ''}</span>
-            <input type="text" data-prop="${p}" data-side
-              value="${esc(displayValue(p, values[i]))}" title="${p}">
-          </div>`).join('')}
-        <button class="icon-btn lock" data-lock="${sg.base}" ${linked ? 'data-on' : ''}
-          title="四边联动">${ICON.link}</button>
+            <span class="prefix is-icon" data-drag data-prop="${p}">${PREFIX_ICON[p] || ''}</span>
+            <input type="text" data-prop="${p}" data-num data-side data-unit="${esc(unit)}"
+              value="${esc(num)}" title="${p}">
+            <span class="suffix">${label}</span>
+          </div>`
+        }).join('')}
+        ${kind ? `<button class="icon-btn collapse-sides" data-kind="${kind}" data-on
+          title="合并成水平 / 垂直两项">${ICON.sides}</button>` : ''}
       </div>
     </div>`
   }
@@ -2088,7 +2219,9 @@ export class PropsPanel extends HTMLElement {
   // 控件本体，不带标签。拆出来是为了让「一个标签罩两个字段」那种排布
   // （Figma 的 Position = 一个「位置」配 X/Y 两个框）能复用同一套控件。
   // dragPrefix：标签被合并掉之后，拖着调值的手柄改由前缀承担。
-  #renderControl(prop, { dragPrefix = false } = {}) {
+  // blank / placeholder：拆分行的收起态单框在四边不等时留空、占位「混合」，
+  // 除此之外与普通数值框一模一样，所以由这里出，而不是再手写一份模板
+  #renderControl(prop, { dragPrefix = false, placeholder = '', blank = false } = {}) {
     const spec = CONTROLS[prop]
     if (!spec) return ''
 
@@ -2097,8 +2230,12 @@ export class PropsPanel extends HTMLElement {
       const bound = this.#varBinding(prop)
       if (bound) return this.#renderBoundRow(prop, bound, '')
     }
-    const value = displayValue(prop, this.#computed[prop] ?? '')
+    const css = spec.type === 'num' ? this.#numSource(prop) : (this.#computed[prop] ?? '')
+    const value = displayValue(prop, css, this.#computed)
     const prefix = FIELD_PREFIX[prop]
+    // 固定单位（不透明度 / 字距的 %）由 spec.unit 给；其它按当前值拆。
+    // 留空的框没有值也就没有单位，后缀跟着空
+    const shown = blank ? { num: '', unit: '', label: '' } : this.#numParts(prop, css)
 
     return (() => {
       switch (spec.type) {
@@ -2106,7 +2243,7 @@ export class PropsPanel extends HTMLElement {
           const options = spec.options.includes(value) || !value
             ? spec.options
             : [value, ...spec.options]
-          return `<vr-select data-prop="${prop}" value="${esc(value)}"
+          return `<vr-select data-prop="${prop}" value="${esc(value)}"${spec.preview ? ` preview="${spec.preview}"` : ''}
             options='${JSON.stringify(options).replace(/'/g, '&apos;')}'></vr-select>`
         }
 
@@ -2131,11 +2268,46 @@ export class PropsPanel extends HTMLElement {
         default:
           return `<div class="control">
             ${prefix ? `<span class="prefix${PREFIX_ICON[prop] ? ' is-icon' : ''}"${dragPrefix && spec.type === 'num' ? ` data-drag data-prop="${prop}"` : ''}>${PREFIX_ICON[prop] || prefix}</span>` : ''}
-            <input type="text" data-prop="${prop}" data-num value="${esc(value)}">
-            ${spec.unit ? `<span class="suffix">${spec.unit}</span>` : ''}
+            <input type="text" data-prop="${prop}" data-num value="${esc(shown.num)}" data-unit="${esc(shown.unit)}"${placeholder ? ` placeholder="${esc(placeholder)}"` : ''}>
+            <span class="suffix">${shown.label}</span>
           </div>`
       }
     })()
+  }
+
+  // 数值框显示用的值：元素自己的 inline 优先，没有才用计算值。计算值永远是 px，
+  // 用户敲的 1.5em 一经回读就变成 22.5px，单位后缀跟着丢——inline 里存的才是
+  // 用户的写法。var() / calc() 这类不是数值的 inline 不拿来显示。
+  #numSource(prop) {
+    const inline = (this.target?.style.getPropertyValue(prop) || '').trim()
+    // 多段简写（border-radius: 10px 20px）也不是「一个数」：整串塞进数值框只会
+    // 把文本摆出来、还拆不出单位——退回计算值，由它给出这一条的那个数字
+    return inline && !/\s/.test(inline) && !/\b(var|calc|min|max|clamp)\(/.test(inline)
+      ? inline
+      : (this.#computed[prop] ?? '')
+  }
+
+  // 一个 CSS 值在数值框里的三件套：数字进框、单位记在 data-unit 上、后缀文本放框外。
+  // 渲染路径（#renderControl 与几处手写模板）和写入路径（#showValue）都从这里取：
+  // 各算各的时候总有一处会漏掉后缀，单位就只剩看不见的 data-unit，界面开始说谎。
+  #numParts(prop, css) {
+    const spec = CONTROLS[prop]
+    const text = displayValue(prop, css, this.#computed)
+    const shown = spec?.unit ? { num: text, unit: '' } : splitUnit(text)
+    return { ...shown, label: spec?.unit || UNIT_LABEL[shown.unit] || shown.unit }
+  }
+
+  // 把一个 CSS 值显示到数值框里：数字进框、单位进右侧的后缀、真正的单位记在
+  // data-unit 上——提交时框里若只有数字，就把这个单位补回去
+  #showValue(input, prop, css) {
+    const { num, unit, label } = this.#numParts(prop, css)
+    input.value = num
+    input.dataset.unit = unit
+    const suffix = input.parentElement?.querySelector('.suffix')
+    if (suffix) suffix.textContent = label
+    // 缺后缀位就意味着单位只剩看不见的 data-unit：框里写着 1.5、写出去的却是
+    // 1.5em，下一次的裸数字还会被补上这个看不见的单位。静默跳过等于放任界面说谎
+    else console.warn(`[visual-revise] ${prop} 的数值框缺少 .suffix，单位「${label || '(空)'}」无处显示`)
   }
 
   #renderField(prop) {
@@ -2217,7 +2389,7 @@ export class PropsPanel extends HTMLElement {
 
     const input = this.#shadow.querySelector(`input[data-prop="${other}"]`)
     // 写进样式的是带单位的值，显示给人看的不带——两者不是同一件事
-    if (input) input.value = displayValue(other, `${value}px`)
+    if (input) this.#showValue(input, other, `${value}px`)
   }
 
   #align(key) {
@@ -2327,6 +2499,14 @@ export class PropsPanel extends HTMLElement {
       this.#batch('对齐', () => {
         for (const [prop, value] of Object.entries(patch)) this.#applyToAll(prop, value ?? '')
       })
+      this.render()
+    })
+
+    on('[data-split]', 'click', e => {
+      e.stopPropagation()
+      const main = e.currentTarget.dataset.split
+      const state = this.#split.get(main) || { for: this.target, expanded: false }
+      this.#split.set(main, { for: this.target, expanded: !state.expanded })
       this.render()
     })
 
@@ -2499,14 +2679,6 @@ export class PropsPanel extends HTMLElement {
       const el = e.currentTarget
       const prop = el.dataset.prop
 
-      // 四边联动开着时，这一条交给下面 input[data-side] 的联动 batch 去提交。
-      // 两个处理器都挂在同一个 input 上，按注册顺序都会跑：这里先单独 commit
-      // 被编辑的那一边，联动那边再把四边包成一个 batch，同一次编辑落成两条历史，
-      // 一次 ⌘Z 只退回其中一半，用户看到一个非对称的中间态。
-      if (el.hasAttribute('data-side') &&
-          shadow.querySelector(`.lock[data-lock="${prop.replace(/-(top|right|bottom|left)$/, '')}"]`)
-            ?.hasAttribute('data-on')) return
-
       // 这个字段在聚焦期间被外部改动覆盖过（撤销、重置、导入）。
       // 用户此后没再动过它，就采纳外部结果；动过才算一次真的编辑。
       const pending = el.dataset.vrPending
@@ -2517,13 +2689,28 @@ export class PropsPanel extends HTMLElement {
         if (untouched) { el.value = pending; return }
       }
 
-      const next = CONTROLS[prop]?.coerce?.(el.value) ?? el.value
+      // 单位在后缀里、不在框里：只敲了数字就把当前单位补回去（22.5 → 22.5px），
+      // 带单位的输入原样放行（换单位）。固定单位的字段（%）由 coerce 自己处理
+      let raw = el.value
+      if (el.hasAttribute('data-num') && el.dataset.unit && /^-?[\d.]+$/.test(raw.trim()))
+        raw = raw.trim() + el.dataset.unit
+      const next = CONTROLS[prop]?.coerce?.(raw) ?? raw
 
       // 与当前实际值相同就不是一次编辑。程序同步字段值后浏览器可能
       // 补发 change，若照单提交会把刚被外部撤销的改动又写回去。
-      if (sameValue(next, this.#computed[prop])) return
+      //
+      // 不提交也要把框刷回「数字 + 后缀」：用户敲的可能是等价写法（框里是 45 + °，
+      // 他敲 45deg），原文留在框里而 data-unit 还是 deg，下一次步进就拼成 45degdeg
+      // —— 非法声明被 CSSOM 丢掉，元素纹丝不动，框里的数字却照常往上走
+      if (sameValue(next, this.#computed[prop])) {
+        if (el.hasAttribute('data-num') && el.isConnected) this.#showValue(el, prop, this.#numSource(prop))
+        return
+      }
 
-      this.#commit(prop, el.value)
+      this.#commit(prop, raw)
+      // 提交后框还聚焦着，#syncValues 会跳过它：这里自己把数字 / 后缀刷新一次，
+      // 否则用户敲了 1.5em 之后框里留着 1.5em、后缀还挂着 px，下一次步进就拼成 1.5empx
+      if (el.hasAttribute('data-num') && el.isConnected) this.#showValue(el, prop, this.#numSource(prop))
     })
 
     // 填充控件一次可能改两条属性；detail 里为 null 的那条表示「不动它」
@@ -2685,40 +2872,6 @@ export class PropsPanel extends HTMLElement {
       this.#commit(btn.dataset.prop, btn.dataset.value, { coerce: false })
     })
 
-    on('.lock', 'click', e => {
-      const btn = e.currentTarget
-      btn.toggleAttribute('data-on')
-      if (!btn.hasAttribute('data-on')) return
-      const base = btn.dataset.lock
-      const first = shadow.querySelector(`input[data-prop="${base}-top"]`)
-      const value = coerceLength(first?.value || '0')
-      // 开锁是一个动作：四条声明包成一个 batch，否则把左右从 20px 同步到 10px
-      // 要按两次 ⌘Z 才退得回去
-      this.#batch(SIDE_SETS[base]?.label || base, () => {
-        ;['top', 'right', 'bottom', 'left'].forEach(side => {
-          const input = shadow.querySelector(`input[data-prop="${base}-${side}"]`)
-          if (input) input.value = value
-          this.#commit(`${base}-${side}`, value)
-        })
-      })
-    })
-
-    // 四边联动：锁开启时改一个同步四个
-    on('input[data-side]', 'change', e => {
-      const input = e.currentTarget
-      const base = input.dataset.prop.replace(/-(top|right|bottom|left)$/, '')
-      const lock = shadow.querySelector(`.lock[data-lock="${base}"]`)
-      if (!lock?.hasAttribute('data-on')) return
-      const value = coerceLength(input.value)
-      this.#batch(base === 'padding' ? '内边距' : '外边距', () => {
-        ;['top', 'right', 'bottom', 'left'].forEach(side => {
-          const sib = shadow.querySelector(`input[data-prop="${base}-${side}"]`)
-          if (sib && sib !== input) sib.value = value
-          this.#commit(`${base}-${side}`, value)
-        })
-      })
-    })
-
     // Figma 式：横向拖动标签（或 W/H 前缀）调数值
     on('[data-drag]', 'pointerdown', e => {
       const handle = e.currentTarget
@@ -2738,16 +2891,16 @@ export class PropsPanel extends HTMLElement {
       e.preventDefault()
       handle.setPointerCapture(e.pointerId)
       const startX = e.clientX
-      const origin = input.value
+      const origin = input.value + (input.dataset.unit || '')
       const unitStep = stepSize(prop, false)
       let last = null
 
       const move = ev => {
         const steps = Math.round((ev.clientX - startX) / 2)
-        const next = stepValue(prop, origin, steps * unitStep, this.#computed[prop])
+        const next = stepValue(prop, origin, steps * unitStep, this.#computed[prop], this.#computed)
         if (next === null || next === last) return
         last = next
-        input.value = displayValue(prop, next)
+        this.#showValue(input, prop, next)
         if (!pairProps) return this.#commit(prop, next, { coerce: false })
         // 一步一个 batch：⌘Z 不会把一对属性撤成一半
         this.#batch(SIDE_SETS[pair.split(':')[0]].label, () =>
@@ -2774,10 +2927,11 @@ export class PropsPanel extends HTMLElement {
       const prop = input.dataset.prop || pairProps?.[0]
       if (!prop) return
       const delta = stepSize(prop, e.shiftKey) * (e.key === 'ArrowUp' ? 1 : -1)
-      const next = stepValue(prop, input.value, delta, this.#computed[prop])
+      // 框里只有数字，单位在 data-unit 上：拼回去再步进，否则会按计算值的单位走
+      const next = stepValue(prop, input.value + (input.dataset.unit || ''), delta, this.#computed[prop], this.#computed)
 
       if (next === null) return   // normal / auto 等无法步进的值
-      input.value = displayValue(prop, next)
+      this.#showValue(input, prop, next)
       if (!pairProps) return this.#commit(prop, next, { coerce: false })
       this.#batch(SIDE_SETS[input.dataset.pair.split(':')[0]].label, () =>
         pairProps.forEach(p => this.#commit(p, next, { coerce: false })))

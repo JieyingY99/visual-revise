@@ -78,7 +78,7 @@ const probe = () => page.evaluate(() => {
     }
 
     // 上下文：同一行 / 同一分段 / 同一 acts 组里的图标该同尺寸
-    const ctxEl = svg.closest('.segment, .acts, .layer-row, .flow-row, .dims, .side-pair, .with-action, .typo-align, .control, header, .tabs, .effect-row')
+    const ctxEl = svg.closest('.segment, .acts, .layer-row, .flow-row, .dims, .side-pair, .radius-row, .split-row, .with-action, .typo-align, .control, header, .tabs, .effect-row')
     const ctx = ctxEl ? (ctxEl.className || ctxEl.tagName).toString().split(' ')[0] : 'other'
     let b2; try { b2 = svg.getBBox() } catch { b2 = null }
     const ink = b2 && vb.length === 4 && vb[2] ? +(Math.max(b2.width, b2.height) / vb[2]).toFixed(2) : null
@@ -95,7 +95,7 @@ const probe = () => page.evaluate(() => {
   //    只看并排的兄弟：输入框内部的前缀图标和模式按钮是框内装饰，
   //    它们本来就该在框里居中，不参与这条。
   const rows = []
-  for (const row of sr.querySelectorAll('.layer-row, .pair, .typo-pair, .dims, .side-pair, .limits, .with-action, .flow-row, .typo-align')) {
+  for (const row of sr.querySelectorAll('.layer-row, .pair, .typo-pair, .dims, .side-pair, .limits, .radius-row, .corners, .split-row, .split-grid, .with-action, .flow-row, .typo-align')) {
     if (!vis(row)) continue
     const kids = [...row.children].filter(vis)
     if (kids.length < 2) continue
@@ -161,7 +161,7 @@ const probe = () => page.evaluate(() => {
   // 并排行的间距与右缘：行内 gap 该只有一个值；最右的控件要贴到行容器右边缘，
   // 差一点就是跟上下行对不齐（grid 第三列写死 24px 时按钮会探出 6~8px）
   const rowGaps = []
-  for (const row of sr.querySelectorAll('.layer-row, .pair, .typo-pair, .dims, .side-pair, .limits, .with-action, .flow-row, .typo-align')) {
+  for (const row of sr.querySelectorAll('.layer-row, .pair, .typo-pair, .dims, .side-pair, .limits, .radius-row, .corners, .split-row, .split-grid, .with-action, .flow-row, .typo-align')) {
     if (!vis(row)) continue
     const kids = [...row.children].filter(vis)
     if (kids.length < 2) continue
@@ -471,6 +471,51 @@ for (const kind of KINDS) {
 AC('AC-9.8', panelIssues.length === 0,
    `七种效果的参数面板都对齐、不溢出、值不截断${panelIssues.length ? '：' + panelIssues.slice(0, 8).join('; ') : `（${KINDS.join('/')}）`}`)
 
+// ── AC-9.13 全局间距 4px ──
+// 同行控件之间、层列表行之间、拆分行与展开网格之间，统一 4px；不是「各处一致」就够，值也定死
+{
+  const wrong = []
+  for (const sc of scenes) for (const r of sc.rowGaps) for (const g of r.gaps) if (Math.abs(g - 4) > 0.5) wrong.push(`${sc.label}/${r.row} ${g}`)
+  const vertical = await page.evaluate(() => {
+    const sr = document.querySelector('visual-revise-panel').shadowRoot
+    return ['.layers', '.split-block', '.split-grid', '.pair', '.dims'].map(sel => [sel, sr.querySelector(sel) ? getComputedStyle(sr.querySelector(sel)).gap : null])
+  })
+  for (const [sel, g] of vertical) if (g && g !== '4px' && g !== '4px 4px') wrong.push(`${sel} gap=${g}`)
+  AC('AC-9.13', wrong.length === 0, wrong.length ? `间距不是 4px：${[...new Set(wrong)].slice(0, 8).join('; ')}` : '同行控件、层列表、拆分行与网格之间统一 4px')
+}
+
+// ── AC-9.12 拆分网格（四角 / 四边）与上面那一行的两个输入框左右对齐 ──
+// 网格若两列铺满整行，右列会伸到按钮底下、左列比上面的框宽——用户一眼看得出歪
+{
+  await page.keyboard.press('Escape'); await page.waitForTimeout(150)
+  await page.locator('.curve-card').first().click({ position: { x: 120, y: 12 } }); await page.waitForTimeout(450)
+  const bad = []
+  for (const [btnSel, gridSel] of [['[data-corners]', '.corners'], ['[data-sides]', '.sides-grid']]) {
+    const btn = P(btnSel).first()
+    if (!(await btn.count())) continue
+    await btn.scrollIntoViewIfNeeded(); await btn.click(); await page.waitForTimeout(350)
+    const r = await page.evaluate(([b, g]) => {
+      const sr = document.querySelector('visual-revise-panel').shadowRoot
+      const row = sr.querySelector(b).closest('.split-row')
+      // 「样式」那格是 vr-select、没有 .control 包装：量行里前两个 .field（它们各占一列）
+      const above = [...row.querySelectorAll(':scope > .field')].slice(0, 2).map(c => c.getBoundingClientRect())
+      const cells = [...sr.querySelector(g).querySelectorAll('.control')].map(c => c.getBoundingClientRect())
+      const off = []
+      cells.forEach((c, i) => {
+        const ref = above[i % 2]
+        if (Math.abs(c.left - ref.left) > 0.5 || Math.abs(c.right - ref.right) > 0.5)
+          off.push(`${g} 第 ${i + 1} 格 ${c.left.toFixed(1)}–${c.right.toFixed(1)} vs 上一行 ${ref.left.toFixed(1)}–${ref.right.toFixed(1)}`)
+      })
+      return off
+    }, [btnSel, gridSel])
+    bad.push(...r)
+    await btn.click(); await page.waitForTimeout(250)
+  }
+  AC('AC-9.12', bad.length === 0, bad.length ? `拆分网格没对齐：${bad.join('; ')}` : '四角 / 四边网格的每一格都与上一行的两个输入框左右对齐')
+}
+
+
 await browser.close(); await close()
+
 console.log(`\n合计：${passed} 通过 / ${failed} 失败\n`)
 process.exitCode = failed ? 1 : 0

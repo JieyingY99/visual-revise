@@ -66,7 +66,7 @@ header:active { cursor: grabbing; }
    条目一多就把每行压成几像素（40 条时 9.6px，光标题栏就要 35px），
    .item 的 overflow:hidden 再把内容裁掉——× / ↺ 按钮点不到，容器也永远
    scrollHeight === clientHeight 而滚不动。行按自然高度排，溢出才会交给滚动条。 */
-.items { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; display: grid; gap: 6px; align-content: start; grid-auto-rows: max-content; }
+.items { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; display: grid; gap: 4px; align-content: start; grid-auto-rows: max-content; }
 .items::-webkit-scrollbar { width: 8px; }
 .items::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
 
@@ -78,9 +78,15 @@ header:active { cursor: grabbing; }
   cursor: pointer;
 }
 .item:hover { border-color: var(--vr-accent); }
+/* 页面上选中的元素：它的条目一直亮着，好在长列表里一眼找到 */
+.item[data-selected] {
+  border-color: var(--vr-accent);
+  box-shadow: inset 0 0 0 1px var(--vr-accent);
+  background: rgb(13 153 255 / .10);
+}
 
 .item-head {
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; gap: 4px;
   padding: 6px 8px;
   border-bottom: 1px solid rgb(255 255 255 / .06);
 }
@@ -102,7 +108,7 @@ header:active { cursor: grabbing; }
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   font-size: 10px;
   color: var(--vr-text-dim);
   padding: 2px 0;
@@ -129,7 +135,7 @@ header:active { cursor: grabbing; }
 .empty { padding: 32px 16px; text-align: center; color: var(--vr-text-mute); line-height: 1.6; }
 
 footer {
-  display: flex; gap: 6px;
+  display: flex; gap: 4px;
   padding: 8px 10px;
   border-top: 1px solid var(--vr-border);
 }

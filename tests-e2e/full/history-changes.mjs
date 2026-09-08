@@ -1096,7 +1096,7 @@ T('5.5.6', Object.keys(four).length >= 4
 
 const json = await page.evaluate(() => window.__visualRevise.lib.exportJSON())
 const jsonTop = json.edits[0].changes.find(c => c.prop === 'padding-top')
-T('5.5.6', json.schema === 5 && jsonTop.important === true && jsonTop.to === '40px',
+T('5.5.6', json.schema >= 6 && jsonTop.important === true && jsonTop.to === '40px',
   `JSON SCHEMA_VERSION=${json.schema}，important 是独立字段往返（to="${jsonTop.to}" important=${jsonTop.important}）`)
 
 const roundTrip = await page.evaluate(data => {
@@ -1117,11 +1117,13 @@ const schemas = await page.evaluate(() => ({
   v1: window.__visualRevise.lib.importJSON({ schema: 1, edits: [] }).ok,
   v4: window.__visualRevise.lib.importJSON({ schema: 4, edits: [] }).ok,
   v5: window.__visualRevise.lib.importJSON({ schema: 5, edits: [] }).ok,
-  v6: window.__visualRevise.lib.importJSON({ schema: 6, edits: [] }),
+  v6: window.__visualRevise.lib.importJSON({ schema: 6, edits: [] }).ok,
+  v7: window.__visualRevise.lib.importJSON({ schema: 7, edits: [] }),
 }))
-T('5.5.6', schemas.v1 === true && schemas.v4 === true && schemas.v5 === true
-  && schemas.v6.ok === false && /schema=6/.test(schemas.v6.reason),
-  `SUPPORTED 收 1–5（v1=${schemas.v1} v4=${schemas.v4} v5=${schemas.v5}），更高的挡下并说明原因：「${schemas.v6.reason}」`)
+// schema 6 是替换记录（replaced 字段）带来的升版；比当前更高的仍要挡下
+T('5.5.6', schemas.v1 === true && schemas.v4 === true && schemas.v5 === true && schemas.v6 === true
+  && schemas.v7.ok === false && /schema=7/.test(schemas.v7.reason),
+  `SUPPORTED 收 1–6（v1=${schemas.v1} v4=${schemas.v4} v5=${schemas.v5} v6=${schemas.v6}），更高的挡下并说明原因：「${schemas.v7.reason}」`)
 
 // ── 覆盖自检 ──
 const ALL = [

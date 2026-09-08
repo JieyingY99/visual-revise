@@ -8,8 +8,8 @@
 import $ from 'blingblingjs'
 import hotkeys from 'hotkeys-js'
 
-import { preferredNotation } from './color'
 import { canMoveLeft, canMoveRight, canMoveUp } from './move'
+import { isTypingTarget } from '../core/dom-utils.js'
 import { watchImagesForUpload } from './imageswap'
 import { queryPage } from './search'
 import { createMeasurements, clearMeasurements } from './measurements'
@@ -20,10 +20,10 @@ import { showTip as showMetaTip, removeAll as removeAllMetaTips } from './metati
 import { showTip as showAccessibilityTip, removeAll as removeAllAccessibilityTips } from './accessibility'
 
 import {
-  metaKey, createClassname, camelToDash,
-  isOffBounds, getStyle, getStyles, deepElementFromPoint, getShadowValues,
+  metaKey, createClassname,
+  isOffBounds, getStyle, deepElementFromPoint,
   isSelectorValid, findNearestChildElement, findNearestParentElement,
-  getTextShadowValues, isFixed, onRemove
+  isFixed, onRemove
 } from '../utilities/'
 
 // 直接 import 而不是靠宿主注入：change-store 不 import 任何 features，
@@ -37,8 +37,9 @@ import { stripEditorMarks } from '../core/editor-marks.js'
 // listen/unlisten 成对调用（编辑态与交互态来回切换）时，
 // 解绑遗漏的快捷键会在每次 resume 后累积一份处理器。
 const HOTKEYS = metaKey => [
-  `${metaKey}+alt+c`,
-  `${metaKey}+alt+v`,
+  // `${metaKey}+alt+c` / `${metaKey}+alt+v` 归 features/copy-props.js 接管了：
+  // 属性复制 / 粘贴要走 ChangeStore 才进得了改动记录、⌘Z 才退得回来。
+  // 跟下面 alt+del 一样，绑定与解绑共用这份清单，只删 listen() 里那两行不够。
   'esc',
   `${metaKey}+d`,
   'backspace,del,delete',
@@ -86,8 +87,8 @@ export function Selectable(visbug) {
 
     watchCommandKey()
 
-    hotkeys(`${metaKey}+alt+c`, on_copy_styles)
-    hotkeys(`${metaKey}+alt+v`, e => on_paste_styles())
+    // ⌥⌘C / ⌥⌘V（属性复制 / 粘贴）已经交给 features/copy-props.js：
+    // 上游这两条直接写 el.style，改动不进 ChangeStore，导不出提示词也 ⌘Z 不回来。
     hotkeys('esc', on_esc)
     hotkeys(`${metaKey}+d`, on_duplicate)
     hotkeys('backspace,del,delete', on_delete)
@@ -161,19 +162,25 @@ export function Selectable(visbug) {
     labels  = labels.filter(node => !doomed.includes(node))
     handles = handles.filter(node => !doomed.includes(node))
 
-    selected.filter(node =>
-      node.getAttribute('data-label-id') === id)
-      .forEach(node =>
-        $(node).attr({
-          'data-selected':      null,
-          'data-selected-hide': null,
-          'data-label-id':      null,
-          'data-pseudo-select':         null,
-          'data-measuring':     null,
-          'data-outward':       null,
-      }))
+    // 顺序要紧：先按 id 把目标从 selected 里摘掉，再清它们身上的属性。
+    // 反过来的话，清属性那一步（blingblingjs 的 attr(x, null) 走 removeAttribute）
+    // 已经把 data-label-id 抹成 null，随后再按同一个属性过滤就恒为真——节点一个都
+    // 摘不掉，⇧ 点击「移出多选」只在 DOM 上生效，选择引擎里那一份还在，紧接着的
+    // tellWatchers() 把这份陈旧数组广播出去：方向键换位会把它一起挪、面板改样式会
+    // 一起写、改动列表也还高亮着它。对齐同文件 unselect_all 的写法（先清属性、再
+    // 无条件清空数组，不拿属性当判据）。
+    const gone = selected.filter(node => node.getAttribute('data-label-id') === id)
+    selected = selected.filter(node => !gone.includes(node))
 
-    selected = selected.filter(node => node.getAttribute('data-label-id') !== id)
+    gone.forEach(node =>
+      $(node).attr({
+        'data-selected':      null,
+        'data-selected-hide': null,
+        'data-label-id':      null,
+        'data-pseudo-select': null,
+        'data-measuring':     null,
+        'data-outward':       null,
+      }))
 
     tellWatchers()
   }
@@ -272,6 +279,12 @@ export function Selectable(visbug) {
     new DOMParser().parseFromString(String(html || ''), 'text/html').body.firstElementChild
 
   const on_paste = async e => {
+    // 焦点在输入框里（面板的色值框、弹层的搜索框、页面自己的表单）时，粘贴是
+    // 给那个框的，不是要往选中元素里塞节点。上游无条件抢：从网页上复制一个
+    // 色值贴进颜色框，preventDefault 把框里的粘贴拦掉，剪贴板里那段 HTML 反而
+    // 作为新元素插进了选中元素——「Image」按钮里凭空多了个 #202020
+    if (isTypingTarget(e)) return
+
     const clipData = e.clipboardData.getData('text/html')
 
     // 上游这里是无条件 await navigator.clipboard.readText()：没权限时 promise
@@ -302,66 +315,6 @@ export function Selectable(visbug) {
         const node = parsePasted(potentialHTML)
         if (node) ChangeStore.insertElement(node, el, null, '粘贴元素')
       }))
-  }
-
-  const on_copy_styles = async e => {
-    e.preventDefault()
-
-    window.copied_styles = selected.map(el =>
-      getStyles(el))
-
-    try {
-      const colormode = $('vis-bug').attr('color-mode')
-
-      const styles = window.copied_styles[0]
-        .map(({prop,value}) => {
-          if (prop.includes('color') || prop.includes('background-color') || prop.includes('border-color') || prop.includes('Color') || prop.includes('fill') || prop.includes('stroke'))
-            value = preferredNotation(value, colormode)
-
-          if (prop.includes('boxShadow')) {
-            const [, color, x, y, blur, spread] = getShadowValues(value)
-            value = `${preferredNotation(color, colormode)} ${x} ${y} ${blur} ${spread}`
-          }
-
-          if (prop.includes('textShadow')) {
-            const [, color, x, y, blur] = getTextShadowValues(value)
-            value = `${preferredNotation(color, colormode)} ${x} ${y} ${blur}`
-          }
-          return {prop,value}
-        })
-        .reduce((message, item) =>
-          [...message, `${camelToDash(item.prop)}: ${item.value};`]
-        , []).join('\n')
-
-      const {state} = await navigator.permissions.query({name:'clipboard-write'})
-
-      if (styles && state === 'granted') {
-        await navigator.clipboard.writeText(styles)
-      }
-    } catch(e) {
-      console.warn(e)
-    }
-  }
-
-  const on_paste_styles = async (e, index = 0) => {
-    if (window.copied_styles) {
-      selected.forEach(el => {
-        window.copied_styles[index]
-          .map(({prop, value}) =>
-            el.style[prop] = value)
-
-        index >= window.copied_styles.length - 1
-          ? index = 0
-          : index++
-      })
-    }
-    else {
-      const potentialStyles = await navigator.clipboard.readText()
-
-      if (selected.length && potentialStyles)
-        selected.forEach(el =>
-          el.style = potentialStyles)
-    }
   }
 
   const on_expand_selection = (e, {key}) => {

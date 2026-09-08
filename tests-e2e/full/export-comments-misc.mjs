@@ -228,7 +228,7 @@ await page.evaluate(() => {
   document.body.appendChild(d)
 })
 await select('#vr-imp')
-await writeField('opacity', '0.6')
+await writeField('opacity', '60')   // 面板里是百分比
 t('6.1.3', await page.evaluate(() =>
   document.getElementById('vr-imp').style.getPropertyPriority('opacity')) === 'important',
   '样式表里带 !important 时，面板写入也带 important')
@@ -481,7 +481,7 @@ await page.waitForTimeout(300)
 await page.keyboard.press('End'); await page.keyboard.type('？')
 await page.waitForTimeout(600); await blurAll(); await page.waitForTimeout(250)
 await select('#vr-imp')
-await writeField('opacity', '0.55')
+await writeField('opacity', '55')
 await select('.hero-eyebrow')
 await page.keyboard.press('Delete'); await page.waitForTimeout(400)
 await page.keyboard.press('Escape'); await page.waitForTimeout(200)
@@ -509,7 +509,7 @@ t('6.2.1', !!download && /^visual-revise-.*\.json$/.test(download.suggestedFilen
 // 6.2.2 / 6.2.3 载荷
 const exported = await page.evaluate(() =>
   window.__visualRevise.lib.exportJSON({ url: 'http://test.local', viewport: '1440 × 900' }))
-t('6.2.2', exported.schema === 5, `SCHEMA_VERSION = ${exported.schema}（清单写的是 3，代码已升到 5：v5 起带「新增的元素」）`)
+t('6.2.2', exported.schema === 6, `SCHEMA_VERSION = ${exported.schema}（清单写的是 3，代码已升到 6：v5 起带「新增的元素」，v6 起新增记录可带 replaced）`)
 const refId = exported.comments[0]?.images?.[0]
 t('6.2.2', Array.isArray(exported.assets)
   && exported.assets.some(a => a.id === refId && a.dataUrl.startsWith('data:image/')),
@@ -522,13 +522,13 @@ t('6.2.2', Array.isArray(exported.inserts), 'v5 起带 inserts（新增的元素
 const schemaProbe = await page.evaluate(() => {
   const { importJSON } = window.__visualRevise.lib
   const out = {}
-  for (const s of [1, 2, 3, 4, 5, 6])
+  for (const s of [1, 2, 3, 4, 5, 6, 7])
     out[s] = importJSON({ schema: s, edits: [] }, { apply: false }).ok === true
   return out
 })
-t('6.2.2', schemaProbe[1] && schemaProbe[2] && schemaProbe[3] && schemaProbe[4] && schemaProbe[5]
-  && !schemaProbe[6],
-  `支持读 1/2/3/4/5，6 被拒（${JSON.stringify(schemaProbe)}）`)
+t('6.2.2', schemaProbe[1] && schemaProbe[2] && schemaProbe[3] && schemaProbe[4] && schemaProbe[5] && schemaProbe[6]
+  && !schemaProbe[7],
+  `支持读 1/2/3/4/5/6，7 被拒（${JSON.stringify(schemaProbe)}）`)
 
 t('6.2.3', exported.edits.length >= 2 && exported.edits.some(e => e.changes.length),
   `JSON 含样式改动（${exported.edits.length} 个元素）`)
@@ -1456,7 +1456,7 @@ const radii = await page.evaluate(() =>
 t('7.5.1', radii.length === 3 && radii.every(r => r === '9px'),
   `开启后面板写入落到全部同构元素（${radii.join(' / ')}）`)
 await ensureShared(false)
-await writeField('opacity', '0.7')
+await writeField('opacity', '70')
 const ops = await page.evaluate(() =>
   [...document.querySelectorAll('.curve-card')].map(c => c.style.opacity || '-'))
 t('7.5.1', ops.filter(o => o !== '-').length === 1,

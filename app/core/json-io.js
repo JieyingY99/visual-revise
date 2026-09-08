@@ -12,10 +12,12 @@ import { resolveElement } from './anchors.js'
 // v4 起每条改动带 important：样式表里有 !important 的属性，面板写的也是
 // !important，不带这个字段的话导入方压不过样式表，画面对不上。
 // v5 起带上新增：分组的外壳、⌘V 粘进来的副本，都是原页面里没有的元素。
-export const SCHEMA_VERSION = 5
+// v6 起新增记录可带 replaced：⌘⇧R 的替换落成「新增 + 删除」一对，靠它才认得出
+// 这两条是一次操作。纯增字段，v5 及更早的文件照常导入（那时没有替换这回事）。
+export const SCHEMA_VERSION = 6
 
 // 老版本导出的文件缺字段也能正常导入，所以照收
-const SUPPORTED = new Set([1, 2, 3, 4, 5])
+const SUPPORTED = new Set([1, 2, 3, 4, 5, 6])
 
 // 新增记录带的是一段 HTML 原文，导入时要还原成节点。取 firstElementChild
 // 而不是 firstChild：原文前面可能带换行，那会先解析出一个文本节点。
@@ -54,6 +56,14 @@ export const exportJSON = (meta = {}) => {
       nextAnchors:   r.nextAnchors,
       atEnd:         r.atEnd,
       html:          r.html,
+      // 替换的另一半：这条新增顶掉了谁。只带身份三件套，不带 replaced.id——
+      // 那是本会话内的元素编号，换一个页面就指不到任何东西了；导入方靠
+      // identity 把它和对应的那条删除重新配上对
+      ...(r.replaced ? { replaced: {
+        tag:      r.replaced.tag,
+        text:     r.replaced.text,
+        identity: r.replaced.identity,
+      } } : null),
     })),
     // 移动存三方锚点：元素自己、原容器与后邻、新容器与后邻。
     // 主锚点用移动**之前**那一份——导入方页面上的元素还在原位，
@@ -177,7 +187,8 @@ export const importJSON = (data, { apply = true } = {}) => {
 
       if (apply)
         ChangeStore.insertElement(node, parent,
-          next?.parentElement === parent ? next : null, record.label || '新增元素')
+          next?.parentElement === parent ? next : null, record.label || '新增元素',
+          record.replaced || null)
       report.inserts++
     } catch (err) {
       report.failed.push({ selector: record.parentAnchors?.selector, reason: err?.message || String(err) })

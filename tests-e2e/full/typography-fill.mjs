@@ -327,8 +327,9 @@ T('2.7.5', await inline('t-text', 'line-height') === '1.8',
   `小数行高原样写入（${await inline('t-text', 'line-height')}）`)
 
 await typeInto(TYPO, 'letter-spacing', '3')
-T('2.7.6', await inline('t-text', 'letter-spacing') === '3px',
-  `字距是长度，裸数字补 px（${await inline('t-text', 'letter-spacing')}）`)
+// 字距按字号百分比（Figma 的写法）：裸数字 3 是 3%，写成 0.03em；CSS 的 letter-spacing 不收百分比
+T('2.7.6', await inline('t-text', 'letter-spacing') === '0.03em',
+  `字距按百分比，裸数字 3 → 0.03em（${await inline('t-text', 'letter-spacing')}）`)
 const lhPair = await page.evaluate(() => {
   const sec = document.querySelector('visual-revise-panel').shadowRoot
     .querySelector('section[data-group="typography"]')

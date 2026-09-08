@@ -6,6 +6,7 @@ import {
   takeSnapshot, diffSnapshot, diffText, diffAttrs,
   revertProp, revertText, revertAttr, revertAll, elementId, adoptId, readText,
   readInline, readInlineImportant, readAttrs, TRACKED_ATTRS, textNodesOf,
+  inlineValueOf, inlinePriorityOf,
 } from './snapshot.js'
 import { winningDeclaration } from './cascade.js'
 import {
@@ -520,7 +521,9 @@ const createStore = () => {
     return clone.outerHTML
   }
 
-  const insertElement = (el, parent, next = null, label = '新增元素') => {
+  // replaced 只有替换（⌘⇧R）会传：这条新增是「顶掉了谁」。带上它，改动列表
+  // 和提示词才认得出「新增 + 删除」这一对其实是一次替换，而不是两件事。
+  const insertElement = (el, parent, next = null, label = '新增元素', replaced = null) => {
     if (!canMoveInto(el, parent)) return false
 
     // 落点归一化，同 moveElement：不再是 parent 的孩子就当「放到末尾」
@@ -552,6 +555,9 @@ const createStore = () => {
       identity: identityOf(el),
       tag:      el.tagName.toLowerCase(),
       text:     readText(el).slice(0, 80),
+      // 不是替换就不写这个键：普通新增的记录形状跟以前一模一样，
+      // 下游那些 `r.replaced ? …` 的判断也就不用再区分 null 和 undefined
+      ...(replaced ? { replaced } : null),
     }
 
     inserts.set(id, record)
@@ -578,6 +584,51 @@ const createStore = () => {
         if (r.el.isConnected) r.html = outerHtmlOf(r.el)
         return r
       })
+
+  // ── 替换元素 ────────────────────────────────────────────────
+  // Figma 的 Paste to replace：新东西落在旧元素占的那个位置上，旧的消失。
+  //
+  // 不新开一类记录，而是复用「新增 + 删除」这一对：对 AI 来说要做的事本来就是
+  // 这两件（把这段写出来、把那段删掉），另开一类只会让提示词、JSON、列表三处
+  // 各自再长一套分支。两条记录靠新增那条上的 replaced 串起来，界面与提示词
+  // 才说得出「把 X 换成 Y」。
+  const replaceElement = (oldEl, newNode, label = '替换元素') => {
+    if (oldEl?.nodeType !== 1 || !oldEl.isConnected) return false
+    if (newNode?.nodeType !== 1) return false
+
+    const parent = oldEl.parentElement
+    if (!canMoveInto(newNode, parent)) return false
+
+    // 旧元素的身份要在动它之前采：removeElements 跑完它就离开 DOM 了，
+    // stableClasses / textLandmarks 读的都是活节点
+    const replaced = {
+      // id 是本会话内的元素编号，改动列表靠它把「删除」那条认成替换的另一半。
+      // 导出 JSON 时不带（换一个页面就没有意义了）
+      id:       elementId(oldEl),
+      tag:      oldEl.tagName.toLowerCase(),
+      text:     readText(oldEl).slice(0, 80),
+      identity: identityOf(oldEl),
+    }
+
+    // 落点取旧元素的**后邻**而不是旧元素自己：新节点先插在旧元素后面，
+    // 旧元素一删，它就正好落回那个下标——DOM 结果与「插在旧元素之前」完全相同。
+    //
+    // 差别在记录上。锚点里带 :nth-of-type，若把旧元素当落点：
+    //   · 导出的 nextAnchors 指向一个结果页面里根本不存在的元素；
+    //   · 导入时（新增先跑、删除后跑）新节点插在旧元素之前，同标签替换会把旧
+    //     元素的下标顶开一位，随后那条删除按老下标找过去，删掉的是刚插进来的
+    //     新元素——一次替换变成了什么都没换。
+    // 用后邻则两头都稳：它在替换前后都在页面上、下标也不受影响。
+    const anchor = oldEl.nextElementSibling
+
+    return history.batch(label, () => {
+      if (!insertElement(newNode, parent, anchor, label, replaced)) return false
+      // 旧元素若是本会话自己插进来的，removeElements 会把那条 insert 对消掉，
+      // 不留「删除了一个原页面里没有的元素」这种执行不了的指令
+      removeElements([oldEl])
+      return true
+    })
+  }
 
   // 分组 / 取消分组落在 store 里而不是 selectable.js：这两件事各是
   // 「一次插入 + n 次移动」和它的逆运算，记录语义（不生成指向已删外壳的
@@ -1117,11 +1168,15 @@ const createStore = () => {
     const snap = snapshots.get(id)
     if (!snap) return
 
-    const priority = () => snap.el.style.getPropertyPriority(prop) === 'important'
-    const before = snap.el.style.getPropertyValue(prop)
+    // 前后值走 inlineValueOf 而不是裸的 getPropertyValue：合成简写
+    //（border-radius / border-width）在四条长手不齐时 CSSOM 读不出来，两边同为
+    // 空串，一次真实的还原会被判成「没变化」而进不了历史栈——点了「还原」之后
+    // ⌘Z 救不回来。priority 同理，用聚合口径避免同一个原因的假相等。
+    const priority = () => inlinePriorityOf(snap.el, prop) === 'important'
+    const before = inlineValueOf(snap.el, prop)
     const beforeImportant = priority()
     revertProp(snap, prop)
-    const after = snap.el.style.getPropertyValue(prop)
+    const after = inlineValueOf(snap.el, prop)
     const afterImportant = priority()
 
     if (before !== after || beforeImportant !== afterImportant)
@@ -1249,7 +1304,7 @@ const createStore = () => {
     addComment, updateComment, removeComment, setCommentImages,
     recordRemoval, removeElements, restoreRemoval, canRestore,
     moveElement, moveBack, canMoveBack,
-    insertElement, groupElements, ungroupElement,
+    insertElement, replaceElement, groupElements, ungroupElement,
     undoProp, undoText, undoAttr, undoElement, undoEverything, clear,
     read, stats, touch, reconcile, observe, unobserve,
     snapshots,

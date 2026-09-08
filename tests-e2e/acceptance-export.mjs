@@ -149,7 +149,7 @@ const mid = await stats()
 await page.evaluate(d => window.__visualRevise.lib.importJSON(d), data); await page.waitForTimeout(500)
 const after = await stats()
 const applied = await inline(0, 'border-radius')
-AC('AC-8.7', data.schema === 5 && mid.total === 0 && after.total === before.total && applied === '22px',
+AC('AC-8.7', data.schema >= 5 && mid.total === 0 && after.total === before.total && applied === '22px',
    `导出 schema v${data.schema}；清空后导入，记录回到 ${after.total} 条（导出时 ${before.total}）且样式重新应用（radius=${applied}）`)
 
 // 移动只出不进的话，「导入后记录数一致」就是假的

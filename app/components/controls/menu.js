@@ -8,7 +8,7 @@
 // 面板挂到 body 而不是 shadow 内：属性面板本身有 overflow:auto，
 // 放在里面会被裁掉。
 
-import { mountPopover } from './popover-host.js'
+import { mountPopover, visibleSize, popoverBounds } from './popover-host.js'
 
 const MENU_ID = 'visual-revise-menu'
 
@@ -121,6 +121,28 @@ const POPOVER_CSS = `
   .gp-settings:hover { background: #454545 }
 `
 
+// 定位：默认贴触发器下方，下方装不下就向上翻。
+//
+// 尺寸一律用 visibleSize()：宿主被 popover-host 加了 scale(1/k)、原点左上，
+// 屏幕上占的是 offsetWidth/k；而锚点的 getBoundingClientRect() 已经是缩过的
+// 视口坐标。混用两套单位的话，align:'right' 的 left = rect.right − offsetWidth
+// 会让右缘恒定偏出 w·(1−1/k)（菜单飘在按钮左边），夹取多留一圈边，向上翻
+// 还会在锚点上方留出 h·(1−1/k) 的空档。
+// 视口边界走 popoverBounds()（即 viewportBox()）而不是 innerWidth/innerHeight，
+// 捏合放大时才夹得住。
+const place = (panel, anchor, align) => {
+  const rect = anchor.getBoundingClientRect()
+  const { w, h } = visibleSize(panel)
+  const b = popoverBounds()
+
+  const left = align === 'right' ? rect.right - w : rect.left
+  panel.style.left = `${Math.max(b.minLeft, Math.min(left, b.maxLeft(w)))}px`
+  const below = b.below(rect.bottom)
+  panel.style.top = below >= h + 12 || below >= rect.top
+    ? `${rect.bottom + 6}px`
+    : `${Math.max(b.minTop, rect.top - h - 6)}px`
+}
+
 // items: [{ id, label, icon?, checked?, disabled?, hint? } | { separator: true }]
 //
 // 色圈与「对勾挪到最右」是变量菜单独有的版式，那个菜单已经退役（变量列表搬进了
@@ -175,17 +197,7 @@ export const openMenu = (anchor, items, onPick, { align = 'left' } = {}) => {
     root.appendChild(row)
   }
 
-  // 定位：默认贴触发器下方，下方装不下就向上翻
-  const rect = anchor.getBoundingClientRect()
-  const h = panel.offsetHeight
-  const w = panel.offsetWidth
-  const below = innerHeight - rect.bottom
-
-  const left = align === 'right' ? rect.right - w : rect.left
-  panel.style.left = `${Math.max(8, Math.min(left, innerWidth - w - 8))}px`
-  panel.style.top = below >= h + 12 || below >= rect.top
-    ? `${rect.bottom + 6}px`
-    : `${Math.max(8, rect.top - h - 6)}px`
+  place(panel, anchor, align)
 
   anchor.setAttribute('data-menu-open', '')
   anchorEl = anchor
@@ -208,16 +220,7 @@ export const openPopover = (anchor, buildContent, { align = 'left', width } = {}
   style.textContent = POPOVER_CSS
   root.appendChild(style)
 
-  const rect = anchor.getBoundingClientRect()
-  const h = panel.offsetHeight
-  const w = panel.offsetWidth
-  const below = innerHeight - rect.bottom
-
-  const left = align === 'right' ? rect.right - w : rect.left
-  panel.style.left = `${Math.max(8, Math.min(left, innerWidth - w - 8))}px`
-  panel.style.top = below >= h + 12 || below >= rect.top
-    ? `${rect.bottom + 6}px`
-    : `${Math.max(8, rect.top - h - 6)}px`
+  place(panel, anchor, align)
 
   anchor.setAttribute('data-menu-open', '')
   anchorEl = anchor

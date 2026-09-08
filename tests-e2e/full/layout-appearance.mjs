@@ -508,9 +508,15 @@ const prefixes = await page.evaluate(() => {
   const sr = document.querySelector('visual-revise-panel').shadowRoot
   return [...sr.querySelectorAll('.sides .control .prefix')].map(n => n.textContent.trim())
 })
-T('2.5.15', JSON.stringify(prefixes) === JSON.stringify(['↑', '→', '↓', '←']),
-  `四边前缀是 ↑→↓←（${JSON.stringify(prefixes)}）`)
-T('2.5.15', await P('.lock[data-lock="padding"]').count() === 1, '展开后带四边联动锁')
+// 四边前缀换成「虚线框 + 一条实边」的方向图标（跟粗细四边一致），不再是 ↑→↓← 字符
+const prefixSvgs = await page.evaluate(() => {
+  const sr = document.querySelector('visual-revise-panel').shadowRoot
+  return [...sr.querySelectorAll('.sides .control .prefix')].map(n => !!n.querySelector('svg'))
+})
+T('2.5.15', prefixSvgs.length === 4 && prefixSvgs.every(Boolean), `四边前缀是方向图标（${prefixSvgs.length} 个 svg）`)
+// 展开就是为了分别改：没有联动锁；收回按钮在网格第三列、高亮
+T('2.5.15', await P('.lock[data-lock="padding"]').count() === 0 && await P('.sides .collapse-sides[data-kind="padding"][data-on]').count() === 1,
+  '展开后没有联动锁，收回按钮在网格右上、处于高亮')
 T('2.5.15', await P('input[data-pair="padding:horizontal"]').count() === 0,
   '展开状态下两段式的框让位')
 T('2.5.15', await P('input[data-pair="margin:horizontal"]').count() === 1,
@@ -526,35 +532,27 @@ T('2.5.15', await P('input[data-prop="padding-top"]').count() === 0,
   '展开状态绑在元素上，换元素即收起')
 
 // ════════════════════════════════════════════════════════════
-// 2.5.16 四边联动锁
+// 2.5.16 展开后四边各自独立（没有联动锁）
 // ════════════════════════════════════════════════════════════
-console.log('── 2.5.16 四边联动锁')
+console.log('── 2.5.16 四边独立')
 await select('pad')
-// 先造一个四边不等的起点，锁才会是「未开启」
 await page.evaluate(() => { document.getElementById('pad').style.padding = '10px 20px' })
 await select('free'); await select('pad')
 await tap(P('.expand-sides[data-kind="padding"]'))
-T('2.5.16', await P('.lock[data-lock="padding"][data-on]').count() === 0,
-  '四边不等时联动锁是关的')
-await tap(P('.lock[data-lock="padding"]'))
-s = await styles('pad', sideProps)
-T('2.5.16', await P('.lock[data-lock="padding"][data-on]').count() === 1 &&
-            sideProps.every(p => s[p] === '10px'),
-  `点开锁时把「上」的值同步写进四边（${JSON.stringify(s)}）`)
-
 const ld0 = await depth()
 const leftIn = P('input[data-prop="padding-left"]')
 await leftIn.scrollIntoViewIfNeeded()
 await leftIn.fill('30'); await leftIn.press('Enter'); await page.waitForTimeout(400)
 s = await styles('pad', sideProps)
-T('2.5.16', sideProps.every(p => s[p] === '30px'),
-  `锁开着改任一边同步四边（${JSON.stringify(s)}）`)
+T('2.5.16', s['padding-left'] === '30px' && s['padding-top'] === '10px' && s['padding-right'] === '20px' && s['padding-bottom'] === '10px',
+  `改左边只动左边，其余三边不动（${JSON.stringify(s)}）`)
 const ld1 = await depth()
-T('2.5.16', ld1 - ld0 === 1, `联动同步四边是整体一次 batch（depth ${ld0} → ${ld1}）`)
+T('2.5.16', ld1 - ld0 === 1, `一次编辑一条历史（depth ${ld0} → ${ld1}）`)
 await tap(page.locator('visual-revise-toolbar .undo'))
 s = await styles('pad', sideProps)
-T('2.5.16', sideProps.every(p => s[p] === '10px'),
-  `一次撤销整体退回联动前（${JSON.stringify(s)}）`)
+T('2.5.16', s['padding-left'] === '20px', `⌘Z 退回那一边（${s['padding-left']}）`)
+await tap(P('.sides .collapse-sides[data-kind="padding"]'))
+T('2.5.16', await P('input[data-pair="padding:horizontal"]').count() === 1, '点网格里的收回按钮回到两段式')
 
 // ════════════════════════════════════════════════════════════
 // 2.5.17 裁剪内容
@@ -606,8 +604,10 @@ const appear = await page.evaluate(() => {
   return {
     hasBoth: !!op && !!br,
     opPrefix: op?.closest('.control')?.querySelector('.prefix')?.textContent.trim() || '',
-    brPrefix: br?.closest('.control')?.querySelector('.prefix')?.textContent.trim() || '',
-    samePair: !!op && !!br && op.closest('.pair') !== null && op.closest('.pair') === br.closest('.pair'),
+    // 圆角前缀现在是 SVG 图标（一个圆角的弧），不再是字符
+    brPrefix: br?.closest('.control')?.querySelector('.prefix svg') ? 'svg' : (br?.closest('.control')?.querySelector('.prefix')?.textContent.trim() || ''),
+    // 不透明度 | 圆角 | 四角独立按钮 三格一行（.radius-row）
+    samePair: !!op && !!br && op.closest('.radius-row') !== null && op.closest('.radius-row') === br.closest('.radius-row'),
   }
 })
 T('2.6.1', appear?.hasBoth && appear.opPrefix === '◍',
@@ -631,11 +631,11 @@ T('2.6.1', parseFloat(await style('appear', 'opacity')) >= 0,
   `步进不越过声明的下界 min:0（${await style('appear', 'opacity')}）`)
 await write('opacity', 60)
 
-T('2.6.2', appear?.brPrefix === '◜', `圆角前缀是 ◜（实际「${appear?.brPrefix}」）`)
+T('2.6.2', appear?.brPrefix === 'svg', `圆角前缀是圆角弧图标（实际「${appear?.brPrefix}」）`)
 await write('border-radius', 12)
 T('2.6.2', await style('appear', 'border-radius') === '12px',
   `圆角写 border-radius，裸数字补 px（${await style('appear', 'border-radius')}）`)
-T('2.6.2', appear?.samePair === true, '不透明度与圆角并排在同一行（FIELD_PAIRS）')
+T('2.6.2', appear?.samePair === true, '不透明度与圆角并排在同一行（.radius-row，右侧是四角独立按钮）')
 
 // ── 收尾 ────────────────────────────────────────────────────
 console.log(`\n通过 ${passed} · 失败 ${failed}\n`)

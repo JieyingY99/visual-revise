@@ -44,23 +44,25 @@ export function createGuide(vert = true) {
     position: absolute;
     top: 0;
     left: 0;
-    background: hsla(330, 100%, 71%, 70%);
+    background: hsla(330, 100%, 71%, 50%);
     pointer-events: none;
     z-index: 2147483643;
   `
 
+  // 线宽乘 --vr-inv-zoom：页面放大时参考线保持 1 屏幕像素（core/zoom.js 维护）
   vert 
     ? styles += `
-        width: 1px;
+        width: calc(1px * var(--vr-inv-zoom, 1));
         height: 100vh;
         transform: rotate(180deg);
       `
     : styles += `
-        height: 1px;
+        height: calc(1px * var(--vr-inv-zoom, 1));
         width: 100vw;
       `
 
   guide.style = styles
+  guide.dataset.visualReviseGuide = ''
 
   return guide
 }

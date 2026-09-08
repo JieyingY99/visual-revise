@@ -8,6 +8,7 @@
 // 这里只管「一个颜色怎么被编辑」，不管它最终写到哪个 CSS 属性上。
 
 import './select.element.js'
+import { cssToRgba } from '../../core/page-colors.js'
 
 export const clamp = (n, min, max) => Math.min(max, Math.max(min, n))
 const round = n => Math.round(n * 100) / 100
@@ -42,22 +43,30 @@ export const rgbToHsv = (r, g, b) => {
 const toHex = n => n.toString(16).padStart(2, '0')
 
 // 解析任意 CSS 颜色：交给浏览器算，比手写正则可靠
+const INVALID = { r: 0, g: 0, b: 0, a: 1, valid: false }
+
 export const parseColor = input => {
   const probe = document.createElement('div')
   probe.style.color = ''
   probe.style.color = String(input || '').trim()
 
-  if (!probe.style.color) return { r: 0, g: 0, b: 0, a: 1, valid: false }
+  if (!probe.style.color) return { ...INVALID }
 
   document.body.appendChild(probe)
   const computed = getComputedStyle(probe).color
   probe.remove()
 
   const m = computed.match(/rgba?\(([^)]+)\)/)
-  if (!m) return { r: 0, g: 0, b: 0, a: 1, valid: false }
+  if (m) {
+    const [r, g, b, a = 1] = m[1].split(',').map(v => parseFloat(v))
+    return { r, g, b, a, valid: true }
+  }
 
-  const [r, g, b, a = 1] = m[1].split(',').map(v => parseFloat(v))
-  return { r, g, b, a, valid: true }
+  // 计算值不一定回落成 rgb()：Chrome 111+ 起 oklch() / lab() / color(display-p3 …) 都保留
+  // 原色彩空间（color-mix 也序列化成 color(srgb …)），正则拆不动。之前直接判 valid:false，
+  // 等于用户敲一个现代语法的颜色就被告知「这不是颜色」——改走探针换算到 sRGB。
+  const c = cssToRgba(computed)
+  return c ? { ...c, valid: true } : { ...INVALID }
 }
 
 // 两个颜色字符串是不是同一个颜色（#fff 与 rgb(255, 255, 255) 算同一个）。

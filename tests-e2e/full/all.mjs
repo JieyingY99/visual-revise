@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SUITES = ['toolbar', 'panel-head-position', 'layout-appearance', 'typography-fill', 'stroke-effects',
   'variables-grid', 'tree', 'popovers', 'select-handles-text', 'drag-guides-upstream', 'history-changes',
-  'export-comments-misc']
+  'export-comments-misc', 'split-rows']
 
 const only = process.argv.slice(2)
 const run = name => new Promise(resolve => {

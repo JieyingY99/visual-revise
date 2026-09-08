@@ -61,7 +61,7 @@ export class VrColor extends HTMLElement {
 
     this.#shadow.innerHTML = `
       <style>
-        :host { display: flex; gap: 6px; align-items: center; }
+        :host { display: flex; gap: 4px; align-items: center; }
         .swatch {
           flex: none; box-sizing: border-box; padding: 0;
           width: 32px; height: 32px;

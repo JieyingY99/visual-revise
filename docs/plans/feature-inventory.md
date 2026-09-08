@@ -3,6 +3,7 @@
 > 关联：验收条目编号见 [../PRD.md](../PRD.md)（AC-x.y）；变量绑定与色盘的设计背景见
 > [color-picker-variables.md](color-picker-variables.md)；跨容器重排的设计背景见
 > [cross-container-reorder.md](cross-container-reorder.md)。
+> 本篇之后新增 / 改写的功能点见 [feature-inventory-v2.md](feature-inventory-v2.md)（增量续篇，编号沿用本篇）。
 > 本篇是「每个 tab 的每个功能都测一遍」的测试集清单，只列**可操作的功能点**，不描述架构。
 >
 > **规模**：374 个功能点 / 10 个一级分区 / 50 个二级分区。现有 e2e 约 1057 条断言、30 个套件（另有 6 个孤儿脚本不在 `all.mjs` 里）。

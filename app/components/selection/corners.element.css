@@ -1,11 +1,11 @@
 @import "../_variables.css";
 
 :host rect {
-  width: 5px;
-  height: 5px;
+  width: calc(5px * var(--vr-inv-zoom, 1));
+  height: calc(5px * var(--vr-inv-zoom, 1));
   vector-effect: non-scaling-stroke;
   stroke: var(--neon-purple);
-  stroke-width: 1px;
+  stroke-width: calc(1px * var(--vr-inv-zoom, 1));
   fill: none;
   stroke-linecap: round;
   stroke-dasharray: 10px;

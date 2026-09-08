@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Page colors empty fixture</title>
+<style>
+  /* 页面上一个可采集的颜色都没有：
+     - body 自己不在 `body *` 的扫描范围里（背景色不算）
+     - 唯一的元素没有背景（transparent）、没有直接文字、描边是透明色
+     用来验「空态」那一支：不渲染网格，给一行提示。 */
+  html, body { margin: 0; background: #101014; }
+  #pc-blank { position: absolute; left: 40px; top: 200px;
+              width: 240px; height: 120px; border: 3px solid transparent; }
+</style>
+</head>
+<body><div id="pc-blank"></div></body>
+</html>

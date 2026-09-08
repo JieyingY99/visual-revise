@@ -160,6 +160,65 @@ AC('AC-6.8', await inline('opacity') === '0.5' && await inline('border-radius') 
   await select()
 }
 
+// 6.37 圆角的「四角独立」：按钮 → 2×2 四个角，各写自己的长手属性；四角不等时单框显示「混合」
+{
+  console.log('── 6.37 圆角 四角独立')
+  await select()
+  const rad = () => page.evaluate(() => {
+    const sr = document.querySelector('visual-revise-panel').shadowRoot
+    const btn = sr.querySelector('.radius-row [data-corners]')
+    const single = sr.querySelector('input[data-prop="border-radius"]')
+    const el = document.getElementById('rich')
+    const corner = p => el.style.getPropertyValue(p)
+    return {
+      btn: !!btn, on: btn?.hasAttribute('data-on') ?? null,
+      square: btn ? Math.abs(btn.getBoundingClientRect().width - btn.getBoundingClientRect().height) < 1 : null,
+      corners: [...sr.querySelectorAll('.corners input[data-prop]')].map(i => i.dataset.prop),
+      single: single?.value ?? null, placeholder: single?.getAttribute('placeholder') ?? null,
+      tl: corner('border-top-left-radius'), tr: corner('border-top-right-radius'),
+      bl: corner('border-bottom-left-radius'), br: corner('border-bottom-right-radius'),
+      shorthand: el.style.borderRadius,
+      computedTl: parseFloat(getComputedStyle(el).borderTopLeftRadius),
+      record: window.__visualRevise.store.read().edits.find(e => e.el === el)?.changes.find(c => c.prop === 'border-radius')?.to ?? null,
+      total: window.__visualRevise.store.stats().total,
+    }
+  })
+  const r0 = await rad()
+  AC('AC-6.37a', r0.btn && r0.square && r0.on === false && r0.corners.length === 0 && r0.single === String(r0.computedTl),
+     `圆角行右侧有 1:1 的「四角独立」按钮，四角相等时收起、单框显示当前值 ${r0.computedTl}（${JSON.stringify({ on: r0.on, single: r0.single })}）`)
+  const cbtn = P('.radius-row [data-corners]').first()
+  await cbtn.scrollIntoViewIfNeeded(); await cbtn.click(); await page.waitForTimeout(400)
+  const r1 = await rad()
+  AC('AC-6.37b', r1.on === true && JSON.stringify(r1.corners) === JSON.stringify(['border-top-left-radius', 'border-top-right-radius', 'border-bottom-left-radius', 'border-bottom-right-radius']),
+     `点按钮展开：按钮高亮，2×2 四个角按 左上 右上 / 左下 右下 排（${r1.corners.length} 个）`)
+  await write('border-top-left-radius', 20)
+  const r2 = await rad()
+  // 改一个角只动那一条长手；改动记录里仍是一条 border-radius，值按简写顺序合成
+  AC('AC-6.37c', r2.tl === '20px' && r2.tr === r1.tr && r2.bl === r1.bl && r2.br === r1.br
+    && r2.record === `20px ${r1.tr} ${r1.br} ${r1.bl}`,
+     `改左上只写 border-top-left-radius（tl=${r2.tl}，其余不动），记录合成一条 border-radius: ${r2.record}`)
+  await P('.radius-row [data-corners]').first().click(); await page.waitForTimeout(400)
+  const r3 = await rad()
+  AC('AC-6.37d', r3.on === false && r3.corners.length === 0 && r3.single === '' && r3.placeholder === '混合',
+     `收起后四角不等：单框留空、占位「混合」（value="${r3.single}" placeholder=${r3.placeholder}）`)
+  await write('border-radius', 10)
+  const r4 = await rad()
+  AC('AC-6.37e', r4.shorthand === '10px' && r4.tl === '10px' && r4.single === '10' && r4.placeholder === null,
+     `单框敲 10 写简写、四角一起变（border-radius=${r4.shorthand}，tl=${r4.tl}），占位消失`)
+  // 页面本身四角不等的元素：第一次显示就展开
+  await page.evaluate(() => { const d = document.createElement('div'); d.id = 'uneven'; d.style.cssText = 'position:absolute;left:20px;top:560px;width:120px;height:40px;background:#345;border-radius:4px 12px 0 20px'; document.body.appendChild(d) })
+  await page.keyboard.press('Escape'); await page.waitForTimeout(150)
+  await page.locator('#uneven').click({ position: { x: 60, y: 20 } }); await page.waitForTimeout(500)
+  const r5 = await page.evaluate(() => {
+    const sr = document.querySelector('visual-revise-panel').shadowRoot
+    return { on: sr.querySelector('.radius-row [data-corners]')?.hasAttribute('data-on'), corners: [...sr.querySelectorAll('.corners input')].map(i => i.value) }
+  })
+  AC('AC-6.37f', r5.on === true && JSON.stringify(r5.corners) === JSON.stringify(['4', '12', '20', '0']),
+     `页面四角不等的元素默认展开，四个框各显示自己的值（${r5.corners.join('/')}）`)
+  await page.keyboard.press('Meta+z'); await page.waitForTimeout(300)
+  await select()
+}
+
 // ── 6.9 Typography ──
 console.log('── 6.9 Typography')
 await unfold('Typography')
@@ -169,7 +228,7 @@ await pick('font-family', 'Georgia')
 AC('AC-6.9a', /^Georgia, "PingFang TC"/.test(await inline('font-family')), `字体只换栈首、后备保留（${await inline('font-family')}）`)
 await pick('font-weight', '700')
 await write('font-size', 19); await write('line-height', 1.7); await write('letter-spacing', 2)
-AC('AC-6.9b', await inline('font-weight') === '700' && await inline('font-size') === '19px' && await inline('line-height') === '1.7' && await inline('letter-spacing') === '2px',
+AC('AC-6.9b', await inline('font-weight') === '700' && await inline('font-size') === '19px' && await inline('line-height') === '1.7' && await inline('letter-spacing') === '0.02em',
    `字重 ${await inline('font-weight')} · 字号 ${await inline('font-size')} · 行高 ${await inline('line-height')} · 字距 ${await inline('letter-spacing')}`)
 for (const v of ['center', 'right', 'justify', 'left']) {
   await P(`button[data-prop="text-align"][data-value="${v}"]`).click(); await page.waitForTimeout(200)
@@ -181,6 +240,39 @@ await pick('text-transform', 'uppercase').catch(() => {})
 await pick('text-decoration-line', 'underline').catch(() => {})
 AC('AC-6.9d', moreShown > 0 && await inline('text-transform') === 'uppercase' && await inline('text-decoration-line') === 'underline',
    `「更多」展开后 text-transform=${await inline('text-transform')} text-decoration-line=${await inline('text-decoration-line')}`)
+
+// 6.39 单位只做展示、放最右；6.40 字距按字号百分比
+{
+  console.log('── 6.39 / 6.40 单位后缀 · 字距百分比')
+  await page.evaluate(() => { const p = document.createElement('p'); p.id = 'txt2'; p.textContent = '单位后缀'; p.style.cssText = 'position:absolute;left:340px;top:560px;margin:0;font-size:15px;line-height:22.5px;letter-spacing:normal;color:#eee'; document.body.appendChild(p) })
+  await page.keyboard.press('Escape'); await page.waitForTimeout(150)
+  await page.locator('#txt2').click({ position: { x: 10, y: 8 } }); await page.waitForTimeout(500)
+  await unfold('Typography')
+  const field = p => page.evaluate(x => { const i = document.querySelector('visual-revise-panel').shadowRoot.querySelector(`input[data-prop="${x}"]`); return i && { v: i.value, unit: i.dataset.unit, suffix: i.parentElement.querySelector('.suffix')?.textContent ?? null } }, p)
+  const el = p => page.evaluate(x => document.getElementById('txt2').style.getPropertyValue(x), p)
+  const lh0 = await field('line-height')
+  AC('AC-6.39a', lh0.v === '22.5' && lh0.unit === 'px' && lh0.suffix === 'px', `行高框里只有数字 ${lh0.v}，单位 ${lh0.suffix} 在右侧后缀`)
+  await write('line-height', 30)
+  const lh1 = await el('line-height')
+  await write('line-height', '1.5em')
+  const lh2 = { css: await el('line-height'), ...(await field('line-height')) }
+  const lhIn = P('input[data-prop="line-height"]').first(); await lhIn.click(); await lhIn.press('ArrowUp'); await page.waitForTimeout(250)
+  const lh3 = { css: await el('line-height'), ...(await field('line-height')) }
+  await lhIn.blur(); await page.waitForTimeout(100)   // 不能按 Esc：没有弹层时 Esc 会取消选中
+  AC('AC-6.39b', lh1 === '30px' && lh2.css === '1.5em' && lh2.v === '1.5' && lh2.suffix === 'em' && lh3.css === '2.5em' && lh3.v === '2.5',
+     `只敲数字沿用当前单位（30 → ${lh1}），带单位就换单位（1.5em → 框 ${lh2.v} 后缀 ${lh2.suffix}），步进按当前单位（→ ${lh3.css}）`)
+  const ls0 = await field('letter-spacing')
+  await write('letter-spacing', 5)
+  const ls1 = { css: await el('letter-spacing'), ...(await field('letter-spacing')) }
+  const lsIn = P('input[data-prop="letter-spacing"]').first(); await lsIn.click(); await lsIn.press('ArrowUp'); await page.waitForTimeout(250)
+  const ls2 = { css: await el('letter-spacing'), ...(await field('letter-spacing')) }
+  await lsIn.blur(); await page.waitForTimeout(100)
+  await write('letter-spacing', 0)
+  const ls3 = { css: await el('letter-spacing'), ...(await field('letter-spacing')) }
+  AC('AC-6.40', ls0.v === '0' && ls0.suffix === '%' && ls1.css === '0.05em' && ls1.v === '5' && ls2.css === '0.06em' && ls2.v === '6' && ls3.css === 'normal' && ls3.v === '0',
+     `字距按百分比：normal 显示 0 %，敲 5 写 ${ls1.css} 显示 ${ls1.v}，↑ 一步 ${ls2.css}，敲 0 写回 ${ls3.css}`)
+  await select()
+}
 
 // ── 6.10 Fill ──
 console.log('── 6.10 Fill')
@@ -251,6 +343,61 @@ AC('AC-6.11a', await inline('border-color') === 'rgb(200, 100, 50)' && await inl
    `描边 颜色=${await inline('border-color')} 宽=${await inline('border-width')} 样式=${await inline('border-style')}`)
 await P('button[data-prop="box-sizing"][data-value="content-box"]').click(); await page.waitForTimeout(250)
 AC('AC-6.11b', await inline('box-sizing') === 'content-box', `box-sizing 分段写 ${await inline('box-sizing')}`)
+
+// 6.38 描边粗细的「四边独立」：样式在左粗细在右，按钮 → 2×2（左 上 / 右 下）各写自己的长手；记录仍是一条 border-width
+{
+  console.log('── 6.38 描边粗细 四边独立')
+  await select()
+  const wid = () => page.evaluate(() => {
+    const sr = document.querySelector('visual-revise-panel').shadowRoot
+    const row = sr.querySelector('section[data-group="stroke"] .width-row')
+    const btn = row?.querySelector('[data-sides]')
+    const single = row?.querySelector('input[data-prop="border-width"]')
+    const el = document.getElementById('rich')
+    const side = p => el.style.getPropertyValue(p)
+    return {
+      order: row ? [...row.querySelectorAll('.field .name')].map(n => n.textContent.trim()).filter(Boolean) : null,   // 按钮那格是占位标签
+      btn: !!btn, on: btn?.hasAttribute('data-on') ?? null,
+      square: btn ? Math.abs(btn.getBoundingClientRect().width - btn.getBoundingClientRect().height) < 1 : null,
+      grid: [...sr.querySelectorAll('.sides-grid input[data-prop]')].map(i => i.dataset.prop),
+      single: single?.value ?? null, placeholder: single?.getAttribute('placeholder') ?? null,
+      t: side('border-top-width'), r: side('border-right-width'), b: side('border-bottom-width'), l: side('border-left-width'),
+      shorthand: el.style.borderWidth,
+      record: window.__visualRevise.store.read().edits.find(e => e.el === el)?.changes.find(c => c.prop === 'border-width')?.to ?? null,
+      computedTop: parseFloat(getComputedStyle(el).borderTopWidth),
+    }
+  })
+  const w0 = await wid()
+  AC('AC-6.38a', JSON.stringify(w0.order) === JSON.stringify(['样式', '粗细']) && w0.btn && w0.square && w0.on === false && w0.grid.length === 0 && w0.single === String(w0.computedTop),
+     `样式在左粗细在右，粗细右侧 1:1「四边独立」按钮，四边相等时收起、单框显示 ${w0.computedTop}（${JSON.stringify({ order: w0.order, on: w0.on, single: w0.single })}）`)
+  const sbtn = P('.width-row [data-sides]').first()
+  await sbtn.scrollIntoViewIfNeeded(); await sbtn.click(); await page.waitForTimeout(400)
+  const w1 = await wid()
+  AC('AC-6.38b', w1.on === true && JSON.stringify(w1.grid) === JSON.stringify(['border-left-width', 'border-top-width', 'border-right-width', 'border-bottom-width']),
+     `点按钮展开：按钮高亮，2×2 按 左 上 / 右 下 排（${w1.grid.join(' / ')}）`)
+  await write('border-left-width', 6)
+  const w2 = await wid()
+  AC('AC-6.38c', w2.l === '6px' && w2.t === w1.t && w2.r === w1.r && w2.b === w1.b && w2.record === `${w1.t} ${w1.r} ${w1.b} 6px`,
+     `改左边只写 border-left-width（l=${w2.l}，其余不动），记录合成一条 border-width: ${w2.record}`)
+  await P('.width-row [data-sides]').first().click(); await page.waitForTimeout(400)
+  const w3 = await wid()
+  AC('AC-6.38d', w3.on === false && w3.grid.length === 0 && w3.single === '' && w3.placeholder === '混合',
+     `收起后四边不等：单框留空、占位「混合」（value="${w3.single}"）`)
+  await write('border-width', 3)
+  const w4 = await wid()
+  AC('AC-6.38e', w4.shorthand === '3px' && w4.l === '3px' && w4.single === '3' && w4.placeholder === null,
+     `单框敲 3 写简写、四边一起变（border-width=${w4.shorthand}，l=${w4.l}），占位消失`)
+  await page.evaluate(() => { const d = document.createElement('div'); d.id = 'uneven-b'; d.style.cssText = 'position:absolute;left:160px;top:560px;width:120px;height:40px;background:#345;border-style:solid;border-color:#789;border-width:1px 2px 3px 4px'; document.body.appendChild(d) })
+  await page.keyboard.press('Escape'); await page.waitForTimeout(150)
+  await page.locator('#uneven-b').click({ position: { x: 60, y: 20 } }); await page.waitForTimeout(500)
+  const w5 = await page.evaluate(() => {
+    const sr = document.querySelector('visual-revise-panel').shadowRoot
+    return { on: sr.querySelector('.width-row [data-sides]')?.hasAttribute('data-on'), grid: [...sr.querySelectorAll('.sides-grid input')].map(i => i.value) }
+  })
+  AC('AC-6.38f', w5.on === true && JSON.stringify(w5.grid) === JSON.stringify(['4', '1', '2', '3']),
+     `页面四边不等的元素默认展开，四个框各显示自己的值（左/上/右/下 = ${w5.grid.join('/')}）`)
+  await select()
+}
 
 // ── 6.12 Effects ──
 // 三个直接写 CSS 原值的输入框已经去掉，换成 Figma 那样可增删的效果列表：
@@ -669,6 +816,37 @@ const offCenter = await page.evaluate(() => {
 })
 AC('AC-6.21', offCenter.bad.length === 0,
    `${offCenter.count} 个图标按钮的图标全部居中${offCenter.bad.length ? `（偏移：${offCenter.bad.join(' / ')}）` : ''}`)
+
+// ── 6.43 描边「样式」下拉把线型画出来 ──
+console.log('── 6.43 描边样式线型预览')
+{
+  await select()
+  const hasStyle = await P('vr-select[data-prop="border-style"]').count()
+  if (!hasStyle) { const add = P('section[data-group="stroke"] .add[data-add="stroke"]'); await add.scrollIntoViewIfNeeded(); await add.click(); await page.waitForTimeout(400) }
+  const sel = P('vr-select[data-prop="border-style"]').first()
+  await sel.scrollIntoViewIfNeeded()
+  const trig = await page.evaluate(() => {
+    const el = document.querySelector('visual-revise-panel').shadowRoot.querySelector('vr-select[data-prop="border-style"]')
+    const i = el.shadowRoot.querySelector('.label i[data-line]')
+    return { value: el.value, line: i?.dataset.line, style: i && getComputedStyle(i).borderTopStyle, width: i && getComputedStyle(i).width, text: el.shadowRoot.querySelector('.label').textContent.trim() }
+  })
+  AC('AC-6.43', trig.line === trig.value && trig.style === trig.value && parseFloat(trig.width) >= 16 && trig.text === trig.value,
+     `触发器前画出当前线型（值 ${trig.value}，线 border-top-style=${trig.style}，宽 ${trig.width}），名字还在（${trig.text}）`)
+  await sel.click(); await page.waitForTimeout(300)
+  const items = await page.evaluate(() => {
+    const r = document.getElementById('visual-revise-select-panel')?.shadowRoot
+    if (!r) return null
+    return [...r.querySelectorAll('[data-item]')].map(row => {
+      const i = row.querySelector('i[data-line]'); const cs = i && getComputedStyle(i)
+      return { v: row.dataset.item, style: cs?.borderTopStyle, w: cs?.borderTopWidth, label: row.textContent.trim() }
+    })
+  })
+  const byV = Object.fromEntries((items || []).map(x => [x.v, x]))
+  const ok = items && ['solid', 'dashed', 'dotted', 'double'].every(v => byV[v]?.style === v && byV[v].label === v)
+    && byV.double?.w === '3px' && byV.solid?.w === '2px' && byV.none?.w === '0px'
+  AC('AC-6.43', ok, `下拉每项前都画线：${(items || []).map(x => `${x.v}=${x.style}/${x.w}`).join(' ')}`)
+  await page.keyboard.press('Escape'); await page.waitForTimeout(200)
+}
 
 await browser.close(); await close()
 console.log(`\n合计：${passed} 通过 / ${failed} 失败\n`)

@@ -10,7 +10,7 @@
   width: 20%;
   max-width: 10vmax;
   stroke: var(--neon-pink);
-  stroke-width: 1px;
+  stroke-width: calc(1px * var(--vr-inv-zoom, 1));
   stroke-linecap: round;
   rx: 4;
 }

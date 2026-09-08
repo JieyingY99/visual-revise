@@ -18,6 +18,10 @@ import { fingerprint, findSharedElements } from './shared-elements.js'
 import { loadLocalFonts, isSupported as fontsSupported } from './local-fonts.js'
 import { clearHighlight } from './highlight.js'
 import { applyPlacement } from './placement.js'
+import { onZoom, clearZoomStyles } from './zoom.js'
+import { onKeydown as copyPropsKeydown } from '../features/copy-props.js'
+import { onKeydown as copyImageKeydown } from '../features/copy-image.js'
+import { onKeydown as replaceKeydown } from '../features/replace-element.js'
 import { resizeMode, planResize, currentSize, isMainAxis, declaredVariables } from './resizing.js'
 import { parseTracks, serializeTracks, readTracks, gridShape } from './grid.js'
 import { flowOf, planFlow, alignmentOf, planAlignment } from './layout.js'
@@ -91,6 +95,9 @@ export const mountVisualRevise = visbug => {
   // 声明要排在 onSelected 之前：engine.onSelectedUpdate 注册时会立刻回调一次，
   // 那时 mode 还在暂时性死区里，读它会直接抛错
   let mode = 'select'
+  // 上游这些工具自己用方向键（挪位置、改边距、调字号…），它们激活时 ↑ / ↓ 不接管
+  const ARROW_TOOLS = new Set(['position', 'move', 'margin', 'padding', 'align', 'font', 'boxshadow', 'hueshift', 'text'])
+  const POPOVER_IDS = ['visual-revise-menu', 'visual-revise-color-panel', 'visual-revise-fill-panel', 'visual-revise-select-panel']
   let suspended = []
   let listWasOpen = false
   // 进浏览模式要真正停掉 VisBug 的工具，退出时按原样装回来
@@ -108,6 +115,8 @@ export const mountVisualRevise = visbug => {
     // 那时做的「滚到选中行」等于没做，选中项会停在视口外看不见
     panel.hidden = !(els && els.length)
     panel.setTargets(els)
+    // 改动列表里这些元素的条目高亮并滚到可见（列表关着时打开再滚）
+    list.setSelected(els || [])
     // 固定位置：默认那个，或者用户自己拖过去的那个。不跟着选中的元素走——
     // 每换一个元素就跳一次，眼睛每次都得重新找它。
     applyPlacement(panel)
@@ -115,10 +124,36 @@ export const mountVisualRevise = visbug => {
 
   engine.onSelectedUpdate(onSelected)
 
+  // 选中框把手拖改尺寸：上游直接写 style.width / height / translate，改动记录
+  // 靠快照差异看得见，历史栈里却没有条目，⌘Z 撤不回来。松手后把行内值先退回
+  // 拖之前的，再逐条走 applyProp 正式写一次——历史条目、important 判定都由它管
+  const RESIZE_PROPS = ['width', 'height', 'translate']
+  document.addEventListener('visual-revise:resized', e => {
+    const { el, before } = e.detail || {}
+    if (!el?.isConnected || !before) return
+    const changed = RESIZE_PROPS.filter(prop => el.style.getPropertyValue(prop) !== (before[prop] || ''))
+    if (!changed.length) return
+    ChangeStore.track(el)
+    ChangeStore.history.batch(changed.length > 1 ? '拖改尺寸' : `拖改${changed[0] === 'width' ? '宽度' : changed[0] === 'height' ? '高度' : '位置'}`, () => {
+      for (const prop of changed) {
+        const after = el.style.getPropertyValue(prop)
+        el.style.setProperty(prop, before[prop] || '')
+        ChangeStore.applyProp(el, prop, after)
+      }
+    })
+  })
+
+  // 撤销 / 重做把尺寸、位置改回去之后，选中框要跟着元素走
+  ChangeStore.subscribe(() => requestAnimationFrame(() =>
+    document.querySelectorAll('visbug-handles, visbug-label').forEach(h => h.on_window_resize?.())))
+
   // 窗口变小后，记住的位置可能整块落在视口外——面板是 fixed 的，页面滚不到
   // 那里，等于再也拖不回来。applyPlacement 会拿记住的坐标重新夹一次：
   // 窗口缩小时挤回视口内，重新拉大时又回到原来那个位置。
   addEventListener('resize', () => applyPlacement(panel))
+  // 网页缩放（⌘+ / ⌘−）：面板反向缩回屏幕原大、贴边距离按倍数换算。工具条和
+  // 改动列表各自订阅，弹层挂上时读一次倍数（见 core/zoom.js）
+  onZoom(() => applyPlacement(panel))
 
   // 交互态：让页面恢复自己的 hover / click 行为，供用户验证真实交互。
   // 选中集在退出时原样恢复，改动记录不受影响（它活在 ChangeStore 里）。
@@ -207,7 +242,24 @@ export const mountVisualRevise = visbug => {
   ]
   const hasOpenPopup = () => POPUP_IDS.some(id => document.getElementById(id))
 
+  // Figma 风格的三组快捷键各自成模块（⌥⌘C/V 属性、⌘⇧C 截图、⌘⇧R 替换）。
+  // 每个模块自己判断修饰键（core/hotkey.js 的 isMod，Windows 上是 Ctrl）、焦点、
+  // 模式，接了就返回 true。放在最前面：下面 ⌘Z 那道对所有带主修饰键的按键
+  // 都会 return，⌘⇧C / ⌘⇧R 得先于它
+  const SHORTCUT_HANDLERS = [copyPropsKeydown, copyImageKeydown, replaceKeydown]
+  const shortcutContext = () => ({
+    engine, panel, list, comments, toolbar,
+    interactive, mode, hasOpenPopup,
+    isTypingTarget, isEditorUI,
+    // 面板没有目标时整个是隐藏的、空态模板里也没有 .toast 落点，消息会被静默吞掉；
+    // 那时落到挂在 body 上的工具条 toast。快捷键模块不必自己判断该找谁
+    toast: (msg, kind) => (panel.target && !panel.hidden) ? panel.toast(msg, kind) : toolbar.toast(msg, kind),
+  })
+
   const onKeydown = e => {
+    for (const handle of SHORTCUT_HANDLERS)
+      if (handle(e, shortcutContext())) return
+
     // ⌘Z / ⌘⇧Z（Windows 上 ⌘Y 也认）要在下面那道「带修饰键就放行」之前处理
     if ((e.metaKey || e.ctrlKey) && !e.altKey) {
       const key = e.key.toLowerCase()
@@ -223,6 +275,49 @@ export const mountVisualRevise = visbug => {
       return
     }
 
+    // ↑ / ↓：选中的元素在自己的父级里换一位（不跨容器）。
+    //
+    // 走 ChangeStore.moveElement，跟结构树拖拽同一条路：进改动记录、⌘Z 退回、
+    // 提示词里有这条移动。只在选择模式、焦点不在输入框、没有弹层、上游那些自己
+    // 用方向键的工具（Position / Move / Margin…）没激活时接管。
+    // 相邻的兄弟是编辑器自己的节点（body 直属元素旁边的面板、工具条）不算兄弟，跳过。
+    // 多选时各自挪一位；相邻的两个都选中了就按边界处理，不让它们互相跳过换位。
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown')
+      && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
+      && mode === 'select' && !interactive && !isTypingTarget(e) && !isEditorUI(e)
+      && !ARROW_TOOLS.has(visbug.activeTool)
+      && !POPOVER_IDS.some(id => document.getElementById(id))) {
+      const targets = engine.selection().filter(el => el?.isConnected && !isEditorUI(el) && el.parentElement)
+      if (!targets.length) return
+      e.preventDefault()
+      e.stopPropagation()
+
+      const dir = e.key === 'ArrowUp' ? -1 : 1
+      const picked = new Set(targets)
+      const neighbor = el => {
+        let s = dir < 0 ? el.previousElementSibling : el.nextElementSibling
+        while (s && isEditorUI(s)) s = dir < 0 ? s.previousElementSibling : s.nextElementSibling
+        return s && !picked.has(s) ? s : null
+      }
+      // 往上按文档顺序处理、往下倒着处理：先动的那个不会改变后一个的邻居
+      const ordered = targets.slice().sort((a, b) =>
+        a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)
+      if (dir > 0) ordered.reverse()
+
+      let moved = 0
+      ChangeStore.history.batch(dir < 0 ? '上移一位' : '下移一位', () => {
+        for (const el of ordered) {
+          const sib = neighbor(el)
+          if (!sib) continue
+          ChangeStore.moveElement(el, el.parentElement, dir < 0 ? sib : sib.nextElementSibling)
+          moved++
+        }
+      })
+      // 选中框是按元素位置画的，元素换了位置它不会自己跟过去
+      if (moved) document.querySelectorAll('visbug-handles, visbug-label').forEach(h => h.on_window_resize?.())
+      return
+    }
+
     // ⌥Delete / ⌥Backspace 清空选中元素的 inline style。
     //
     // 必须排在下面那道「带修饰键就放行」之前，于是它绕过了后面那两道守卫，
@@ -233,9 +328,11 @@ export const mountVisualRevise = visbug => {
     // 直接改 DOM，历史栈里没有对应条目，用户按 ⌘Z 想救回来，反而又丢掉
     // 上一条无关操作；而且它调的 el.attr() 是 blingblingjs 挂在实例上的糖，
     // 注入之后才出现的元素身上根本没有，功能当场抛错。
+    // 焦点落在面板按钮上（刚点完联动 / 折叠）也接：这组键没有面板控件会用，
+    // 输入框由 isTypingTarget 兜住，跟 ⌥⌘V / ⌘⇧C / ⌘⇧R 同一口径
     if (e.altKey && !e.metaKey && !e.ctrlKey
       && (e.key === 'Delete' || e.key === 'Backspace')
-      && !interactive && !isTypingTarget(e) && !isEditorUI(e)) {
+      && !interactive && !isTypingTarget(e)) {
       const targets = engine.selection().filter(el => el?.isConnected && !isEditorUI(el))
       if (!targets.length) return
 
@@ -630,8 +727,13 @@ export const mountVisualRevise = visbug => {
   })
 
   list.addEventListener('vr-locate', e => {
-    const el = e.detail?.el
+    const { el, kind, id } = e.detail || {}
     if (!el?.isConnected) return
+    // 评论条目：打开那条评论的编辑框，选中状态不动——属性面板对评论没用
+    if (kind === 'comment') {
+      comments.editComment(id)
+      return
+    }
     engine.unselect_all()
     engine.select(el)
     panel.hidden = false
@@ -670,6 +772,7 @@ export const mountVisualRevise = visbug => {
       list.remove()
       comments.remove()
       toolbar.remove()
+      clearZoomStyles()
       layoutDrag.destroy()
       document.getElementById('visual-revise-locate-overlay')?.remove()
     },

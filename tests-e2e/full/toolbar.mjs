@@ -209,7 +209,7 @@ const TIPS_EXPECT = [
   ['.list', '改动记录', 'L'],
   ['.copy', '复制提示词', 'P'],
   ['.undo', '没有可撤销的操作', '⌘Z'],
-  ['.redo', '没有可重做的操作', '⌘⇧Z'],
+  ['.redo', '没有可重做的操作', '⇧⌘Z'],
   ['.close', '关闭编辑器', '⌥⇧D'],
   ['button[data-mode="browse"]', '浏览页面', 'V'],
   ['button[data-mode="select"]', '选择元素', 'A / F'],

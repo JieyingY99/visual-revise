@@ -266,12 +266,27 @@ const refSection = refs => {
 
 // 删除单独成段：它改的是源码结构，和调样式、换文案都不是一类操作。
 // 混进属性表 AI 会照着写成 display:none —— 那是藏起来，不是删掉。
-const removalSection = removals => {
+// 一次替换（⌘⇧R）落成「新增 + 删除」一对记录，新增那条带 replaced 指回旧元素。
+// 认亲用两把钥匙：本会话内用元素编号（id）精确对上；从 JSON 导入的记录换了一个
+// 页面、编号早已不同，只剩 identity（标签 + 稳定类名 + 首条文本）可以对。
+const replacedKeysOf = inserts =>
+  new Set((inserts || []).flatMap(r => [r.replaced?.id, r.replaced?.identity]).filter(Boolean))
+
+const isReplaced = (removal, keys) =>
+  keys.has(removal.id) || (!!removal.identity && keys.has(removal.identity))
+
+// 被替换掉的元素仍然留在「删除的元素」这一段，因为 AI 要在源码里找到并删掉的
+// 就是它，锚点只有这里有；但必须点明是替换，否则读起来像「又加了一个又删了
+// 一个」两件独立的事。
+const removalSection = (removals, replacedKeys = new Set()) => {
   if (!removals.length) return ''
 
   const blocks = removals.map((r, i) => [
     `### ${i + 1}. ${describeElement(r.anchors)}`,
     '',
+    isReplaced(r, replacedKeys)
+      ? '- 这是一次**替换**：它被「新增的元素」里对应的那一项取代了，删掉它的同时要把新的写在原位'
+      : '',
     anchorBlock(r.anchors),
     r.childCount ? `- 含 ${r.childCount} 个子元素，是整块一起删掉的` : '',
     '',
@@ -350,17 +365,31 @@ const insertSection = inserts => {
       ? `${html.slice(0, INSERT_HTML_LIMIT)}…（已截断，原文共 ${html.length} 字符）`
       : html
 
+    // 替换（⌘⇧R）：一句「把 X 换成 Y」比「新增了 Y」+「删除了 X」两条准确得多。
+    // 后者读起来是两件事，AI 很可能把新的追加到末尾、再去别处删一个
+    const old = r.replaced
+    const oldBrief = old
+      ? [`\`<${old.tag}>\``, old.text ? `「${old.text}」` : ''].filter(Boolean).join(' ')
+      : ''
+
     return [
-      `### ${i + 1}. ${r.label || '新增元素'}：${describeElement(r.anchors || {})}`,
+      old
+        ? `### ${i + 1}. 替换：把 ${oldBrief} 换成下面这段`
+        : `### ${i + 1}. ${r.label || '新增元素'}：${describeElement(r.anchors || {})}`,
       '',
-      `- 位置：${placeLine(r.parentAnchors, r.nextAnchors, r.atEnd)}`,
+      old
+        ? `- 位置：${oldBrief} 原来所在的位置（${placeLine(r.parentAnchors, r.nextAnchors, r.atEnd)}）`
+        : `- 位置：${placeLine(r.parentAnchors, r.nextAnchors, r.atEnd)}`,
+      old ? '- 被换掉的那个元素的完整定位信息见下方「删除的元素」，那两条说的是同一次操作' : '',
       '',
       '```html',
       snippet,
       '```',
       '',
-    ].join('\n')
+    ].filter(Boolean).join('\n')
   })
+
+  const hasReplace = inserts.some(r => r.replaced)
 
   return [
     '---',
@@ -372,6 +401,11 @@ const insertSection = inserts => {
     blocks.join('\n'),
     '> 请在源码里真的把这些元素写出来（JSX / 模板 / 组件），不要用伪元素或',
     '> 脚本注入去模拟——那样 DOM 里没有它，读屏与 Tab 顺序也读不到。',
+    ...(hasReplace
+      ? ['>',
+         '> 标着「替换」的那几项是**一次**操作：把原来那个元素整个换掉，新的写在',
+         '> 它原来的位置上（同一个父节点、同一个下标），不要追加到容器末尾。']
+      : []),
     '',
   ].join('\n')
 }
@@ -415,13 +449,22 @@ export const buildPrompt = (state, meta = {}, refs = null) => {
   const styleCount = styleEdits.filter(e => e.changes.length).length
   const imageCount = styleEdits.filter(e => e.attrs?.length).length
 
+  // 一次替换会落成「新增 + 删除」两条记录。摘要里照实分开数就成了
+  // 「1 处新增，1 处删除」——读的人算不出这其实是一次替换，还会以为改动更多。
+  // 单独列一项「N 处替换」，新增与删除各自减去它们那一半
+  const replacedKeys = replacedKeysOf(inserts)
+  const replaceCount = inserts.filter(r => r.replaced).length
+  const insertCount  = inserts.length - replaceCount
+  const removalCount = removals.filter(r => !isReplaced(r, replacedKeys)).length
+
   const summary = []
   if (styleCount) summary.push(`${styleCount} 处元素样式`)
   if (textCount)  summary.push(`${textCount} 处文案`)
   if (imageCount) summary.push(`${imageCount} 处图片替换`)
-  if (inserts.length)    summary.push(`${inserts.length} 处新增`)
+  if (replaceCount)      summary.push(`${replaceCount} 处替换`)
+  if (insertCount)       summary.push(`${insertCount} 处新增`)
   if (moves.length)      summary.push(`${moves.length} 处移动`)
-  if (removals.length)   summary.push(`${removals.length} 处删除`)
+  if (removalCount)      summary.push(`${removalCount} 处删除`)
   if (comments.length)   summary.push(`${comments.length} 条交互备注`)
   head.push(`改动：${summary.join('，')}`, '')
 
@@ -498,7 +541,7 @@ export const buildPrompt = (state, meta = {}, refs = null) => {
   // 新增排在移动之前：分组是「先造出外壳、再把子元素搬进去」，
   // 读的人得先知道那个容器是哪儿来的
   return [head.join('\n'), ...sections, insertSection(inserts), moveSection(moves),
-    removalSection(removals), commentSection, refSection(refs), `---\n\n${FOOTER}\n`]
+    removalSection(removals, replacedKeys), commentSection, refSection(refs), `---\n\n${FOOTER}\n`]
     .filter(Boolean).join('\n')
 }
 

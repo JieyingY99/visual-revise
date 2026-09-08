@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Split rows fixture · 四角 / 四边 / 内外边距</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 140px 24px 480px; width: 1000px;
+    font: 14px/1.4 system-ui, sans-serif; background: #0b0b0d; color: #eee;
+  }
+  .box {
+    width: 300px; min-height: 52px; margin: 16px 0; padding: 10px;
+    background: #16161c; color: #ddd;
+  }
+
+  /* ── 四角 ───────────────────────────────────────────── */
+  /* 四角相等：拆分行默认收起，单框显示 8 */
+  #corners-even  { border-radius: 8px; }
+  /* 四角不等（写在样式表里，元素第一次显示就该默认展开）
+     border-radius 简写顺序 = 左上 右上 右下 左下 */
+  #corners-mixed { border-radius: 4px 12px 20px 0; }
+  /* 四角相等，专供「收起态敲值 / 展开后逐角改」的写入用例，不干扰上面两个 */
+  #corners-work  { border-radius: 6px; }
+
+  /* ── 四边粗细 ───────────────────────────────────────── */
+  /* 四边相等：收起，单框显示 2 */
+  #sides-even  { border: 2px solid #7a8; }
+  /* 四边不等（border-width 简写顺序 = 上 右 下 左）：默认展开 */
+  #sides-mixed { border-style: solid; border-color: #c85; border-width: 1px 2px 3px 4px; }
+  /* 只有左边有粗细：简写读成空串，但「任一边有宽度」就不该退回空状态 */
+  #sides-one   { border: 0 solid #58c; border-left-width: 6px; }
+  /* 真的没有描边：Stroke 分区应当是空状态、加号可点 */
+  #sides-none  { }
+  /* 四边相等，供写入用例 */
+  #sides-work  { border: 3px solid #9ab; }
+
+  /* ── 内 / 外边距 ────────────────────────────────────── */
+  /* 四边都不等，且左右 ≠ 上下：两段式与四边网格都能看出差别 */
+  #pad-mixed { padding: 4px 8px 12px 16px; margin: 6px 10px 18px 22px; }
+  #pad-work  { padding: 10px 20px; margin: 5px 30px; }
+</style>
+</head>
+<body>
+  <div id="corners-even"  class="box">四角相等 8px</div>
+  <div id="corners-mixed" class="box">四角不等 4 / 12 / 20 / 0</div>
+  <div id="corners-work"  class="box">四角写入用</div>
+
+  <!-- 只有一个角写在 inline 上：五点五·七说「没在 inline 里写的那一边取计算值」，
+       撤销 / 导入写回去不该把那一角归零 -->
+  <div id="corners-partial" class="box" style="border-top-left-radius: 9px">四角 · 只有左上写在 inline</div>
+
+  <!-- 一条长手带 important：合成的简写应当聚合出 important -->
+  <div id="corners-important" class="box" style="border-bottom-right-radius: 7px !important">四角 · important</div>
+
+  <!-- 非 px 单位：单框该把数字与单位分开显示（数字在框里、单位在框外最右） -->
+  <div id="corners-em" class="box" style="border-radius: 1.5em">四角 · em</div>
+
+  <div id="sides-even"  class="box">四边相等 2px</div>
+  <div id="sides-mixed" class="box">四边不等 1 / 2 / 3 / 4</div>
+  <div id="sides-one"   class="box">只有左边 6px</div>
+  <div id="sides-none"  class="box">没有描边</div>
+  <div id="sides-work"  class="box">四边写入用</div>
+
+  <div id="pad-mixed" class="box">内外边距四边不等</div>
+  <div id="pad-work"  class="box">内外边距写入用</div>
+  <!-- 非 px 单位的内边距：展开四边后框里该显示作者写的 2em，而不是计算出来的 28px -->
+  <div id="pad-em"    class="box" style="padding: 2em">内边距 · em</div>
+</body>
+</html>

@@ -182,7 +182,7 @@
    flex-shrink 留着，视口太矮时先压缩这里。 */
 .refs {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   margin-top: 8px;
   max-height: 384px;
   overflow-y: auto;
@@ -204,7 +204,7 @@
 .ref-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -274,7 +274,7 @@
 .ref-note::placeholder { color: var(--vr-mute); }
 
 /* ── 底部动作 ── */
-.actions { display: flex; gap: 6px; margin-top: 8px; }
+.actions { display: flex; gap: 4px; margin-top: 8px; }
 .actions button {
   flex: 1; height: 28px;
   font: inherit; font-size: 12px;
